@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+.robot_state/
+*.log
+*.egg-info/

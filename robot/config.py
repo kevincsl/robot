@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+import os
+import shlex
+from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
+VERSION = "0.1.0"
+
+PROVIDER_LABELS = {
+    "codex": "Codex",
+    "gemini": "Gemini",
+    "copilot": "Copilot",
+}
+
+SUPPORTED_MODELS = {
+    "codex": [
+        "gpt-5.3-codex",
+        "gpt-5.4",
+        "gpt-5.2-codex",
+        "gpt-5.2",
+        "gpt-5.1-codex-max",
+        "gpt-5.1-codex-mini",
+    ],
+    "gemini": [
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+    ],
+    "copilot": [
+        "gpt-5",
+        "claude-sonnet-4",
+        "gemini-2.5-pro",
+    ],
+}
+
+
+def _split_command(raw: str) -> list[str]:
+    parts = shlex.split(raw, posix=False)
+    return parts if parts else [raw]
+
+
+@dataclass(frozen=True)
+class Settings:
+    project_root: Path
+    state_home: Path
+    session_state_path: Path
+    default_provider: str
+    default_model: str
+    provider_commands: dict[str, list[str]]
+    provider_model_flags: dict[str, str]
+    projects_roots: list[Path]
+
+
+def normalize_provider(provider: str | None) -> str:
+    candidate = (provider or "").strip().lower()
+    return candidate if candidate in PROVIDER_LABELS else "codex"
+
+
+def normalize_model(provider: str, model: str | None) -> str:
+    normalized_provider = normalize_provider(provider)
+    candidate = (model or "").strip()
+    if not candidate:
+        return SUPPORTED_MODELS[normalized_provider][0]
+    if candidate in SUPPORTED_MODELS.get(normalized_provider, []):
+        return candidate
+    return candidate
+
+
+def load_settings(project_root: Path | None = None) -> Settings:
+    root = (project_root or Path(__file__).resolve().parent.parent).resolve()
+    state_home = Path(os.getenv("ROBOT_STATE_HOME", str(root / ".robot_state"))).expanduser()
+    state_home.mkdir(parents=True, exist_ok=True)
+
+    default_provider = normalize_provider(os.getenv("ROBOT_DEFAULT_PROVIDER", "codex"))
+    default_model = normalize_model(default_provider, os.getenv("ROBOT_DEFAULT_MODEL", "gpt-5.3-codex"))
+
+    commands = {
+        "codex": _split_command(os.getenv("ROBOT_CODEX_CMD", "codex")),
+        "gemini": _split_command(os.getenv("ROBOT_GEMINI_CMD", "gemini")),
+        "copilot": _split_command(os.getenv("ROBOT_COPILOT_CMD", "copilot")),
+    }
+    model_flags = {
+        "codex": "-m",
+        "gemini": os.getenv("ROBOT_GEMINI_MODEL_FLAG", "--model").strip() or "--model",
+        "copilot": os.getenv("ROBOT_COPILOT_MODEL_FLAG", "--model").strip() or "--model",
+    }
+
+    raw_roots = (os.getenv("ROBOT_PROJECTS_ROOTS", "") or "").strip()
+    roots: list[Path] = []
+    if raw_roots:
+        for part in raw_roots.split(";"):
+            text = part.strip()
+            if text:
+                roots.append(Path(text).expanduser())
+    else:
+        roots.append(root.parent)
+        roots.append(root)
+
+    unique_roots: list[Path] = []
+    seen: set[str] = set()
+    for candidate in roots:
+        marker = str(candidate.resolve()) if candidate.exists() else str(candidate)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        unique_roots.append(candidate)
+
+    return Settings(
+        project_root=root,
+        state_home=state_home,
+        session_state_path=state_home / "robot_state.json",
+        default_provider=default_provider,
+        default_model=default_model,
+        provider_commands=commands,
+        provider_model_flags=model_flags,
+        projects_roots=unique_roots,
+    )
+
