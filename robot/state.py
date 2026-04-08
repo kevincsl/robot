@@ -28,13 +28,23 @@ class ChatStateStore:
         return data if isinstance(data, dict) else self._default_state()
 
     def _save(self) -> None:
+        def _sanitize(value: Any) -> Any:
+            if isinstance(value, str):
+                return value.encode("utf-8", errors="replace").decode("utf-8")
+            if isinstance(value, dict):
+                return {k: _sanitize(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [_sanitize(item) for item in value]
+            return value
+
         try:
+            self._state = _sanitize(self._state)
             self._settings.state_home.mkdir(parents=True, exist_ok=True)
             self._settings.session_state_path.write_text(
                 json.dumps(self._state, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-        except OSError:
+        except (OSError, UnicodeEncodeError, TypeError, ValueError):
             return
 
     def _bucket(self, chat_id: int) -> dict[str, Any]:
@@ -60,6 +70,15 @@ class ChatStateStore:
         bucket.setdefault("project_key", default_workspace.key)
         bucket.setdefault("project_name", default_workspace.label)
         bucket.setdefault("project_path", str(default_workspace.path))
+        queue = bucket.setdefault("agent_queue", [])
+        if not isinstance(queue, list):
+            bucket["agent_queue"] = []
+        schedules = bucket.setdefault("agent_schedules", [])
+        if not isinstance(schedules, list):
+            bucket["agent_schedules"] = []
+        bucket.setdefault("agent_current_run", None)
+        bucket.setdefault("agent_last_run", None)
+        bucket.setdefault("ui_flow", None)
         return bucket
 
     def get_chat_state(self, chat_id: int) -> dict[str, Any]:
@@ -73,6 +92,8 @@ class ChatStateStore:
                 "project_key": bucket.get("project_key") or None,
                 "project_name": bucket.get("project_name") or None,
                 "project_path": bucket.get("project_path") or None,
+                "agent_current_run": bucket.get("agent_current_run"),
+                "agent_last_run": bucket.get("agent_last_run"),
             }
 
     def set_provider(self, chat_id: int, provider: str) -> dict[str, Any]:
@@ -117,3 +138,103 @@ class ChatStateStore:
             provider = bucket["provider"]
             bucket["threads"][provider] = None
             self._save()
+
+    def get_agent_queue(self, chat_id: int) -> list[dict[str, Any]]:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            queue = bucket.get("agent_queue")
+            return [item for item in queue if isinstance(item, dict)] if isinstance(queue, list) else []
+
+    def enqueue_agent_job(self, chat_id: int, job: dict[str, Any]) -> int:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            queue = bucket.setdefault("agent_queue", [])
+            if not isinstance(queue, list):
+                queue = []
+                bucket["agent_queue"] = queue
+            queue.append(job)
+            self._save()
+            return len(queue)
+
+    def pop_agent_job(self, chat_id: int) -> dict[str, Any] | None:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            queue = bucket.get("agent_queue")
+            if not isinstance(queue, list) or not queue:
+                return None
+            job = queue.pop(0)
+            self._save()
+            return job if isinstance(job, dict) else None
+
+    def clear_agent_queue(self, chat_id: int) -> None:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            bucket["agent_queue"] = []
+            self._save()
+
+    def get_agent_schedules(self, chat_id: int) -> list[dict[str, Any]]:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            schedules = bucket.get("agent_schedules")
+            return [item for item in schedules if isinstance(item, dict)] if isinstance(schedules, list) else []
+
+    def add_agent_schedule(self, chat_id: int, job: dict[str, Any]) -> int:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            schedules = bucket.setdefault("agent_schedules", [])
+            if not isinstance(schedules, list):
+                schedules = []
+                bucket["agent_schedules"] = schedules
+            schedules.append(job)
+            self._save()
+            return len(schedules)
+
+    def set_agent_schedules(self, chat_id: int, jobs: list[dict[str, Any]]) -> None:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            bucket["agent_schedules"] = [job for job in jobs if isinstance(job, dict)]
+            self._save()
+
+    def clear_agent_schedules(self, chat_id: int) -> None:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            bucket["agent_schedules"] = []
+            self._save()
+
+    def set_agent_current_run(self, chat_id: int, run: dict[str, Any] | None) -> None:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            bucket["agent_current_run"] = run
+            self._save()
+
+    def set_agent_last_run(self, chat_id: int, run: dict[str, Any] | None) -> None:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            bucket["agent_last_run"] = run
+            self._save()
+
+    def get_ui_flow(self, chat_id: int) -> dict[str, Any] | None:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            flow = bucket.get("ui_flow")
+            return flow if isinstance(flow, dict) else None
+
+    def set_ui_flow(self, chat_id: int, flow: dict[str, Any] | None) -> None:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            bucket["ui_flow"] = flow if isinstance(flow, dict) else None
+            self._save()
+
+    def clear_ui_flow(self, chat_id: int) -> None:
+        self.set_ui_flow(chat_id, None)
+
+    def list_chat_ids(self) -> list[int]:
+        with self._lock:
+            chats = self._state.setdefault("chats", {})
+            result: list[int] = []
+            for raw in chats.keys():
+                try:
+                    result.append(int(raw))
+                except ValueError:
+                    continue
+            return sorted(result)

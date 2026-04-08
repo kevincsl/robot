@@ -5,3 +5,5 @@ __pycache__/
 .robot_state/
 *.log
 *.egg-info/
+# CocoIndex Code (ccc)
+/.cocoindex_code/

@@ -1,0 +1,449 @@
+﻿from __future__ import annotations
+
+import asyncio
+import contextlib
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+from teleapp.protocol import AppEvent
+
+from robot.config import Settings
+from robot.providers import (
+    RunningInvocation,
+    list_auto_dev_profiles,
+    run_agent_request,
+    run_auto_dev_request,
+)
+from robot.state import ChatStateStore
+
+
+@dataclass(slots=True)
+class AgentJob:
+    job_id: str
+    kind: str
+    goal: str
+    project_name: str
+    project_path: str
+    provider: str
+    model: str
+    thread_id: str | None
+    source: str
+    run_id: str | None = None
+    profile: str | None = None
+    config_path: str | None = None
+    resume_target: str | None = None
+    enable_commit: bool = False
+    enable_push: bool = False
+    enable_pr: bool = False
+    disable_post_run: bool = False
+    run_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "kind": self.kind,
+            "goal": self.goal,
+            "project_name": self.project_name,
+            "project_path": self.project_path,
+            "provider": self.provider,
+            "model": self.model,
+            "thread_id": self.thread_id,
+            "source": self.source,
+            "run_id": self.run_id,
+            "profile": self.profile,
+            "config_path": self.config_path,
+            "resume_target": self.resume_target,
+            "enable_commit": self.enable_commit,
+            "enable_push": self.enable_push,
+            "enable_pr": self.enable_pr,
+            "disable_post_run": self.disable_post_run,
+            "run_at": self.run_at,
+        }
+
+
+class AgentCoordinator:
+    def __init__(self, settings: Settings, store: ChatStateStore) -> None:
+        self._settings = settings
+        self._store = store
+        self._supervisor = None
+        self._worker_tasks: dict[int, asyncio.Task[None]] = {}
+        self._scheduler_task: asyncio.Task[None] | None = None
+        self._active_invocations: dict[int, RunningInvocation] = {}
+
+    def attach_supervisor(self, supervisor) -> None:
+        self._supervisor = supervisor
+
+    def start(self) -> None:
+        if self._scheduler_task is None or self._scheduler_task.done():
+            self._scheduler_task = asyncio.create_task(self._scheduler_loop())
+        for chat_id in self._store.list_chat_ids():
+            if self._store.get_agent_queue(chat_id):
+                self.ensure_worker(chat_id)
+
+    async def shutdown(self) -> None:
+        for invocation in list(self._active_invocations.values()):
+            invocation.cancel()
+        for task in list(self._worker_tasks.values()):
+            task.cancel()
+        for task in list(self._worker_tasks.values()):
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        self._worker_tasks.clear()
+
+        if self._scheduler_task is not None:
+            self._scheduler_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._scheduler_task
+            self._scheduler_task = None
+
+    def ensure_worker(self, chat_id: int) -> None:
+        task = self._worker_tasks.get(chat_id)
+        if task is not None and not task.done():
+            return
+        self._worker_tasks[chat_id] = asyncio.create_task(self._worker_loop(chat_id))
+
+    def enqueue(self, chat_id: int, goal: str, *, source: str = "manual") -> tuple[str, int, bool]:
+        state = self._store.get_chat_state(chat_id)
+        job = AgentJob(
+            job_id=str(uuid4()),
+            kind="provider",
+            goal=goal,
+            project_name=str(state["project_name"]),
+            project_path=str(state["project_path"]),
+            provider=str(state["provider"]),
+            model=str(state["model"]),
+            thread_id=state["thread_id"],
+            source=source,
+        )
+        position = self._store.enqueue_agent_job(chat_id, job.to_dict())
+        started = position == 1 and not self.is_running(chat_id)
+        self.ensure_worker(chat_id)
+        return job.job_id, position, started
+
+    def enqueue_auto_dev(
+        self,
+        chat_id: int,
+        goal: str,
+        *,
+        source: str,
+        profile: str | None = None,
+        config_path: str | None = None,
+        enable_commit: bool = False,
+        enable_push: bool = False,
+        enable_pr: bool = False,
+        disable_post_run: bool = False,
+    ) -> tuple[str, str, int, bool]:
+        state = self._store.get_chat_state(chat_id)
+        run_id = str(uuid4())
+        job = AgentJob(
+            job_id=str(uuid4()),
+            kind="auto_dev",
+            goal=goal,
+            project_name=str(state["project_name"]),
+            project_path=str(state["project_path"]),
+            provider="auto-dev",
+            model=profile or "default",
+            thread_id=None,
+            source=source,
+            run_id=run_id,
+            profile=profile,
+            config_path=config_path,
+            enable_commit=enable_commit,
+            enable_push=enable_push,
+            enable_pr=enable_pr,
+            disable_post_run=disable_post_run,
+        )
+        position = self._store.enqueue_agent_job(chat_id, job.to_dict())
+        started = position == 1 and not self.is_running(chat_id)
+        self.ensure_worker(chat_id)
+        return job.job_id, run_id, position, started
+
+    def resume_auto_dev(
+        self,
+        chat_id: int,
+        *,
+        resume_target: str,
+        source: str,
+        profile: str | None = None,
+        config_path: str | None = None,
+        enable_commit: bool = False,
+        enable_push: bool = False,
+        enable_pr: bool = False,
+        disable_post_run: bool = False,
+    ) -> tuple[str, str, int, bool]:
+        state = self._store.get_chat_state(chat_id)
+        run_id = str(uuid4())
+        job = AgentJob(
+            job_id=str(uuid4()),
+            kind="auto_dev",
+            goal="",
+            project_name=str(state["project_name"]),
+            project_path=str(state["project_path"]),
+            provider="auto-dev",
+            model=profile or "default",
+            thread_id=None,
+            source=source,
+            run_id=run_id,
+            profile=profile,
+            config_path=config_path,
+            resume_target=resume_target,
+            enable_commit=enable_commit,
+            enable_push=enable_push,
+            enable_pr=enable_pr,
+            disable_post_run=disable_post_run,
+        )
+        position = self._store.enqueue_agent_job(chat_id, job.to_dict())
+        started = position == 1 and not self.is_running(chat_id)
+        self.ensure_worker(chat_id)
+        return job.job_id, run_id, position, started
+
+    def schedule_auto_dev(
+        self,
+        chat_id: int,
+        goal: str,
+        run_at: str,
+        *,
+        source: str,
+        profile: str | None = None,
+        config_path: str | None = None,
+        enable_commit: bool = False,
+        enable_push: bool = False,
+        enable_pr: bool = False,
+        disable_post_run: bool = False,
+    ) -> tuple[str, str, int]:
+        state = self._store.get_chat_state(chat_id)
+        run_id = str(uuid4())
+        job = AgentJob(
+            job_id=str(uuid4()),
+            kind="auto_dev",
+            goal=goal,
+            project_name=str(state["project_name"]),
+            project_path=str(state["project_path"]),
+            provider="auto-dev",
+            model=profile or "default",
+            thread_id=None,
+            source=source,
+            run_id=run_id,
+            profile=profile,
+            config_path=config_path,
+            enable_commit=enable_commit,
+            enable_push=enable_push,
+            enable_pr=enable_pr,
+            disable_post_run=disable_post_run,
+            run_at=run_at,
+        )
+        count = self._store.add_agent_schedule(chat_id, job.to_dict())
+        return job.job_id, run_id, count
+
+    async def auto_dev_profiles(self, chat_id: int, config_path: str | None = None) -> str:
+        state = self._store.get_chat_state(chat_id)
+        workdir = Path(str(state["project_path"] or self._settings.project_root))
+        return await list_auto_dev_profiles(self._settings, workdir=workdir, config_path=config_path)
+
+    def is_running(self, chat_id: int) -> bool:
+        task = self._worker_tasks.get(chat_id)
+        return task is not None and not task.done()
+
+    def stop(self, chat_id: int) -> bool:
+        invocation = self._active_invocations.get(chat_id)
+        if invocation is None:
+            return self.is_running(chat_id)
+        return invocation.cancel()
+
+    def queue_overview(self, chat_id: int) -> str:
+        current = self._store.get_chat_state(chat_id).get("agent_current_run")
+        queue = self._store.get_agent_queue(chat_id)
+        lines = ["agent queue"]
+        if current:
+            lines.extend(
+                [
+                    "",
+                    f"running: {current.get('job_id')}",
+                    f"kind: {current.get('kind')}",
+                    f"goal: {current.get('goal') or '-'}",
+                    f"run_id: {current.get('run_id') or '-'}",
+                ]
+            )
+        if queue:
+            lines.extend(["", f"queued: {len(queue)}"])
+            for index, job in enumerate(queue, start=1):
+                kind = str(job.get("kind") or "provider")
+                if kind == "auto_dev":
+                    lines.append(
+                        f"{index}. [auto-dev] {job.get('goal') or '<resume>'} | {job.get('project_name')} | profile={job.get('profile') or 'default'}"
+                    )
+                else:
+                    lines.append(
+                        f"{index}. [provider] {job.get('goal')} | {job.get('project_name')} | {job.get('provider')}/{job.get('model')}"
+                    )
+        elif not current:
+            lines.extend(["", "queue is empty"])
+        return "\n".join(lines)
+
+    def schedule_overview(self, chat_id: int) -> str:
+        schedules = sorted(self._store.get_agent_schedules(chat_id), key=lambda item: str(item.get("run_at") or ""))
+        lines = ["agent schedules"]
+        if not schedules:
+            lines.extend(["", "no scheduled jobs"])
+            return "\n".join(lines)
+        lines.extend(["", f"scheduled: {len(schedules)}"])
+        for index, job in enumerate(schedules, start=1):
+            kind = str(job.get("kind") or "provider")
+            lines.append(
+                f"{index}. {job.get('run_at')} | {kind} | {job.get('goal') or '<resume>'} | {job.get('project_name')}"
+            )
+        return "\n".join(lines)
+
+    def clear_queue(self, chat_id: int) -> None:
+        self._store.clear_agent_queue(chat_id)
+
+    def clear_schedules(self, chat_id: int) -> None:
+        self._store.clear_agent_schedules(chat_id)
+
+    async def _scheduler_loop(self) -> None:
+        while True:
+            now = datetime.now().replace(second=0, microsecond=0)
+            for chat_id in self._store.list_chat_ids():
+                schedules = self._store.get_agent_schedules(chat_id)
+                due: list[dict[str, Any]] = []
+                keep: list[dict[str, Any]] = []
+                for job in schedules:
+                    run_at = str(job.get("run_at") or "").strip()
+                    if not run_at:
+                        keep.append(job)
+                        continue
+                    try:
+                        when = datetime.fromisoformat(run_at).replace(second=0, microsecond=0)
+                    except ValueError:
+                        keep.append(job)
+                        continue
+                    if when <= now:
+                        due.append(job)
+                    else:
+                        keep.append(job)
+
+                if not due:
+                    continue
+
+                self._store.set_agent_schedules(chat_id, keep)
+                for job in due:
+                    self._store.enqueue_agent_job(chat_id, job)
+                await self._emit(chat_id, f"Scheduled run moved to queue.\ncount: {len(due)}")
+                self.ensure_worker(chat_id)
+
+            await asyncio.sleep(15)
+
+    async def _worker_loop(self, chat_id: int) -> None:
+        while True:
+            job = self._store.pop_agent_job(chat_id)
+            if job is None:
+                self._worker_tasks.pop(chat_id, None)
+                return
+
+            self._store.set_agent_current_run(chat_id, job)
+            await self._emit(
+                chat_id,
+                "\n".join(
+                    [
+                        "Agent run started.",
+                        f"kind: {job.get('kind') or 'provider'}",
+                        f"goal: {job.get('goal') or '<resume>'}",
+                        f"project: {job.get('project_name')}",
+                        f"provider: {job.get('provider')}",
+                        f"model/profile: {job.get('model')}",
+                    ]
+                ),
+                event_type="status",
+            )
+
+            invocation = RunningInvocation()
+            self._active_invocations[chat_id] = invocation
+            heartbeat_task = asyncio.create_task(self._heartbeat_loop(chat_id, job))
+            try:
+                if str(job.get("kind") or "provider") == "auto_dev":
+                    enable_commit = str(job.get("enable_commit") or "").lower() in {"1", "true", "yes", "on"}
+                    enable_push = str(job.get("enable_push") or "").lower() in {"1", "true", "yes", "on"}
+                    enable_pr = str(job.get("enable_pr") or "").lower() in {"1", "true", "yes", "on"}
+                    disable_post_run = str(job.get("disable_post_run") or "").lower() in {"1", "true", "yes", "on"}
+                    result = await run_auto_dev_request(
+                        self._settings,
+                        prompt=str(job.get("goal") or "").strip() or None,
+                        workdir=Path(str(job.get("project_path") or self._settings.project_root)),
+                        project_label=str(job.get("project_name") or self._settings.project_root.name),
+                        run_id=str(job.get("run_id") or "-"),
+                        profile_name=str(job.get("profile") or "").strip() or None,
+                        config_path=str(job.get("config_path") or "").strip() or None,
+                        resume_target=str(job.get("resume_target") or "").strip() or None,
+                        enable_commit=enable_commit,
+                        enable_push=enable_push,
+                        enable_pr=enable_pr,
+                        disable_post_run=disable_post_run,
+                        invocation=invocation,
+                    )
+                else:
+                    result = await run_agent_request(
+                        self._settings,
+                        provider=str(job.get("provider") or "codex"),
+                        model=str(job.get("model") or ""),
+                        prompt=str(job.get("goal") or ""),
+                        thread_id=job.get("thread_id") if isinstance(job.get("thread_id"), str) else None,
+                        workdir=Path(str(job.get("project_path") or self._settings.project_root)),
+                        project_label=str(job.get("project_name") or self._settings.project_root.name),
+                        invocation=invocation,
+                    )
+            finally:
+                heartbeat_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await heartbeat_task
+                self._active_invocations.pop(chat_id, None)
+
+            if result.thread_id is not None:
+                self._store.set_thread_id(chat_id, str(job.get("provider") or "codex"), result.thread_id)
+            self._store.set_agent_current_run(chat_id, None)
+            self._store.set_agent_last_run(
+                chat_id,
+                {
+                    **job,
+                    "status": "stopped" if result.cancelled else ("ok" if result.return_code == 0 else "failed"),
+                    "elapsed_seconds": result.elapsed_seconds,
+                },
+            )
+            await self._emit(chat_id, result.final_text, event_type="output")
+
+    async def _heartbeat_loop(self, chat_id: int, job: dict[str, Any]) -> None:
+        started = datetime.now()
+        while True:
+            await asyncio.sleep(5)
+            elapsed = int((datetime.now() - started).total_seconds())
+            await self._emit(
+                chat_id,
+                "\n".join(
+                    [
+                        "Task is still running...",
+                        f"kind: {job.get('kind') or 'provider'}",
+                        f"job: {job.get('job_id') or '-'}",
+                        f"elapsed_seconds: {elapsed}",
+                    ]
+                ),
+                event_type="status",
+            )
+
+    async def _emit(self, chat_id: int, text: str, event_type: str = "output") -> None:
+        if self._supervisor is None:
+            return
+        queue = getattr(self._supervisor, "_event_queue", None)
+        if queue is None:
+            return
+        queue.put_nowait(
+            AppEvent(
+                type=event_type,
+                text=text,
+                chat_id=chat_id,
+                request_id=None,
+                stream="inprocess",
+            )
+        )
+

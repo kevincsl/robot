@@ -22,8 +22,8 @@ SUPPORTED_MODELS = {
         "gpt-5.3-codex",
         "gpt-5.4",
         "gpt-5.2-codex",
-        "gpt-5.2",
         "gpt-5.1-codex-max",
+        "gpt-5.2",
         "gpt-5.1-codex-mini",
     ],
     "gemini": [
@@ -35,6 +35,37 @@ SUPPORTED_MODELS = {
         "claude-sonnet-4",
         "gemini-2.5-pro",
     ],
+}
+
+MODEL_CHOICES = {
+    "codex": [
+        ("gpt-5.3-codex", "gpt-5.3-codex | coding"),
+        ("gpt-5.4", "gpt-5.4 | strong general"),
+        ("gpt-5.2-codex", "gpt-5.2-codex | balanced coding"),
+        ("gpt-5.1-codex-max", "gpt-5.1-codex-max | deep"),
+        ("gpt-5.2", "gpt-5.2 | general"),
+        ("gpt-5.1-codex-mini", "gpt-5.1-codex-mini | fast"),
+    ],
+    "gemini": [
+        ("gemini-2.5-pro", "gemini-2.5-pro"),
+        ("gemini-2.5-flash", "gemini-2.5-flash"),
+    ],
+    "copilot": [
+        ("gpt-5", "gpt-5"),
+        ("claude-sonnet-4", "claude-sonnet-4"),
+        ("gemini-2.5-pro", "gemini-2.5-pro"),
+    ],
+}
+
+MODEL_DESCRIPTIONS = {
+    "codex": {
+        "gpt-5.3-codex": "Latest frontier agentic coding model.",
+        "gpt-5.4": "Latest frontier agentic coding model.",
+        "gpt-5.2-codex": "Frontier agentic coding model.",
+        "gpt-5.1-codex-max": "Codex-optimized flagship for deep and fast reasoning.",
+        "gpt-5.2": "Latest frontier model with improvements across knowledge and coding.",
+        "gpt-5.1-codex-mini": "Optimized for codex. Cheaper, faster, but less capable.",
+    }
 }
 
 
@@ -52,6 +83,7 @@ class Settings:
     default_model: str
     provider_commands: dict[str, list[str]]
     provider_model_flags: dict[str, str]
+    auto_dev_command: list[str]
     projects_roots: list[Path]
 
 
@@ -88,6 +120,7 @@ def load_settings(project_root: Path | None = None) -> Settings:
         "gemini": os.getenv("ROBOT_GEMINI_MODEL_FLAG", "--model").strip() or "--model",
         "copilot": os.getenv("ROBOT_COPILOT_MODEL_FLAG", "--model").strip() or "--model",
     }
+    auto_dev_command = _split_command(os.getenv("ROBOT_AUTO_DEV_CMD", "python auto_dev_agent.py"))
 
     raw_roots = (os.getenv("ROBOT_PROJECTS_ROOTS", "") or "").strip()
     roots: list[Path] = []
@@ -117,6 +150,6 @@ def load_settings(project_root: Path | None = None) -> Settings:
         default_model=default_model,
         provider_commands=commands,
         provider_model_flags=model_flags,
+        auto_dev_command=auto_dev_command,
         projects_roots=unique_roots,
     )
-

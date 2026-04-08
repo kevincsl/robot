@@ -9,5 +9,6 @@ fi
 
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e .
-
+python -m pip install wheel
+python -m pip install --no-build-isolation -e .
+python scripts/setup_env.py

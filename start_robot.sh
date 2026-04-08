@@ -9,4 +9,6 @@ if [ ! -x ".venv/bin/python" ]; then
 fi
 
 source .venv/bin/activate
-python -m robot
+unset HTTP_PROXY HTTPS_PROXY ALL_PROXY
+unset http_proxy https_proxy all_proxy
+teleapp robot.py --no-hot-reload
