@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from teleapp.protocol import AppEvent
 
+from robot.brain import build_daily_brief, build_weekly_brief, collect_brain_reminders
 from robot.config import Settings
 from robot.providers import (
     RunningInvocation,
@@ -307,6 +308,7 @@ class AgentCoordinator:
         while True:
             now = datetime.now().replace(second=0, microsecond=0)
             for chat_id in self._store.list_chat_ids():
+                await self._process_brain_automation(chat_id, now)
                 schedules = self._store.get_agent_schedules(chat_id)
                 due: list[dict[str, Any]] = []
                 keep: list[dict[str, Any]] = []
@@ -335,6 +337,28 @@ class AgentCoordinator:
                 self.ensure_worker(chat_id)
 
             await asyncio.sleep(15)
+
+    async def _process_brain_automation(self, chat_id: int, now: datetime) -> None:
+        automation = self._store.get_brain_automation(chat_id)
+        if not automation or not bool(automation.get("enabled")):
+            return
+
+        current_date = now.strftime("%Y-%m-%d")
+        daily_time = str(automation.get("daily_time") or "21:00").strip()
+        if daily_time == now.strftime("%H:%M") and str(automation.get("last_daily_date") or "") != current_date:
+            text = build_daily_brief(self._settings)
+            reminders = collect_brain_reminders(self._settings, limit=5)
+            payload = "\n".join([text, "", "提醒：", *reminders])
+            await self._emit(chat_id, payload)
+            self._store.update_brain_automation(chat_id, last_daily_date=current_date)
+
+        weekly_day = int(automation.get("weekly_day") or 0)
+        weekly_time = str(automation.get("weekly_time") or "09:00").strip()
+        week_key = now.strftime("%G-W%V")
+        if now.weekday() == weekly_day and weekly_time == now.strftime("%H:%M") and str(automation.get("last_weekly_key") or "") != week_key:
+            payload = build_weekly_brief(self._settings, limit=10)
+            await self._emit(chat_id, payload)
+            self._store.update_brain_automation(chat_id, last_weekly_key=week_key)
 
     async def _worker_loop(self, chat_id: int) -> None:
         while True:

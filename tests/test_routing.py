@@ -111,6 +111,9 @@ class RoutingTests(unittest.TestCase):
                 "brain:resource",
                 "brain:summary",
                 "brain:decide",
+                "brain:remind",
+                "brain:daily",
+                "brain:weekly",
                 "brain:cancel",
             ],
         )
@@ -211,6 +214,42 @@ class RoutingTests(unittest.TestCase):
                 body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
         self.assertIn("brief body", body)
         self.assertIn("Decision Review", body)
+
+    def test_brainremind_command_returns_reminders(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/brainremind", command="brainremind"))
+        with patch("robot.routing.collect_brain_reminders", return_value=["- Inbox 還有 2 篇未整理內容"]):
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("提醒", body)
+        self.assertIn("Inbox", body)
+
+    def test_braindaily_command_returns_daily_brief(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/braindaily", command="braindaily"))
+        with patch("robot.routing.build_daily_brief", return_value="每日摘要\n\n內容"):
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("每日摘要", body)
+
+    def test_brainweekly_command_returns_weekly_brief(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/brainweekly", command="brainweekly"))
+        with patch("robot.routing.build_weekly_brief", return_value="每週摘要\n\n內容"):
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("每週摘要", body)
+
+    def test_brainauto_status_command_returns_settings(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/brainauto", command="brainauto"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("brain auto", body)
+        self.assertIn("daily_time", body)
+
+    def test_brainauto_on_off_commands_update_state(self) -> None:
+        off_request = classify_request(MessageContext(chat_id=1, text="/brainauto off", command="brainauto"))
+        off_body = self.loop.run_until_complete(handle_command(1, off_request, self.settings, self.store, self.agents))
+        self.assertIn("disabled", off_body)
+        self.assertFalse(self.store.get_brain_automation(1)["enabled"])
+
+        on_request = classify_request(MessageContext(chat_id=1, text="/brainauto on", command="brainauto"))
+        on_body = self.loop.run_until_complete(handle_command(1, on_request, self.settings, self.store, self.agents))
+        self.assertIn("enabled", on_body)
+        self.assertTrue(self.store.get_brain_automation(1)["enabled"])
 
     def test_brainproject_command_creates_project_note(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/brainproject Roadmap", command="brainproject"))

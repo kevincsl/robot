@@ -12,6 +12,9 @@ from robot.agents import AgentCoordinator
 from robot.brain import (
     append_to_daily,
     build_decision_support_brief,
+    build_daily_brief,
+    build_weekly_brief,
+    collect_brain_reminders,
     create_decision_note,
     create_decision_note_from_brief,
     create_inbox_note,
@@ -63,6 +66,12 @@ COMMAND_NAMES = {
     "brainresource",
     "brainorganize",
     "brainbatch",
+    "brainremind",
+    "braindaily",
+    "brainweekly",
+    "brainauto",
+    "brainautodaily",
+    "brainautoweekly",
 }
 
 CONTROL_NAMES = {
@@ -370,6 +379,12 @@ def _help_text() -> str:
             "/brainresource <title>",
             "/braindecide <question>",
             "/brainsummary",
+            "/brainremind",
+            "/braindaily",
+            "/brainweekly",
+            "/brainauto [on|off|status]",
+            "/brainautodaily HH:MM",
+            "/brainautoweekly <weekday 0-6> HH:MM",
             "",
             "control commands:",
             "/reset",
@@ -437,6 +452,9 @@ def _brain_text() -> str:
             "- Resource",
             "- 每週摘要",
             "- 決策支援",
+            "- 提醒",
+            "- 每日摘要",
+            "- 週摘要",
         ]
     )
 
@@ -457,6 +475,9 @@ def _brain_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
             Button("Resource", "brain:resource"),
             Button("每週摘要", "brain:summary"),
             Button("決策支援", "brain:decide"),
+            Button("提醒", "brain:remind"),
+            Button("每日摘要", "brain:daily"),
+            Button("週摘要", "brain:weekly"),
             Button("Cancel", "brain:cancel"),
         ],
     )
@@ -521,6 +542,16 @@ async def _handle_brain_action(chat_id: int, command: str, settings: Settings, s
     if command == "brain:decide":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_DECIDE})
         return "請輸入你要整理的判斷問題。輸入 cancel 可離開。"
+
+    if command == "brain:remind":
+        reminders = collect_brain_reminders(settings, limit=5)
+        return "提醒：\n" + "\n".join(reminders)
+
+    if command == "brain:daily":
+        return build_daily_brief(settings)
+
+    if command == "brain:weekly":
+        return build_weekly_brief(settings, limit=10)
 
     if command.startswith("brain:open_note:"):
         raw_index = command.rsplit(":", 1)[1].strip()
@@ -889,6 +920,12 @@ async def _handle_flow_input(
             return await _handle_brain_action(chat_id, "brain:summary", settings, store)
         if normalized in {"決策支援", "decide"}:
             return await _handle_brain_action(chat_id, "brain:decide", settings, store)
+        if normalized in {"提醒", "remind"}:
+            return await _handle_brain_action(chat_id, "brain:remind", settings, store)
+        if normalized in {"每日摘要", "daily"}:
+            return await _handle_brain_action(chat_id, "brain:daily", settings, store)
+        if normalized in {"週摘要", "weekly"}:
+            return await _handle_brain_action(chat_id, "brain:weekly", settings, store)
         if normalized in {"brain", "第二大腦", "筆記"}:
             return await _handle_brain_action(chat_id, "brain:open", settings, store)
         return None
@@ -1197,6 +1234,66 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
     if request.command == "brainsummary":
         path = ensure_weekly_summary_note(settings)
         return f"已準備每週摘要筆記。\npath: {path}"
+
+    if request.command == "brainremind":
+        reminders = collect_brain_reminders(settings, limit=5)
+        return "提醒：\n" + "\n".join(reminders)
+
+    if request.command == "braindaily":
+        return build_daily_brief(settings)
+
+    if request.command == "brainweekly":
+        return build_weekly_brief(settings, limit=10)
+
+    if request.command == "brainauto":
+        payload = request.payload.strip().lower()
+        if payload in {"", "status"}:
+            automation = store.get_brain_automation(chat_id)
+            return "\n".join(
+                [
+                    "brain auto",
+                    f"enabled: {automation.get('enabled')}",
+                    f"daily_time: {automation.get('daily_time')}",
+                    f"weekly_day: {automation.get('weekly_day')}",
+                    f"weekly_time: {automation.get('weekly_time')}",
+                    f"last_daily_date: {automation.get('last_daily_date') or '-'}",
+                    f"last_weekly_key: {automation.get('last_weekly_key') or '-'}",
+                ]
+            )
+        if payload == "on":
+            automation = store.update_brain_automation(chat_id, enabled=True)
+            return f"brain auto enabled.\ndaily_time: {automation.get('daily_time')}\nweekly_time: {automation.get('weekly_time')}"
+        if payload == "off":
+            store.update_brain_automation(chat_id, enabled=False)
+            return "brain auto disabled."
+        return "Usage: /brainauto [on|off|status]"
+
+    if request.command == "brainautodaily":
+        payload = request.payload.strip()
+        try:
+            datetime.strptime(payload, "%H:%M")
+        except ValueError:
+            return "Usage: /brainautodaily HH:MM"
+        store.update_brain_automation(chat_id, daily_time=payload)
+        return f"brain daily automation updated.\ndaily_time: {payload}"
+
+    if request.command == "brainautoweekly":
+        parts = request.payload.strip().split()
+        if len(parts) != 2:
+            return "Usage: /brainautoweekly <weekday 0-6> HH:MM"
+        weekday_raw, time_raw = parts
+        try:
+            weekday = int(weekday_raw)
+        except ValueError:
+            return "Usage: /brainautoweekly <weekday 0-6> HH:MM"
+        if weekday < 0 or weekday > 6:
+            return "Weekday must be 0-6, where 0 is Monday."
+        try:
+            datetime.strptime(time_raw, "%H:%M")
+        except ValueError:
+            return "Usage: /brainautoweekly <weekday 0-6> HH:MM"
+        store.update_brain_automation(chat_id, weekly_day=weekday, weekly_time=time_raw)
+        return f"brain weekly automation updated.\nweekly_day: {weekday}\nweekly_time: {time_raw}"
 
     return f"Unknown command: /{request.command}\nUse /help."
 

@@ -79,6 +79,16 @@ class ChatStateStore:
         bucket.setdefault("agent_current_run", None)
         bucket.setdefault("agent_last_run", None)
         bucket.setdefault("ui_flow", None)
+        automation = bucket.setdefault("brain_automation", {})
+        if not isinstance(automation, dict):
+            automation = {}
+            bucket["brain_automation"] = automation
+        automation.setdefault("enabled", True)
+        automation.setdefault("daily_time", "21:00")
+        automation.setdefault("weekly_day", 0)
+        automation.setdefault("weekly_time", "09:00")
+        automation.setdefault("last_daily_date", "")
+        automation.setdefault("last_weekly_key", "")
         return bucket
 
     def get_chat_state(self, chat_id: int) -> dict[str, Any]:
@@ -227,6 +237,23 @@ class ChatStateStore:
 
     def clear_ui_flow(self, chat_id: int) -> None:
         self.set_ui_flow(chat_id, None)
+
+    def get_brain_automation(self, chat_id: int) -> dict[str, Any]:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            automation = bucket.get("brain_automation")
+            return dict(automation) if isinstance(automation, dict) else {}
+
+    def update_brain_automation(self, chat_id: int, **changes: Any) -> dict[str, Any]:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            automation = bucket.setdefault("brain_automation", {})
+            if not isinstance(automation, dict):
+                automation = {}
+                bucket["brain_automation"] = automation
+            automation.update(changes)
+            self._save()
+            return dict(automation)
 
     def list_chat_ids(self) -> list[int]:
         with self._lock:

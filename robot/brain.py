@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from robot.config import Settings
 
 INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*]+')
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n?", re.DOTALL)
+TOPIC_RE = re.compile(r"topic:\s*(.+)")
 
 
 def _run_brain_command(settings: Settings, *args: str) -> str:
@@ -136,14 +138,7 @@ def _set_property_direct(settings: Settings, relative_path: str, name: str, valu
 
 
 def set_note_property(settings: Settings, relative_path: str, name: str, value: str, type_name: str = "text") -> None:
-    result = _try_cli(
-        settings,
-        "property:set",
-        f"path={relative_path}",
-        f"name={name}",
-        f"value={value}",
-        f"type={type_name}",
-    )
+    result = _try_cli(settings, "property:set", f"path={relative_path}", f"name={name}", f"value={value}", f"type={type_name}")
     if result is not None:
         return
     _set_property_direct(settings, relative_path, name, value)
@@ -203,12 +198,7 @@ def _search_vault_context_direct(settings: Settings, query: str, limit: int = 5)
         matched_lines = [line.strip() for line in lines if needle in line.lower()]
         if not matched_lines and needle not in path.name.lower():
             continue
-        results.append(
-            {
-                "file": _relative_posix(path, vault_root),
-                "matches": [{"text": line} for line in matched_lines[:2]],
-            }
-        )
+        results.append({"file": _relative_posix(path, vault_root), "matches": [{"text": line} for line in matched_lines[:2]]})
         if len(results) >= limit:
             break
     return results
@@ -349,6 +339,61 @@ def ensure_weekly_summary_note(settings: Settings) -> str:
     relative = path if result is not None else _create_note_direct(settings, path, template="Template - Weekly Summary")
     apply_note_defaults(settings, relative, note_type="review", title=stamp, topic="weekly-summary", review=True)
     return relative
+
+
+def collect_brain_reminders(settings: Settings, limit: int = 5) -> list[str]:
+    inbox = list_recent_notes(settings, "00 Inbox", limit=limit)
+    daily = list_recent_notes(settings, "01 Daily Notes", limit=limit)
+    reminders: list[str] = []
+    if inbox:
+        reminders.append(f"- Inbox 還有 {len(inbox)} 篇最近未整理內容")
+    if daily:
+        reminders.append(f"- Daily Notes 最近有 {len(daily)} 篇可回顧筆記")
+    if not reminders:
+        reminders.append("- 目前沒有明顯待提醒項目")
+    return reminders
+
+
+def build_daily_brief(settings: Settings) -> str:
+    today_body = read_daily(settings).strip()
+    reminders = collect_brain_reminders(settings, limit=3)
+    lines = [
+        "每日摘要",
+        "",
+        "今日筆記重點：",
+        today_body if today_body else "- 今日尚未有內容",
+        "",
+        "提醒：",
+        *reminders,
+    ]
+    return "\n".join(lines)
+
+
+def build_weekly_brief(settings: Settings, limit: int = 10) -> str:
+    recent = list_recent_notes(settings, "01 Daily Notes", limit=limit)
+    topic_counter: Counter[str] = Counter()
+    for relative in recent:
+        try:
+            text = read_note(settings, relative)
+        except OSError:
+            continue
+        match = TOPIC_RE.search(text)
+        if match:
+            topic = match.group(1).strip()
+            if topic:
+                topic_counter[topic] += 1
+    lines = ["每週摘要", "", "最近筆記："]
+    if recent:
+        lines.extend(f"- {item}" for item in recent[:limit])
+    else:
+        lines.append("- 沒有最近的 Daily Notes")
+    lines.extend(["", "高頻主題："])
+    if topic_counter:
+        lines.extend(f"- {topic} ({count})" for topic, count in topic_counter.most_common(5))
+    else:
+        lines.append("- 尚未累積可辨識的 topic")
+    lines.extend(["", "提醒：", *collect_brain_reminders(settings, limit=3)])
+    return "\n".join(lines)
 
 
 def _build_decision_lines(question: str, matches: list[dict[str, object]], limit: int = 5) -> tuple[list[str], list[str]]:
