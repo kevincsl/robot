@@ -86,6 +86,264 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("其他自然語言訊息不會被選單吃掉", body.text)
         self.assertEqual([button.data for button in body.buttons or []], ["menu:status", "menu:provider", "menu:model", "menu:projects", "menu:cancel"])
 
+    def test_brain_trigger_returns_buttons(self) -> None:
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="brain"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("brain menu", body.text.lower())
+        self.assertEqual(
+            [button.data for button in body.buttons or []],
+            [
+                "brain:capture",
+                "brain:inbox",
+                "brain:read",
+                "brain:search",
+                "brain:organize",
+                "brain:batch",
+                "brain:project",
+                "brain:knowledge",
+                "brain:resource",
+                "brain:summary",
+                "brain:decide",
+                "brain:cancel",
+            ],
+        )
+
+    def test_brain_capture_flow_appends_to_daily(self) -> None:
+        self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="brain"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="brain:capture"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        with patch("robot.routing.append_to_daily", return_value="01 Daily Notes/2026-04-09.md"):
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="今天整理第二大腦流程"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertIn("已寫入今日筆記", body)
+        self.assertIsNone(self.store.get_ui_flow(1))
+
+    def test_brainread_command_reads_daily(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/brainread", command="brainread"))
+        with patch("robot.routing.read_daily", return_value="# Daily\n\ncontent"):
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("content", body)
+
+    def test_brainsearch_command_lists_matches(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/brainsearch product", command="brainsearch"))
+        with patch("robot.routing.search_vault", return_value=["03 Knowledge/product.md", "02 Projects/roadmap.md"]):
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("搜尋結果", body.text)
+        self.assertEqual([button.data for button in body.buttons or []], ["brain:open_note:0", "brain:open_note:1"])
+
+    def test_brain_search_flow_returns_clickable_results(self) -> None:
+        self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="brain"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="brain:search"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        with patch("robot.routing.search_vault", return_value=["03 Knowledge/product.md"]):
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="product"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertEqual([button.data for button in body.buttons or []], ["brain:open_note:0"])
+        flow = self.store.get_ui_flow(1)
+        self.assertIsInstance(flow, dict)
+        self.assertEqual(flow.get("kind"), "brain_search_results")
+
+    def test_brain_open_note_reads_selected_result(self) -> None:
+        self.store.set_ui_flow(1, {"kind": "brain_search_results", "results": ["03 Knowledge/product.md"]})
+        with patch("robot.routing.read_note", return_value="# Product\n\ncontent"):
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="", command="brain:open_note:0"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertIn("03 Knowledge/product.md", body)
+        self.assertIn("content", body)
+
+    def test_braindecide_returns_brief_and_path(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/braindecide Should I focus on product?", command="braindecide"))
+        with patch("robot.routing.build_decision_support_brief", return_value=(["03 Knowledge/product.md"], "brief body")):
+            with patch("robot.routing.create_decision_note_from_brief", return_value="07 Decision Support/Decision Review - x.md"):
+                body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("brief body", body)
+        self.assertIn("Decision Review", body)
+
+    def test_brainproject_command_creates_project_note(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/brainproject Roadmap", command="brainproject"))
+        with patch("robot.routing.create_project_note", return_value="02 Projects/Roadmap.md"):
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("Project", body)
+        self.assertIn("02 Projects/Roadmap.md", body)
+
+    def test_brain_project_flow_creates_and_reads_note(self) -> None:
+        self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="brain"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="brain:project"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        with patch("robot.routing.create_project_note", return_value="02 Projects/Roadmap.md"):
+            with patch("robot.routing.read_note", return_value="# Project\n\ncontent"):
+                body = self.loop.run_until_complete(
+                    handle_request(
+                        MessageContext(chat_id=1, text="Roadmap"),
+                        self.settings,
+                        self.store,
+                        self.agents,
+                    )
+                )
+        self.assertIn("Roadmap.md", body)
+        self.assertIn("content", body)
+
+    def test_brain_organize_flow_creates_project_from_text(self) -> None:
+        self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="brain"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="brain:organize"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        target_menu = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="這是一段要整理成專案的原始內容"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(target_menu, ButtonResponse)
+        self.assertEqual(
+            [button.data for button in target_menu.buttons or []],
+            ["brain:organize_target:project", "brain:organize_target:knowledge", "brain:organize_target:resource"],
+        )
+        self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="brain:organize_target:project"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        with patch("robot.routing.create_project_note_from_text", return_value="02 Projects/Roadmap.md"):
+            with patch("robot.routing.read_note", return_value="# Project\n\nsource content"):
+                body = self.loop.run_until_complete(
+                    handle_request(
+                        MessageContext(chat_id=1, text="Roadmap"),
+                        self.settings,
+                        self.store,
+                        self.agents,
+                    )
+                )
+        self.assertIn("已整理成 Project 筆記", body)
+        self.assertIn("Roadmap.md", body)
+
+    def test_brain_batch_returns_recent_note_buttons(self) -> None:
+        with patch("robot.routing.list_recent_notes", side_effect=[["00 Inbox/a.md"], ["01 Daily Notes/2026-04-10.md"]]):
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="", command="brain:batch"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertEqual([button.data for button in body.buttons or []], ["brain:batch_open:0", "brain:batch_open:1"])
+
+    def test_brain_batch_open_loads_note_and_shows_target_buttons(self) -> None:
+        self.store.set_ui_flow(1, {"kind": "brain_batch_results", "results": ["00 Inbox/a.md"]})
+        with patch("robot.routing.read_note", return_value="raw note text"):
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="", command="brain:batch_open:0"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertEqual(
+            [button.data for button in body.buttons or []],
+            ["brain:organize_target:project", "brain:organize_target:knowledge", "brain:organize_target:resource"],
+        )
+
+    def test_brainknowledge_command_creates_knowledge_note(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/brainknowledge Prompt Engineering", command="brainknowledge"))
+        with patch("robot.routing.create_knowledge_note", return_value="03 Knowledge/Prompt Engineering.md"):
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("Knowledge", body)
+        self.assertIn("03 Knowledge/Prompt Engineering.md", body)
+
+    def test_brainresource_command_creates_resource_note(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/brainresource AI article", command="brainresource"))
+        with patch("robot.routing.create_resource_note", return_value="04 Resources/AI article.md"):
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("Resource", body)
+        self.assertIn("04 Resources/AI article.md", body)
+
     def test_menu_model_flow_updates_model_from_button_callback(self) -> None:
         open_menu = self.loop.run_until_complete(
             handle_request(

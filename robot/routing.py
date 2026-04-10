@@ -9,6 +9,24 @@ from teleapp import Button, ButtonResponse
 from teleapp.context import MessageContext
 
 from robot.agents import AgentCoordinator
+from robot.brain import (
+    append_to_daily,
+    build_decision_support_brief,
+    create_decision_note,
+    create_decision_note_from_brief,
+    create_inbox_note,
+    create_knowledge_note,
+    create_knowledge_note_from_text,
+    create_project_note,
+    create_project_note_from_text,
+    create_resource_note,
+    create_resource_note_from_text,
+    ensure_weekly_summary_note,
+    list_recent_notes,
+    read_daily,
+    read_note,
+    search_vault,
+)
 from robot.config import MODEL_CHOICES, MODEL_DESCRIPTIONS, PROVIDER_LABELS, SUPPORTED_MODELS, Settings, VERSION
 from robot.diagnostics import build_doctor_report
 from robot.projects import discover_project_workspaces, find_workspace
@@ -34,6 +52,17 @@ COMMAND_NAMES = {
     "agentstatus",
     "agentprofiles",
     "menu",
+    "brain",
+    "brainread",
+    "braininbox",
+    "brainsearch",
+    "braindecide",
+    "brainsummary",
+    "brainproject",
+    "brainknowledge",
+    "brainresource",
+    "brainorganize",
+    "brainbatch",
 }
 
 CONTROL_NAMES = {
@@ -72,11 +101,26 @@ COMMON_CONTROL_PHRASES = {
 
 MENU_TRIGGERS = {"menu", "選單"}
 MODEL_TRIGGERS = {"model", "模型"}
+BRAIN_TRIGGERS = {"brain", "第二大腦", "筆記"}
 MENU_COMMAND_PREFIX = "menu:"
+BRAIN_COMMAND_PREFIX = "brain:"
 FLOW_AWAIT_MODEL = "await_model"
 FLOW_AWAIT_PROVIDER = "await_provider"
 FLOW_AWAIT_PROJECT = "await_project"
 FLOW_AWAIT_MENU_ACTION = "await_menu_action"
+FLOW_AWAIT_BRAIN_ACTION = "await_brain_action"
+FLOW_AWAIT_BRAIN_CAPTURE = "await_brain_capture"
+FLOW_AWAIT_BRAIN_INBOX = "await_brain_inbox"
+FLOW_AWAIT_BRAIN_SEARCH = "await_brain_search"
+FLOW_AWAIT_BRAIN_DECIDE = "await_brain_decide"
+FLOW_AWAIT_BRAIN_PROJECT = "await_brain_project"
+FLOW_AWAIT_BRAIN_KNOWLEDGE = "await_brain_knowledge"
+FLOW_AWAIT_BRAIN_RESOURCE = "await_brain_resource"
+FLOW_AWAIT_BRAIN_ORGANIZE_TEXT = "await_brain_organize_text"
+FLOW_AWAIT_BRAIN_ORGANIZE_TARGET = "await_brain_organize_target"
+FLOW_AWAIT_BRAIN_ORGANIZE_TITLE = "await_brain_organize_title"
+FLOW_BRAIN_SEARCH_RESULTS = "brain_search_results"
+FLOW_BRAIN_BATCH_RESULTS = "brain_batch_results"
 
 
 @dataclass(slots=True)
@@ -257,6 +301,8 @@ def classify_request(ctx: MessageContext) -> ClassifiedRequest:
 
     if command == "menu" or (command and command.startswith(MENU_COMMAND_PREFIX)):
         return ClassifiedRequest(COMMAND_REQUEST, command, "")
+    if command == "brain" or (command and command.startswith(BRAIN_COMMAND_PREFIX)):
+        return ClassifiedRequest(COMMAND_REQUEST, command, "")
 
     lowered = text.lower()
     phrase_control = COMMON_CONTROL_PHRASES.get(lowered) or COMMON_CONTROL_PHRASES.get(text)
@@ -313,6 +359,17 @@ def _help_text() -> str:
             "/agentstatus",
             "/agentprofiles [--config PATH]",
             "/menu",
+            "/brain",
+            "/brainread",
+            "/braininbox <text>",
+            "/brainsearch <query>",
+            "/brainorganize",
+            "/brainbatch",
+            "/brainproject <title>",
+            "/brainknowledge <title>",
+            "/brainresource <title>",
+            "/braindecide <question>",
+            "/brainsummary",
             "",
             "control commands:",
             "/reset",
@@ -360,6 +417,188 @@ def _menu_text(chat_id: int, store: ChatStateStore) -> str:
             "其他自然語言訊息不會被選單吃掉，會直接送進 AI。",
         ]
     )
+
+
+def _brain_text() -> str:
+    return "\n".join(
+        [
+            "brain menu",
+            "使用 TG 操作 secondbrain",
+            "",
+            "可用功能：",
+            "- 寫入今日",
+            "- Inbox",
+            "- 讀今日",
+            "- 搜尋",
+            "- 整理",
+            "- 批次整理",
+            "- 專案",
+            "- 知識卡",
+            "- Resource",
+            "- 每週摘要",
+            "- 決策支援",
+        ]
+    )
+
+
+def _brain_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
+    store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_ACTION})
+    return ButtonResponse(
+        _brain_text(),
+        buttons=[
+            Button("寫入今日", "brain:capture"),
+            Button("Inbox", "brain:inbox"),
+            Button("讀今日", "brain:read"),
+            Button("搜尋", "brain:search"),
+            Button("整理", "brain:organize"),
+            Button("批次整理", "brain:batch"),
+            Button("專案", "brain:project"),
+            Button("知識卡", "brain:knowledge"),
+            Button("Resource", "brain:resource"),
+            Button("每週摘要", "brain:summary"),
+            Button("決策支援", "brain:decide"),
+            Button("Cancel", "brain:cancel"),
+        ],
+    )
+
+
+async def _handle_brain_action(chat_id: int, command: str, settings: Settings, store: ChatStateStore):
+    if command in {"brain", "brain:open"}:
+        return _brain_menu_response(chat_id, store)
+
+    if command == "brain:cancel":
+        store.clear_ui_flow(chat_id)
+        return "Brain menu canceled."
+
+    if command == "brain:capture":
+        store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_CAPTURE})
+        return "請輸入要寫入今日 daily note 的內容。輸入 cancel 可離開。"
+
+    if command == "brain:inbox":
+        store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_INBOX})
+        return "請輸入要存進 Inbox 的內容。輸入 cancel 可離開。"
+
+    if command == "brain:read":
+        body = read_daily(settings).strip()
+        return body if body else "今日 daily note 目前是空的。"
+
+    if command == "brain:search":
+        store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_SEARCH})
+        return "請輸入要搜尋 secondbrain 的關鍵字。輸入 cancel 可離開。"
+
+    if command == "brain:organize":
+        store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_ORGANIZE_TEXT})
+        return "請先貼上你要整理的原始內容。輸入 cancel 可離開。"
+
+    if command == "brain:batch":
+        items = list_recent_notes(settings, "00 Inbox", limit=5) + list_recent_notes(settings, "01 Daily Notes", limit=5)
+        items = items[:10]
+        if not items:
+            return "目前沒有可批次整理的 Inbox / Daily 筆記。"
+        store.set_ui_flow(chat_id, {"kind": FLOW_BRAIN_BATCH_RESULTS, "results": items})
+        return ButtonResponse(
+            "選一篇最近的 Inbox / Daily 筆記來整理：",
+            buttons=[Button(item, f"brain:batch_open:{idx}") for idx, item in enumerate(items)],
+        )
+
+    if command == "brain:project":
+        store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_PROJECT})
+        return "請輸入專案名稱，我會建立 project note。輸入 cancel 可離開。"
+
+    if command == "brain:knowledge":
+        store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_KNOWLEDGE})
+        return "請輸入知識卡標題，我會建立 knowledge note。輸入 cancel 可離開。"
+
+    if command == "brain:resource":
+        store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_RESOURCE})
+        return "請輸入 resource 標題，我會建立 resource note。輸入 cancel 可離開。"
+
+    if command == "brain:summary":
+        path = ensure_weekly_summary_note(settings)
+        body = read_note(settings, path).strip()
+        return f"已準備每週摘要筆記：{path}\n\n{body}"
+
+    if command == "brain:decide":
+        store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_DECIDE})
+        return "請輸入你要整理的判斷問題。輸入 cancel 可離開。"
+
+    if command.startswith("brain:open_note:"):
+        raw_index = command.rsplit(":", 1)[1].strip()
+        flow = store.get_ui_flow(chat_id)
+        if not isinstance(flow, dict) or flow.get("kind") != FLOW_BRAIN_SEARCH_RESULTS:
+            return "目前沒有可開啟的搜尋結果。請先搜尋。"
+        results = flow.get("results")
+        if not isinstance(results, list):
+            return "搜尋結果已失效。請重新搜尋。"
+        try:
+            index = int(raw_index)
+        except ValueError:
+            return "無效的搜尋結果索引。"
+        if index < 0 or index >= len(results):
+            return "搜尋結果索引超出範圍。"
+        path = str(results[index]).strip()
+        body = read_note(settings, path).strip()
+        return f"{path}\n\n{body}" if body else f"{path}\n\n這篇筆記目前是空的。"
+
+    if command.startswith("brain:batch_open:"):
+        raw_index = command.rsplit(":", 1)[1].strip()
+        flow = store.get_ui_flow(chat_id)
+        if not isinstance(flow, dict) or flow.get("kind") != FLOW_BRAIN_BATCH_RESULTS:
+            return "目前沒有可用的批次整理結果。請先重新開啟批次整理。"
+        results = flow.get("results")
+        if not isinstance(results, list):
+            return "批次整理結果已失效。請重新開始。"
+        try:
+            index = int(raw_index)
+        except ValueError:
+            return "無效的批次整理索引。"
+        if index < 0 or index >= len(results):
+            return "批次整理索引超出範圍。"
+        path = str(results[index]).strip()
+        source_text = read_note(settings, path).strip()
+        store.set_ui_flow(
+            chat_id,
+            {
+                "kind": FLOW_AWAIT_BRAIN_ORGANIZE_TARGET,
+                "source_text": source_text,
+                "source_path": path,
+            },
+        )
+        return ButtonResponse(
+            f"已載入：{path}\n要整理成哪一類？",
+            buttons=[
+                Button("專案", "brain:organize_target:project"),
+                Button("知識卡", "brain:organize_target:knowledge"),
+                Button("Resource", "brain:organize_target:resource"),
+            ],
+        )
+
+    if command.startswith("brain:organize_target:"):
+        target = command.rsplit(":", 1)[1].strip()
+        flow = store.get_ui_flow(chat_id)
+        if not isinstance(flow, dict) or flow.get("kind") != FLOW_AWAIT_BRAIN_ORGANIZE_TARGET:
+            return "目前沒有待整理內容。請先重新開始整理流程。"
+        source_text = str(flow.get("source_text") or "").strip()
+        if not source_text:
+            return "原始內容已遺失。請重新開始整理流程。"
+        if target not in {"project", "knowledge", "resource"}:
+            return "無效的整理目標。"
+        store.set_ui_flow(
+            chat_id,
+            {
+                "kind": FLOW_AWAIT_BRAIN_ORGANIZE_TITLE,
+                "source_text": source_text,
+                "target": target,
+            },
+        )
+        labels = {
+            "project": "專案",
+            "knowledge": "知識卡",
+            "resource": "Resource",
+        }
+        return f"請輸入整理後的{labels[target]}標題。輸入 cancel 可離開。"
+
+    return f"Unknown brain action: {command}"
 
 
 def _main_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
@@ -626,6 +865,117 @@ async def _handle_flow_input(
             return await _handle_menu_action(chat_id, "menu:open", settings, store, agents)
         return None
 
+    if kind == FLOW_AWAIT_BRAIN_ACTION:
+        normalized = text.strip().lower()
+        if normalized in {"寫入今日", "capture"}:
+            return await _handle_brain_action(chat_id, "brain:capture", settings, store)
+        if normalized in {"inbox"}:
+            return await _handle_brain_action(chat_id, "brain:inbox", settings, store)
+        if normalized in {"讀今日", "read"}:
+            return await _handle_brain_action(chat_id, "brain:read", settings, store)
+        if normalized in {"搜尋", "search"}:
+            return await _handle_brain_action(chat_id, "brain:search", settings, store)
+        if normalized in {"整理", "organize"}:
+            return await _handle_brain_action(chat_id, "brain:organize", settings, store)
+        if normalized in {"批次整理", "batch"}:
+            return await _handle_brain_action(chat_id, "brain:batch", settings, store)
+        if normalized in {"專案", "project"}:
+            return await _handle_brain_action(chat_id, "brain:project", settings, store)
+        if normalized in {"知識卡", "knowledge"}:
+            return await _handle_brain_action(chat_id, "brain:knowledge", settings, store)
+        if normalized in {"resource"}:
+            return await _handle_brain_action(chat_id, "brain:resource", settings, store)
+        if normalized in {"每週摘要", "summary"}:
+            return await _handle_brain_action(chat_id, "brain:summary", settings, store)
+        if normalized in {"決策支援", "decide"}:
+            return await _handle_brain_action(chat_id, "brain:decide", settings, store)
+        if normalized in {"brain", "第二大腦", "筆記"}:
+            return await _handle_brain_action(chat_id, "brain:open", settings, store)
+        return None
+
+    if kind == FLOW_AWAIT_BRAIN_CAPTURE:
+        path = append_to_daily(settings, text)
+        store.clear_ui_flow(chat_id)
+        return f"已寫入今日筆記。\npath: {path}"
+
+    if kind == FLOW_AWAIT_BRAIN_INBOX:
+        path = create_inbox_note(settings, text)
+        store.clear_ui_flow(chat_id)
+        return f"已建立 Inbox 筆記。\npath: {path}"
+
+    if kind == FLOW_AWAIT_BRAIN_SEARCH:
+        matches = search_vault(settings, text, limit=10)
+        if not matches:
+            store.clear_ui_flow(chat_id)
+            return f"找不到與「{text}」相關的筆記。"
+        store.set_ui_flow(chat_id, {"kind": FLOW_BRAIN_SEARCH_RESULTS, "results": matches[:10]})
+        return ButtonResponse(
+            f"搜尋結果：{text}",
+            buttons=[Button(item, f"brain:open_note:{idx}") for idx, item in enumerate(matches[:10])],
+        )
+
+    if kind == FLOW_AWAIT_BRAIN_ORGANIZE_TEXT:
+        store.set_ui_flow(
+            chat_id,
+            {
+                "kind": FLOW_AWAIT_BRAIN_ORGANIZE_TARGET,
+                "source_text": text,
+            },
+        )
+        return ButtonResponse(
+            "要把這段內容整理成哪一類？",
+            buttons=[
+                Button("專案", "brain:organize_target:project"),
+                Button("知識卡", "brain:organize_target:knowledge"),
+                Button("Resource", "brain:organize_target:resource"),
+            ],
+        )
+
+    if kind == FLOW_AWAIT_BRAIN_PROJECT:
+        path = create_project_note(settings, text)
+        body = read_note(settings, path).strip()
+        store.clear_ui_flow(chat_id)
+        return f"已建立 Project 筆記：{path}\n\n{body}"
+
+    if kind == FLOW_AWAIT_BRAIN_KNOWLEDGE:
+        path = create_knowledge_note(settings, text)
+        body = read_note(settings, path).strip()
+        store.clear_ui_flow(chat_id)
+        return f"已建立 Knowledge 筆記：{path}\n\n{body}"
+
+    if kind == FLOW_AWAIT_BRAIN_RESOURCE:
+        path = create_resource_note(settings, text)
+        body = read_note(settings, path).strip()
+        store.clear_ui_flow(chat_id)
+        return f"已建立 Resource 筆記：{path}\n\n{body}"
+
+    if kind == FLOW_AWAIT_BRAIN_ORGANIZE_TITLE:
+        flow = store.get_ui_flow(chat_id)
+        if not isinstance(flow, dict):
+            return "整理流程已失效，請重新開始。"
+        source_text = str(flow.get("source_text") or "").strip()
+        target = str(flow.get("target") or "").strip()
+        if not source_text or target not in {"project", "knowledge", "resource"}:
+            return "整理流程資料不完整，請重新開始。"
+        if target == "project":
+            path = create_project_note_from_text(settings, text, source_text)
+            label = "Project"
+        elif target == "knowledge":
+            path = create_knowledge_note_from_text(settings, text, source_text)
+            label = "Knowledge"
+        else:
+            path = create_resource_note_from_text(settings, text, source_text)
+            label = "Resource"
+        body = read_note(settings, path).strip()
+        store.clear_ui_flow(chat_id)
+        return f"已整理成 {label} 筆記：{path}\n\n{body}"
+
+    if kind == FLOW_AWAIT_BRAIN_DECIDE:
+        related_paths, brief = build_decision_support_brief(settings, text, limit=5)
+        path = create_decision_note_from_brief(settings, text, brief, related_notes=related_paths)
+        store.clear_ui_flow(chat_id)
+        return f"{brief}\n\n已建立決策支援筆記：{path}"
+
     return None
 
 
@@ -636,6 +986,9 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
         return _main_menu_response(ctx.chat_id, store)
     if text in MODEL_TRIGGERS or text.lower() in MODEL_TRIGGERS:
         return _model_menu_response(ctx.chat_id, store)
+    if text in BRAIN_TRIGGERS or text.lower() in BRAIN_TRIGGERS:
+        store.clear_ui_flow(ctx.chat_id)
+        return _brain_menu_response(ctx.chat_id, store)
 
     flow_response = await _handle_flow_input(ctx.chat_id, ctx, settings, store, agents)
     if flow_response is not None:
@@ -652,6 +1005,8 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
 async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Settings, store: ChatStateStore, agents: AgentCoordinator) -> str:
     if request.command == "menu" or (request.command and request.command.startswith(MENU_COMMAND_PREFIX)):
         return await _handle_menu_action(chat_id, request.command, settings, store, agents)
+    if request.command == "brain" or (request.command and request.command.startswith(BRAIN_COMMAND_PREFIX)):
+        return await _handle_brain_action(chat_id, request.command, settings, store)
 
     state = store.get_chat_state(chat_id)
 
@@ -778,6 +1133,70 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
             except SystemExit:
                 return "Usage: /agentprofiles [--config PATH]"
         return await agents.auto_dev_profiles(chat_id, config_path=config_path)
+
+    if request.command == "brainread":
+        body = read_daily(settings).strip()
+        return body if body else "今日 daily note 目前是空的。"
+
+    if request.command == "braininbox":
+        payload = request.payload.strip()
+        if not payload:
+            return "Usage: /braininbox <text>"
+        path = create_inbox_note(settings, payload)
+        return f"已建立 Inbox 筆記。\npath: {path}"
+
+    if request.command == "brainsearch":
+        payload = request.payload.strip()
+        if not payload:
+            return "Usage: /brainsearch <query>"
+        matches = search_vault(settings, payload, limit=10)
+        if not matches:
+            return f"找不到與「{payload}」相關的筆記。"
+        store.set_ui_flow(chat_id, {"kind": FLOW_BRAIN_SEARCH_RESULTS, "results": matches[:10]})
+        return ButtonResponse(
+            f"搜尋結果：{payload}",
+            buttons=[Button(item, f"brain:open_note:{idx}") for idx, item in enumerate(matches[:10])],
+        )
+
+    if request.command == "brainorganize":
+        store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_ORGANIZE_TEXT})
+        return "請先貼上你要整理的原始內容。輸入 cancel 可離開。"
+
+    if request.command == "brainbatch":
+        return await _handle_brain_action(chat_id, "brain:batch", settings, store)
+
+    if request.command == "brainproject":
+        payload = request.payload.strip()
+        if not payload:
+            return "Usage: /brainproject <title>"
+        path = create_project_note(settings, payload)
+        return f"已建立 Project 筆記。\npath: {path}"
+
+    if request.command == "brainknowledge":
+        payload = request.payload.strip()
+        if not payload:
+            return "Usage: /brainknowledge <title>"
+        path = create_knowledge_note(settings, payload)
+        return f"已建立 Knowledge 筆記。\npath: {path}"
+
+    if request.command == "brainresource":
+        payload = request.payload.strip()
+        if not payload:
+            return "Usage: /brainresource <title>"
+        path = create_resource_note(settings, payload)
+        return f"已建立 Resource 筆記。\npath: {path}"
+
+    if request.command == "braindecide":
+        payload = request.payload.strip()
+        if not payload:
+            return "Usage: /braindecide <question>"
+        related_paths, brief = build_decision_support_brief(settings, payload, limit=5)
+        path = create_decision_note_from_brief(settings, payload, brief, related_notes=related_paths)
+        return f"{brief}\n\n已建立決策支援筆記：{path}"
+
+    if request.command == "brainsummary":
+        path = ensure_weekly_summary_note(settings)
+        return f"已準備每週摘要筆記。\npath: {path}"
 
     return f"Unknown command: /{request.command}\nUse /help."
 

@@ -85,6 +85,9 @@ class Settings:
     provider_model_flags: dict[str, str]
     auto_dev_command: list[str]
     projects_roots: list[Path]
+    brain_cli_command: list[str]
+    brain_vault_name: str
+    brain_vault_path: Path | None
 
 
 def normalize_provider(provider: str | None) -> str:
@@ -100,6 +103,22 @@ def normalize_model(provider: str, model: str | None) -> str:
     if candidate in SUPPORTED_MODELS.get(normalized_provider, []):
         return candidate
     return candidate
+
+
+def _resolve_brain_vault_path(root: Path, configured_path: str | None, vault_name: str) -> Path | None:
+    if configured_path and configured_path.strip():
+        return Path(configured_path).expanduser().resolve()
+
+    candidates = [
+        root / vault_name,
+        root.parent / vault_name,
+        root / "secondbrain",
+        root.parent / "secondbrain",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    return None
 
 
 def load_settings(project_root: Path | None = None) -> Settings:
@@ -121,6 +140,9 @@ def load_settings(project_root: Path | None = None) -> Settings:
         "copilot": os.getenv("ROBOT_COPILOT_MODEL_FLAG", "--model").strip() or "--model",
     }
     auto_dev_command = _split_command(os.getenv("ROBOT_AUTO_DEV_CMD", "python auto_dev_agent.py"))
+    brain_cli_command = _split_command(os.getenv("ROBOT_BRAIN_CLI_CMD", "obsidian"))
+    brain_vault_name = (os.getenv("ROBOT_BRAIN_VAULT", "secondbrain") or "secondbrain").strip()
+    brain_vault_path = _resolve_brain_vault_path(root, os.getenv("ROBOT_BRAIN_VAULT_PATH"), brain_vault_name)
 
     raw_roots = (os.getenv("ROBOT_PROJECTS_ROOTS", "") or "").strip()
     roots: list[Path] = []
@@ -152,4 +174,7 @@ def load_settings(project_root: Path | None = None) -> Settings:
         provider_model_flags=model_flags,
         auto_dev_command=auto_dev_command,
         projects_roots=unique_roots,
+        brain_cli_command=brain_cli_command,
+        brain_vault_name=brain_vault_name,
+        brain_vault_path=brain_vault_path,
     )
