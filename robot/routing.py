@@ -24,6 +24,7 @@ from robot.brain import (
     create_project_note_from_text,
     create_resource_note,
     create_resource_note_from_text,
+    create_schedule_note,
     ensure_weekly_summary_note,
     list_recent_notes,
     read_daily,
@@ -64,6 +65,7 @@ COMMAND_NAMES = {
     "brainproject",
     "brainknowledge",
     "brainresource",
+    "brainschedule",
     "brainorganize",
     "brainbatch",
     "brainremind",
@@ -72,6 +74,7 @@ COMMAND_NAMES = {
     "brainauto",
     "brainautodaily",
     "brainautoweekly",
+    "robotonly",
 }
 
 CONTROL_NAMES = {
@@ -113,11 +116,11 @@ MODEL_TRIGGERS = {"model", "模型"}
 BRAIN_TRIGGERS = {"brain", "第二大腦", "筆記"}
 MENU_COMMAND_PREFIX = "menu:"
 BRAIN_COMMAND_PREFIX = "brain:"
+UI_BUILD_TAG = "ui-build:2026-04-10-b"
+HOSTED_BUILD_TAG = "hosted-build:2026-04-10-c"
 FLOW_AWAIT_MODEL = "await_model"
 FLOW_AWAIT_PROVIDER = "await_provider"
 FLOW_AWAIT_PROJECT = "await_project"
-FLOW_AWAIT_MENU_ACTION = "await_menu_action"
-FLOW_AWAIT_BRAIN_ACTION = "await_brain_action"
 FLOW_AWAIT_BRAIN_CAPTURE = "await_brain_capture"
 FLOW_AWAIT_BRAIN_INBOX = "await_brain_inbox"
 FLOW_AWAIT_BRAIN_SEARCH = "await_brain_search"
@@ -125,6 +128,9 @@ FLOW_AWAIT_BRAIN_DECIDE = "await_brain_decide"
 FLOW_AWAIT_BRAIN_PROJECT = "await_brain_project"
 FLOW_AWAIT_BRAIN_KNOWLEDGE = "await_brain_knowledge"
 FLOW_AWAIT_BRAIN_RESOURCE = "await_brain_resource"
+FLOW_AWAIT_BRAIN_SCHEDULE_TITLE = "await_brain_schedule_title"
+FLOW_AWAIT_BRAIN_SCHEDULE_DATE = "await_brain_schedule_date"
+FLOW_AWAIT_BRAIN_SCHEDULE_TIME = "await_brain_schedule_time"
 FLOW_AWAIT_BRAIN_ORGANIZE_TEXT = "await_brain_organize_text"
 FLOW_AWAIT_BRAIN_ORGANIZE_TARGET = "await_brain_organize_target"
 FLOW_AWAIT_BRAIN_ORGANIZE_TITLE = "await_brain_organize_title"
@@ -155,6 +161,15 @@ def _command_payload(text: str) -> str:
     if len(parts) < 2:
         return ""
     return parts[1].strip()
+
+
+def _resolved_payload(text: str, command: str | None) -> str:
+    stripped = (text or "").strip()
+    if command:
+        if stripped.startswith("/"):
+            return _command_payload(stripped)
+        return stripped
+    return _command_payload(stripped) if stripped.startswith("/") else stripped
 
 
 def _extract_command_from_text(text: str) -> str | None:
@@ -315,12 +330,12 @@ def classify_request(ctx: MessageContext) -> ClassifiedRequest:
 
     lowered = text.lower()
     phrase_control = COMMON_CONTROL_PHRASES.get(lowered) or COMMON_CONTROL_PHRASES.get(text)
-    if phrase_control is not None:
+    if phrase_control is not None and phrase_control not in {"continue", "next"}:
         return ClassifiedRequest(CONTROL_REQUEST, phrase_control, text)
     if command in COMMAND_NAMES:
-        return ClassifiedRequest(COMMAND_REQUEST, command, _command_payload(text))
+        return ClassifiedRequest(COMMAND_REQUEST, command, _resolved_payload(text, command))
     if command in CONTROL_NAMES:
-        return ClassifiedRequest(CONTROL_REQUEST, command, _command_payload(text))
+        return ClassifiedRequest(CONTROL_REQUEST, command, _resolved_payload(text, command))
     if text.startswith("/"):
         return ClassifiedRequest(COMMAND_REQUEST, command, _command_payload(text))
     return ClassifiedRequest(AGENT_REQUEST, None, text)
@@ -330,6 +345,8 @@ def _status_text(chat_id: int, store: ChatStateStore) -> str:
     state = store.get_chat_state(chat_id)
     current_run = state["agent_current_run"] if isinstance(state["agent_current_run"], dict) else {}
     last_run = state["agent_last_run"] if isinstance(state["agent_last_run"], dict) else {}
+    teleapp_status_edit = "enabled"
+    teleapp_raw_status = "enabled"
     return "\n".join(
         [
             "robot status",
@@ -341,6 +358,10 @@ def _status_text(chat_id: int, store: ChatStateStore) -> str:
             f"thread_id: {state['thread_id'] or '-'}",
             f"current_run: {current_run.get('job_id', '-')}",
             f"last_run: {last_run.get('job_id', '-')}",
+            f"ui_build: {UI_BUILD_TAG}",
+            f"hosted_build: {HOSTED_BUILD_TAG}",
+            f"teleapp_status_edit: {teleapp_status_edit}",
+            f"teleapp_raw_status: {teleapp_raw_status}",
             "",
             "request classes:",
             "- command request: /provider /model /project /status /doctor /queue /schedules /agentstatus /agentprofiles",
@@ -377,6 +398,7 @@ def _help_text() -> str:
             "/brainproject <title>",
             "/brainknowledge <title>",
             "/brainresource <title>",
+            "/brainschedule <title>",
             "/braindecide <question>",
             "/brainsummary",
             "/brainremind",
@@ -385,6 +407,7 @@ def _help_text() -> str:
             "/brainauto [on|off|status]",
             "/brainautodaily HH:MM",
             "/brainautoweekly <weekday 0-6> HH:MM",
+            "/robotonly",
             "",
             "control commands:",
             "/reset",
@@ -412,6 +435,7 @@ def _menu_text(chat_id: int, store: ChatStateStore) -> str:
     return "\n".join(
         [
             "robot menu",
+            UI_BUILD_TAG,
             f"provider: {state['provider']}",
             f"model: {state['model']}",
             f"project: {state['project_name']}",
@@ -438,6 +462,7 @@ def _brain_text() -> str:
     return "\n".join(
         [
             "brain menu",
+            UI_BUILD_TAG,
             "使用 TG 操作 secondbrain",
             "",
             "可用功能：",
@@ -450,6 +475,7 @@ def _brain_text() -> str:
             "- 專案",
             "- 知識卡",
             "- Resource",
+            "- 行程",
             "- 每週摘要",
             "- 決策支援",
             "- 提醒",
@@ -460,7 +486,6 @@ def _brain_text() -> str:
 
 
 def _brain_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
-    store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_ACTION})
     return ButtonResponse(
         _brain_text(),
         buttons=[
@@ -473,6 +498,7 @@ def _brain_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
             Button("專案", "brain:project"),
             Button("知識卡", "brain:knowledge"),
             Button("Resource", "brain:resource"),
+            Button("行程", "brain:schedule"),
             Button("每週摘要", "brain:summary"),
             Button("決策支援", "brain:decide"),
             Button("提醒", "brain:remind"),
@@ -533,6 +559,10 @@ async def _handle_brain_action(chat_id: int, command: str, settings: Settings, s
     if command == "brain:resource":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_RESOURCE})
         return "請輸入 resource 標題，我會建立 resource note。輸入 cancel 可離開。"
+
+    if command == "brain:schedule":
+        store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_SCHEDULE_TITLE})
+        return "請輸入行程標題。輸入 cancel 可離開。"
 
     if command == "brain:summary":
         path = ensure_weekly_summary_note(settings)
@@ -633,7 +663,6 @@ async def _handle_brain_action(chat_id: int, command: str, settings: Settings, s
 
 
 def _main_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
-    store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_MENU_ACTION})
     return ButtonResponse(
         _menu_text(chat_id, store),
         buttons=[
@@ -663,6 +692,58 @@ def _provider_menu_response(chat_id: int, store: ChatStateStore) -> str:
     return "\n".join(lines)
 
 
+def _resolve_flat_menu_action(text: str) -> str | None:
+    normalized = text.strip().lower()
+    if normalized in {"status", "狀態"}:
+        return "menu:status"
+    if normalized in {"provider", "供應商"}:
+        return "menu:provider"
+    if normalized in {"model", "模型"}:
+        return "menu:model"
+    if normalized in {"projects", "project", "專案"}:
+        return "menu:projects"
+    if normalized in {"menu", "選單"}:
+        return "menu:open"
+    return None
+
+
+def _resolve_flat_brain_action(text: str) -> str | None:
+    normalized = text.strip().lower()
+    if normalized in {"寫入今日", "capture"}:
+        return "brain:capture"
+    if normalized in {"inbox"}:
+        return "brain:inbox"
+    if normalized in {"讀今日", "read"}:
+        return "brain:read"
+    if normalized in {"搜尋", "search"}:
+        return "brain:search"
+    if normalized in {"整理", "organize"}:
+        return "brain:organize"
+    if normalized in {"批次整理", "batch"}:
+        return "brain:batch"
+    if normalized in {"專案", "project"}:
+        return "brain:project"
+    if normalized in {"知識卡", "knowledge"}:
+        return "brain:knowledge"
+    if normalized in {"resource"}:
+        return "brain:resource"
+    if normalized in {"行程", "schedule"}:
+        return "brain:schedule"
+    if normalized in {"每週摘要", "summary"}:
+        return "brain:summary"
+    if normalized in {"決策支援", "decide"}:
+        return "brain:decide"
+    if normalized in {"提醒", "remind"}:
+        return "brain:remind"
+    if normalized in {"每日摘要", "daily"}:
+        return "brain:daily"
+    if normalized in {"週摘要", "weekly"}:
+        return "brain:weekly"
+    if normalized in {"brain", "第二大腦", "筆記"}:
+        return "brain:open"
+    return None
+
+
 def _model_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
     state = store.get_chat_state(chat_id)
     provider = str(state["provider"])
@@ -673,6 +754,7 @@ def _model_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
     store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_MODEL})
     lines = [
         "Select Model",
+        UI_BUILD_TAG,
         f"provider: {provider}",
         "",
         "按按鈕直接切換。",
@@ -882,54 +964,6 @@ async def _handle_flow_input(
             )
         return None
 
-    if kind == FLOW_AWAIT_MENU_ACTION:
-        normalized = text.strip().lower()
-        if normalized in {"status", "狀態"}:
-            return await _handle_menu_action(chat_id, "menu:status", settings, store, agents)
-        if normalized in {"provider", "供應商"}:
-            return await _handle_menu_action(chat_id, "menu:provider", settings, store, agents)
-        if normalized in {"model", "模型"}:
-            return await _handle_menu_action(chat_id, "menu:model", settings, store, agents)
-        if normalized in {"projects", "project", "專案"}:
-            return await _handle_menu_action(chat_id, "menu:projects", settings, store, agents)
-        if normalized in {"menu", "選單"}:
-            return await _handle_menu_action(chat_id, "menu:open", settings, store, agents)
-        return None
-
-    if kind == FLOW_AWAIT_BRAIN_ACTION:
-        normalized = text.strip().lower()
-        if normalized in {"寫入今日", "capture"}:
-            return await _handle_brain_action(chat_id, "brain:capture", settings, store)
-        if normalized in {"inbox"}:
-            return await _handle_brain_action(chat_id, "brain:inbox", settings, store)
-        if normalized in {"讀今日", "read"}:
-            return await _handle_brain_action(chat_id, "brain:read", settings, store)
-        if normalized in {"搜尋", "search"}:
-            return await _handle_brain_action(chat_id, "brain:search", settings, store)
-        if normalized in {"整理", "organize"}:
-            return await _handle_brain_action(chat_id, "brain:organize", settings, store)
-        if normalized in {"批次整理", "batch"}:
-            return await _handle_brain_action(chat_id, "brain:batch", settings, store)
-        if normalized in {"專案", "project"}:
-            return await _handle_brain_action(chat_id, "brain:project", settings, store)
-        if normalized in {"知識卡", "knowledge"}:
-            return await _handle_brain_action(chat_id, "brain:knowledge", settings, store)
-        if normalized in {"resource"}:
-            return await _handle_brain_action(chat_id, "brain:resource", settings, store)
-        if normalized in {"每週摘要", "summary"}:
-            return await _handle_brain_action(chat_id, "brain:summary", settings, store)
-        if normalized in {"決策支援", "decide"}:
-            return await _handle_brain_action(chat_id, "brain:decide", settings, store)
-        if normalized in {"提醒", "remind"}:
-            return await _handle_brain_action(chat_id, "brain:remind", settings, store)
-        if normalized in {"每日摘要", "daily"}:
-            return await _handle_brain_action(chat_id, "brain:daily", settings, store)
-        if normalized in {"週摘要", "weekly"}:
-            return await _handle_brain_action(chat_id, "brain:weekly", settings, store)
-        if normalized in {"brain", "第二大腦", "筆記"}:
-            return await _handle_brain_action(chat_id, "brain:open", settings, store)
-        return None
-
     if kind == FLOW_AWAIT_BRAIN_CAPTURE:
         path = append_to_daily(settings, text)
         store.clear_ui_flow(chat_id)
@@ -986,6 +1020,44 @@ async def _handle_flow_input(
         store.clear_ui_flow(chat_id)
         return f"已建立 Resource 筆記：{path}\n\n{body}"
 
+    if kind == FLOW_AWAIT_BRAIN_SCHEDULE_TITLE:
+        store.set_ui_flow(
+            chat_id,
+            {
+                "kind": FLOW_AWAIT_BRAIN_SCHEDULE_DATE,
+                "title": text,
+            },
+        )
+        return f"行程標題已記下：{text}\n請輸入日期，例如 2026-04-11。若暫時不填可輸入 skip。"
+
+    if kind == FLOW_AWAIT_BRAIN_SCHEDULE_DATE:
+        title = str(flow.get("title") or "").strip()
+        if not title:
+            store.clear_ui_flow(chat_id)
+            return "行程流程資料遺失，請重新開始。"
+        date_text = "" if text.lower() in {"skip", "略過", "none", "-"} else text
+        store.set_ui_flow(
+            chat_id,
+            {
+                "kind": FLOW_AWAIT_BRAIN_SCHEDULE_TIME,
+                "title": title,
+                "date_text": date_text,
+            },
+        )
+        return "請輸入時間，例如 14:30。若暫時不填可輸入 skip。"
+
+    if kind == FLOW_AWAIT_BRAIN_SCHEDULE_TIME:
+        title = str(flow.get("title") or "").strip()
+        if not title:
+            store.clear_ui_flow(chat_id)
+            return "行程流程資料遺失，請重新開始。"
+        date_text = str(flow.get("date_text") or "").strip()
+        time_text = "" if text.lower() in {"skip", "略過", "none", "-"} else text
+        path = create_schedule_note(settings, title, date_text=date_text, time_text=time_text)
+        body = read_note(settings, path).strip()
+        store.clear_ui_flow(chat_id)
+        return f"已建立 Schedule 筆記：{path}\n\n{body}"
+
     if kind == FLOW_AWAIT_BRAIN_ORGANIZE_TITLE:
         flow = store.get_ui_flow(chat_id)
         if not isinstance(flow, dict):
@@ -1018,6 +1090,21 @@ async def _handle_flow_input(
 
 async def handle_request(ctx: MessageContext, settings: Settings, store: ChatStateStore, agents: AgentCoordinator) -> str:
     text = (ctx.text or "").strip()
+    command = (ctx.command or "").strip().lower()
+    if command.startswith("/"):
+        command = command[1:]
+    if "@" in command:
+        command = command.split("@", 1)[0].strip()
+
+    if command in MENU_TRIGGERS or command == "menu":
+        store.clear_ui_flow(ctx.chat_id)
+        return _main_menu_response(ctx.chat_id, store)
+    if command in MODEL_TRIGGERS or command == "model":
+        return _model_menu_response(ctx.chat_id, store)
+    if command in BRAIN_TRIGGERS or command == "brain":
+        store.clear_ui_flow(ctx.chat_id)
+        return _brain_menu_response(ctx.chat_id, store)
+
     if text in MENU_TRIGGERS or text.lower() in MENU_TRIGGERS:
         store.clear_ui_flow(ctx.chat_id)
         return _main_menu_response(ctx.chat_id, store)
@@ -1026,6 +1113,25 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
     if text in BRAIN_TRIGGERS or text.lower() in BRAIN_TRIGGERS:
         store.clear_ui_flow(ctx.chat_id)
         return _brain_menu_response(ctx.chat_id, store)
+
+    lowered = text.lower()
+    phrase_control = COMMON_CONTROL_PHRASES.get(lowered) or COMMON_CONTROL_PHRASES.get(text)
+    if phrase_control in {"continue", "next"}:
+        current = store.get_chat_state(ctx.chat_id).get("agent_current_run")
+        queue = store.get_agent_queue(ctx.chat_id)
+        if isinstance(current, dict) or queue:
+            request = ClassifiedRequest(CONTROL_REQUEST, phrase_control, text)
+            return await handle_control(ctx.chat_id, request, store, agents)
+
+    flat_menu_action = _resolve_flat_menu_action(text)
+    if flat_menu_action is not None:
+        return await _handle_menu_action(ctx.chat_id, flat_menu_action, settings, store, agents)
+
+    flat_brain_action = _resolve_flat_brain_action(text)
+    if flat_brain_action is not None:
+        if flat_brain_action == "brain:open":
+            store.clear_ui_flow(ctx.chat_id)
+        return await _handle_brain_action(ctx.chat_id, flat_brain_action, settings, store)
 
     flow_response = await _handle_flow_input(ctx.chat_id, ctx, settings, store, agents)
     if flow_response is not None:
@@ -1223,6 +1329,20 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         path = create_resource_note(settings, payload)
         return f"已建立 Resource 筆記。\npath: {path}"
 
+    if request.command == "brainschedule":
+        payload = request.payload.strip()
+        if not payload:
+            store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_SCHEDULE_TITLE})
+            return "請輸入行程標題。輸入 cancel 可離開。"
+        store.set_ui_flow(
+            chat_id,
+            {
+                "kind": FLOW_AWAIT_BRAIN_SCHEDULE_DATE,
+                "title": payload,
+            },
+        )
+        return f"行程標題已記下：{payload}\n請輸入日期，例如 2026-04-11。若暫時不填可輸入 skip。"
+
     if request.command == "braindecide":
         payload = request.payload.strip()
         if not payload:
@@ -1294,6 +1414,17 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
             return "Usage: /brainautoweekly <weekday 0-6> HH:MM"
         store.update_brain_automation(chat_id, weekly_day=weekday, weekly_time=time_raw)
         return f"brain weekly automation updated.\nweekly_day: {weekday}\nweekly_time: {time_raw}"
+
+    if request.command == "robotonly":
+        return "\n".join(
+            [
+                "robot-only",
+                "instance: robot-hosted",
+                f"ui_build: {UI_BUILD_TAG}",
+                f"hosted_build: {HOSTED_BUILD_TAG}",
+                "fingerprint: robot-only-2026-04-11-a",
+            ]
+        )
 
     return f"Unknown command: /{request.command}\nUse /help."
 

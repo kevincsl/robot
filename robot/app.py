@@ -10,6 +10,7 @@ from telegram import Update
 from telegram.error import Conflict
 from telegram.ext import ContextTypes
 from teleapp import TeleApp
+from teleapp.protocol import AppEvent
 
 from robot.agents import AgentCoordinator
 from robot.config import load_settings
@@ -22,12 +23,28 @@ SETTINGS = load_settings()
 STORE = ChatStateStore(SETTINGS)
 AGENTS = AgentCoordinator(SETTINGS, STORE)
 app = TeleApp()
+UI_BUILD_TAG = "ui-build:2026-04-10-b"
 
 
 @app.on_startup
 async def on_startup():
     AGENTS.attach_supervisor(app.supervisor)
     AGENTS.start()
+    queue = getattr(app.supervisor, "_event_queue", None)
+    if queue is not None:
+        chat_ids = STORE.list_chat_ids()
+        target_chat_id = chat_ids[0] if chat_ids else app.config.allowed_user_id
+        if target_chat_id:
+            queue.put_nowait(
+                AppEvent(
+                    type="status",
+                    text=f"robot booted\n{UI_BUILD_TAG}",
+                    chat_id=target_chat_id,
+                    request_id=None,
+                    stream="inprocess",
+                    raw={"status_key": "boot", "replace": True},
+                )
+            )
 
 
 @app.on_shutdown

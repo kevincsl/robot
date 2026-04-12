@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 PROVIDER_LABELS = {
     "codex": "Codex",

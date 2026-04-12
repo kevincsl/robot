@@ -7,7 +7,7 @@ import threading
 import traceback
 from dataclasses import asdict
 
-from teleapp.context import MessageContext
+from teleapp.context import DocumentInput, MessageContext
 from teleapp.protocol import AppEvent
 from teleapp.response import coerce_response
 
@@ -84,7 +84,33 @@ async def _run() -> None:
             request_id = str(payload.get("request_id") or "").strip() or None
             text = str(payload.get("text") or "")
             command = str(payload.get("command") or "").strip() or None
-            ctx = MessageContext(chat_id=chat_id, text=text, request_id=request_id, command=command)
+            raw = payload.get("raw")
+            document = None
+            caption = None
+            if isinstance(raw, dict):
+                caption_raw = raw.get("caption")
+                if isinstance(caption_raw, str):
+                    caption = caption_raw
+                doc = raw.get("document")
+                if isinstance(doc, dict):
+                    file_id = str(doc.get("file_id") or "").strip()
+                    file_unique_id = str(doc.get("file_unique_id") or "").strip()
+                    if file_id and file_unique_id:
+                        document = DocumentInput(
+                            file_id=file_id,
+                            file_unique_id=file_unique_id,
+                            file_name=str(doc.get("file_name") or "").strip() or None,
+                            mime_type=str(doc.get("mime_type") or "").strip() or None,
+                            local_path=str(doc.get("local_path") or "").strip() or None,
+                        )
+            ctx = MessageContext(
+                chat_id=chat_id,
+                text=text,
+                request_id=request_id,
+                command=command,
+                caption=caption,
+                document=document,
+            )
             try:
                 body = await handle_request(ctx, settings, store, agents)
                 event = coerce_response(body, ctx)

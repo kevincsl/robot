@@ -50,6 +50,13 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(request.kind, COMMAND_REQUEST)
         self.assertEqual(request.command, "model")
 
+    def test_classify_command_request_uses_ctx_text_payload_when_command_is_separate(self) -> None:
+        ctx = MessageContext(chat_id=1, text="13:32", command="brainautodaily")
+        request = classify_request(ctx)
+        self.assertEqual(request.kind, COMMAND_REQUEST)
+        self.assertEqual(request.command, "brainautodaily")
+        self.assertEqual(request.payload, "13:32")
+
     def test_classify_command_request_with_bot_suffix(self) -> None:
         ctx = MessageContext(chat_id=1, text="/model@my_robot_bot")
         request = classify_request(ctx)
@@ -69,8 +76,8 @@ class RoutingTests(unittest.TestCase):
     def test_classify_common_phrase_as_control(self) -> None:
         ctx = MessageContext(chat_id=1, text="繼續")
         request = classify_request(ctx)
-        self.assertEqual(request.kind, CONTROL_REQUEST)
-        self.assertEqual(request.command, "continue")
+        self.assertEqual(request.kind, AGENT_REQUEST)
+        self.assertIsNone(request.command)
 
     def test_menu_trigger_returns_buttons(self) -> None:
         body = self.loop.run_until_complete(
@@ -83,8 +90,50 @@ class RoutingTests(unittest.TestCase):
         )
         self.assertIsInstance(body, ButtonResponse)
         self.assertIn("robot menu", body.text.lower())
+        self.assertIn("ui-build:2026-04-10-b", body.text)
         self.assertIn("其他自然語言訊息不會被選單吃掉", body.text)
         self.assertEqual([button.data for button in body.buttons or []], ["menu:status", "menu:provider", "menu:model", "menu:projects", "menu:cancel"])
+        self.assertIsNone(self.store.get_ui_flow(1))
+
+    def test_status_includes_build_tags(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/status", command="status"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("ui_build: ui-build:2026-04-10-b", body)
+        self.assertIn("hosted_build: hosted-build:2026-04-10-c", body)
+
+    def test_continue_without_active_job_falls_through_to_agent(self) -> None:
+        self.store.set_agent_current_run(1, None)
+        self.store.clear_agent_queue(1)
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="繼續"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
+
+    def test_continue_with_active_job_uses_control_path(self) -> None:
+        self.store.set_agent_current_run(
+            1,
+            {
+                "job_id": "job-1",
+                "kind": "provider",
+                "goal": "test goal",
+            },
+        )
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="繼續"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIn("An agent run is already active.", body)
 
     def test_brain_trigger_returns_buttons(self) -> None:
         body = self.loop.run_until_complete(
@@ -97,6 +146,7 @@ class RoutingTests(unittest.TestCase):
         )
         self.assertIsInstance(body, ButtonResponse)
         self.assertIn("brain menu", body.text.lower())
+        self.assertIn("ui-build:2026-04-10-b", body.text)
         self.assertEqual(
             [button.data for button in body.buttons or []],
             [
@@ -109,6 +159,7 @@ class RoutingTests(unittest.TestCase):
                 "brain:project",
                 "brain:knowledge",
                 "brain:resource",
+                "brain:schedule",
                 "brain:summary",
                 "brain:decide",
                 "brain:remind",
@@ -117,6 +168,73 @@ class RoutingTests(unittest.TestCase):
                 "brain:cancel",
             ],
         )
+        self.assertIsNone(self.store.get_ui_flow(1))
+
+    def test_menu_command_without_text_still_returns_buttons(self) -> None:
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="menu"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("robot menu", body.text.lower())
+        self.assertIsNone(self.store.get_ui_flow(1))
+
+    def test_model_command_without_text_still_returns_buttons(self) -> None:
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="model"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("Select Model", body.text)
+        self.assertIn("ui-build:2026-04-10-b", body.text)
+
+    def test_brain_command_without_text_still_returns_buttons(self) -> None:
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="brain"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("brain menu", body.text.lower())
+        self.assertIsNone(self.store.get_ui_flow(1))
+
+    def test_flat_menu_text_action_works_without_open_menu_flow(self) -> None:
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="status"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(body, str)
+        self.assertIn("robot status", body.lower())
+
+    def test_flat_brain_text_action_works_without_open_brain_flow(self) -> None:
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="搜尋"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(body, str)
+        self.assertIn("請輸入要搜尋 secondbrain 的關鍵字", body)
+        flow = self.store.get_ui_flow(1)
+        self.assertIsInstance(flow, dict)
+        self.assertEqual(flow.get("kind"), "await_brain_search")
 
     def test_brain_capture_flow_appends_to_daily(self) -> None:
         self.loop.run_until_complete(
@@ -251,6 +369,12 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("enabled", on_body)
         self.assertTrue(self.store.get_brain_automation(1)["enabled"])
 
+    def test_brainautodaily_command_accepts_payload_from_telegram_command_context(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="13:32", command="brainautodaily"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("brain daily automation updated", body)
+        self.assertEqual(self.store.get_brain_automation(1)["daily_time"], "13:32")
+
     def test_brainproject_command_creates_project_note(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/brainproject Roadmap", command="brainproject"))
         with patch("robot.routing.create_project_note", return_value="02 Projects/Roadmap.md"):
@@ -382,6 +506,58 @@ class RoutingTests(unittest.TestCase):
             body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
         self.assertIn("Resource", body)
         self.assertIn("04 Resources/AI article.md", body)
+
+    def test_brainschedule_command_without_payload_starts_flow(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/brainschedule", command="brainschedule"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("請輸入行程標題", body)
+        flow = self.store.get_ui_flow(1)
+        self.assertIsInstance(flow, dict)
+        self.assertEqual(flow.get("kind"), "await_brain_schedule_title")
+
+    def test_brainschedule_flow_creates_schedule_note(self) -> None:
+        self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="brain:schedule"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        title_step = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="Weekly sync"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIn("請輸入日期", title_step)
+
+        date_step = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="2026-04-11"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIn("請輸入時間", date_step)
+
+        with patch("robot.routing.create_schedule_note", return_value="06 Schedule/Weekly sync.md") as mock_create:
+            with patch("robot.routing.read_note", return_value="# Schedule\n\ncontent"):
+                body = self.loop.run_until_complete(
+                    handle_request(
+                        MessageContext(chat_id=1, text="14:30"),
+                        self.settings,
+                        self.store,
+                        self.agents,
+                    )
+                )
+        mock_create.assert_called_once_with(self.settings, "Weekly sync", date_text="2026-04-11", time_text="14:30")
+        self.assertIn("Schedule", body)
+        self.assertIn("Weekly sync.md", body)
+        self.assertIsNone(self.store.get_ui_flow(1))
 
     def test_menu_model_flow_updates_model_from_button_callback(self) -> None:
         open_menu = self.loop.run_until_complete(
@@ -619,6 +795,31 @@ class RoutingTests(unittest.TestCase):
         self.assertFalse(self.agents.is_running(1))
         last_run = self.store.get_chat_state(1)["agent_last_run"]
         self.assertEqual(last_run["status"], "stopped")
+
+    def test_agent_emit_can_carry_status_metadata(self) -> None:
+        captured: list[object] = []
+
+        class DummyQueue:
+            def put_nowait(self, event) -> None:
+                captured.append(event)
+
+        class DummySupervisor:
+            _event_queue = DummyQueue()
+
+        self.agents.attach_supervisor(DummySupervisor())
+        self.loop.run_until_complete(
+            self.agents._emit(
+                1,
+                "heartbeat",
+                event_type="status",
+                raw={"status_key": "heartbeat", "replace": True},
+            )
+        )
+        self.assertEqual(len(captured), 1)
+        event = captured[0]
+        self.assertEqual(event.type, "status")
+        self.assertEqual(event.raw["status_key"], "heartbeat")
+        self.assertTrue(event.raw["replace"])
 
 
 if __name__ == "__main__":

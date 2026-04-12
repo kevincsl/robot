@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 from robot.brain import (
     append_to_daily,
     build_decision_support_brief,
+    collect_brain_reminders,
     create_inbox_note,
     create_knowledge_note_from_text,
     create_project_note_from_text,
@@ -31,6 +34,7 @@ class BrainTests(unittest.TestCase):
         (self.vault / "03 Knowledge").mkdir(parents=True, exist_ok=True)
         (self.vault / "04 Resources").mkdir(parents=True, exist_ok=True)
         (self.vault / "00 Inbox").mkdir(parents=True, exist_ok=True)
+        (self.vault / "07 Decision Support").mkdir(parents=True, exist_ok=True)
 
         (self.vault / "98 Templates" / "Template - Daily Note.md").write_text(
             "---\n"
@@ -169,6 +173,36 @@ class BrainTests(unittest.TestCase):
         self.assertIn("反對理由", brief)
         self.assertIn("風險與盲點", brief)
         self.assertIn("建議下一步", brief)
+
+    def test_collect_brain_reminders_detects_stale_inbox_and_repeated_topic(self) -> None:
+        inbox_note = self.vault / "00 Inbox" / "old.md"
+        inbox_note.write_text("# Inbox\n\nold content\n", encoding="utf-8")
+        two_days_ago = (datetime.now() - timedelta(days=2)).timestamp()
+        os.utime(inbox_note, (two_days_ago, two_days_ago))
+
+        decision_note = self.vault / "07 Decision Support" / "Decision Review - old.md"
+        decision_note.write_text("# Decision Review\n", encoding="utf-8")
+        four_days_ago = (datetime.now() - timedelta(days=4)).timestamp()
+        os.utime(decision_note, (four_days_ago, four_days_ago))
+
+        for idx in range(2):
+            daily = self.vault / "01 Daily Notes" / f"2026-04-0{idx + 1}.md"
+            daily.write_text(
+                "---\n"
+                "topic: product\n"
+                "---\n\n"
+                f"# Daily {idx}\n",
+                encoding="utf-8",
+            )
+
+        with patch("robot.brain._run_brain_command", side_effect=subprocess.CalledProcessError(1, ["obsidian"])):
+            reminders = collect_brain_reminders(self.settings, limit=5)
+
+        joined = "\n".join(reminders)
+        self.assertIn("Inbox", joined)
+        self.assertIn("超過 1 天未整理", joined)
+        self.assertIn("Decision Review", joined)
+        self.assertIn("重複出現的主題", joined)
 
 
 if __name__ == "__main__":

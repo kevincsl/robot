@@ -4,8 +4,10 @@ import json
 import re
 import subprocess
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+
+from markitdown import MarkItDown
 
 from robot.config import Settings
 
@@ -271,6 +273,16 @@ def create_resource_note(settings: Settings, title: str) -> str:
     return path
 
 
+def create_schedule_note(settings: Settings, title: str, date_text: str = "", time_text: str = "") -> str:
+    path = create_templated_note(settings, "06 Schedule", title, "Template - Schedule Note")
+    apply_note_defaults(settings, path, note_type="schedule", title=title, topic="schedule", review=True)
+    if date_text:
+        set_note_property(settings, path, "date", date_text, type_name="date")
+    if time_text:
+        set_note_property(settings, path, "time", time_text)
+    return path
+
+
 def create_project_note_from_text(settings: Settings, title: str, source_text: str) -> str:
     path = create_project_note(settings, title)
     append_note_content(settings, path, f"\n\n## 從 Inbox / Daily 整理而來\n\n{source_text.strip()}\n")
@@ -287,6 +299,25 @@ def create_resource_note_from_text(settings: Settings, title: str, source_text: 
     path = create_resource_note(settings, title)
     append_note_content(settings, path, f"\n\n## 原始資料\n\n{source_text.strip()}\n")
     return path
+
+
+def import_markitdown_resource(settings: Settings, source_path: Path, title: str | None = None) -> tuple[str, str]:
+    md = MarkItDown()
+    result = md.convert(str(source_path))
+    text_content = (result.text_content or "").strip()
+    if not text_content:
+        text_content = f"# {source_path.name}\n\n(No extracted text)\n"
+
+    note_title = title or source_path.stem
+    note_path = create_resource_note_from_text(settings, note_title, text_content)
+    append_note_content(
+        settings,
+        note_path,
+        "\n\n## 匯入來源\n\n"
+        f"- file_name: {source_path.name}\n"
+        f"- imported_at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n",
+    )
+    return note_path, text_content
 
 
 def read_note(settings: Settings, path: str) -> str:
@@ -332,6 +363,27 @@ def list_recent_notes(settings: Settings, folder: str, limit: int = 10) -> list[
     return [_relative_posix(path, vault_root) for path in candidates[: max(1, limit)]]
 
 
+def _list_notes_with_mtime(settings: Settings, folder: str) -> list[tuple[str, datetime]]:
+    vault_root = _vault_root(settings)
+    base = vault_root / folder
+    if not base.exists():
+        return []
+    items: list[tuple[str, datetime]] = []
+    for path in base.rglob("*.md"):
+        if path.name.lower() == "readme.md":
+            continue
+        items.append((_relative_posix(path, vault_root), datetime.fromtimestamp(path.stat().st_mtime)))
+    items.sort(key=lambda item: item[1], reverse=True)
+    return items
+
+
+def _extract_topic(text: str) -> str:
+    match = TOPIC_RE.search(text)
+    if not match:
+        return ""
+    return match.group(1).strip()
+
+
 def ensure_weekly_summary_note(settings: Settings) -> str:
     stamp = datetime.now().strftime("%G-[W]%V")
     path = f"07 Decision Support/Weekly Summary - {stamp}.md"
@@ -342,13 +394,43 @@ def ensure_weekly_summary_note(settings: Settings) -> str:
 
 
 def collect_brain_reminders(settings: Settings, limit: int = 5) -> list[str]:
+    now = datetime.now()
     inbox = list_recent_notes(settings, "00 Inbox", limit=limit)
     daily = list_recent_notes(settings, "01 Daily Notes", limit=limit)
+    inbox_with_time = _list_notes_with_mtime(settings, "00 Inbox")
+    decision_with_time = _list_notes_with_mtime(settings, "07 Decision Support")
     reminders: list[str] = []
+
     if inbox:
         reminders.append(f"- Inbox 還有 {len(inbox)} 篇最近未整理內容")
     if daily:
         reminders.append(f"- Daily Notes 最近有 {len(daily)} 篇可回顧筆記")
+
+    stale_inbox = [path for path, mtime in inbox_with_time if now - mtime >= timedelta(days=1)]
+    if stale_inbox:
+        reminders.append(f"- 有 {len(stale_inbox)} 篇 Inbox 已超過 1 天未整理")
+
+    stale_decisions = [
+        path
+        for path, mtime in decision_with_time
+        if "Decision Review -" in path and now - mtime >= timedelta(days=3)
+    ]
+    if stale_decisions:
+        reminders.append(f"- 有 {len(stale_decisions)} 篇 Decision Review 超過 3 天未回看")
+
+    topic_counter: Counter[str] = Counter()
+    for relative in list_recent_notes(settings, "01 Daily Notes", limit=max(limit, 10)):
+        try:
+            topic = _extract_topic(read_note(settings, relative))
+        except OSError:
+            topic = ""
+        if topic:
+            topic_counter[topic] += 1
+    repeated_topics = [topic for topic, count in topic_counter.items() if count >= 2]
+    if repeated_topics:
+        joined = ", ".join(repeated_topics[:3])
+        reminders.append(f"- 最近重複出現的主題：{joined}")
+
     if not reminders:
         reminders.append("- 目前沒有明顯待提醒項目")
     return reminders

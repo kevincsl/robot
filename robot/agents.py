@@ -381,6 +381,7 @@ class AgentCoordinator:
                     ]
                 ),
                 event_type="status",
+                raw={"status_key": "heartbeat", "replace": True},
             )
 
             invocation = RunningInvocation()
@@ -442,6 +443,8 @@ class AgentCoordinator:
         while True:
             await asyncio.sleep(5)
             elapsed = int((datetime.now() - started).total_seconds())
+            current_goal = str(job.get("goal") or "").strip() or "<resume>"
+            current_project = str(job.get("project_name") or "-")
             await self._emit(
                 chat_id,
                 "\n".join(
@@ -449,13 +452,16 @@ class AgentCoordinator:
                         "Task is still running...",
                         f"kind: {job.get('kind') or 'provider'}",
                         f"job: {job.get('job_id') or '-'}",
+                        f"doing: {current_goal}",
+                        f"project: {current_project}",
                         f"elapsed_seconds: {elapsed}",
                     ]
                 ),
                 event_type="status",
+                raw={"status_key": "heartbeat", "replace": True},
             )
 
-    async def _emit(self, chat_id: int, text: str, event_type: str = "output") -> None:
+    async def _emit(self, chat_id: int, text: str, event_type: str = "output", raw: dict[str, Any] | None = None) -> None:
         if self._supervisor is None:
             return
         queue = getattr(self._supervisor, "_event_queue", None)
@@ -468,6 +474,7 @@ class AgentCoordinator:
                 chat_id=chat_id,
                 request_id=None,
                 stream="inprocess",
+                raw=raw,
             )
         )
 
