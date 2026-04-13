@@ -10,6 +10,7 @@ from pathlib import Path
 import threading
 
 from robot.config import Settings, normalize_provider
+from robot.text import normalize_text
 
 
 @dataclass(slots=True)
@@ -64,7 +65,7 @@ def _clip(text: str, limit: int = 3900) -> str:
 
 
 def _safe_text(text: str | None) -> str:
-    return (text or "").encode("utf-8", errors="replace").decode("utf-8")
+    return normalize_text(text)
 
 
 async def run_agent_request(

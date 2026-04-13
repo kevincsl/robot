@@ -6,6 +6,7 @@ from typing import Any
 
 from robot.config import Settings, normalize_model, normalize_provider
 from robot.projects import get_default_workspace
+from robot.text import normalize_text
 
 
 class ChatStateStore:
@@ -30,7 +31,7 @@ class ChatStateStore:
     def _save(self) -> None:
         def _sanitize(value: Any) -> Any:
             if isinstance(value, str):
-                return value.encode("utf-8", errors="replace").decode("utf-8")
+                return normalize_text(value)
             if isinstance(value, dict):
                 return {k: _sanitize(v) for k, v in value.items()}
             if isinstance(value, list):

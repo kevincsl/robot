@@ -15,6 +15,7 @@ from robot.agents import AgentCoordinator
 from robot.config import load_settings
 from robot.routing import handle_request
 from robot.state import ChatStateStore
+from robot.text import configure_stdio_utf8, normalize_text
 
 
 class _StdoutEventQueue:
@@ -49,7 +50,7 @@ def _emit_event(event: AppEvent) -> None:
 
 def _sanitize_surrogates(value):
     if isinstance(value, str):
-        return value.encode("utf-8", errors="replace").decode("utf-8")
+        return normalize_text(value)
     if isinstance(value, dict):
         return {key: _sanitize_surrogates(item) for key, item in value.items()}
     if isinstance(value, list):
@@ -58,6 +59,7 @@ def _sanitize_surrogates(value):
 
 
 async def _run() -> None:
+    configure_stdio_utf8()
     settings = load_settings()
     store = ChatStateStore(settings)
     agents = AgentCoordinator(settings, store)

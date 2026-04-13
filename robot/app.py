@@ -16,6 +16,7 @@ from robot.agents import AgentCoordinator
 from robot.config import load_settings
 from robot.routing import handle_request
 from robot.state import ChatStateStore
+from robot.text import configure_stdio_utf8
 
 LOGGER = logging.getLogger(__name__)
 
@@ -120,6 +121,7 @@ async def _telegram_error_handler(update: object, context: ContextTypes.DEFAULT_
 
 
 def main() -> None:
+    configure_stdio_utf8()
     application = app.build_application()
     application.add_error_handler(_telegram_error_handler)
     lock_path = SETTINGS.project_root / ".robot_state" / "robot.lock"

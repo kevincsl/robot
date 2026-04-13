@@ -25,8 +25,10 @@ def _load_robot_package() -> None:
 
 def main() -> None:
     _load_robot_package()
+    from robot.text import configure_stdio_utf8
     from robot.hosted_app import main as hosted_main
 
+    configure_stdio_utf8()
     hosted_main()
 
 
