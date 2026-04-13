@@ -70,6 +70,7 @@ No new feature work until every quality dimension reaches `>= 90`.
   - `DEPENDENCY_STRATEGY.md` updated with compatibility notes
 - Gate check:
   - Fresh environment install succeeds with constraints
+  - `python scripts/check_dependency_health.py` passes
 
 ### 6) Release & Packaging Consistency
 
@@ -82,6 +83,7 @@ No new feature work until every quality dimension reaches `>= 90`.
   - Vendor sync checklist completed
 - Gate check:
   - Install/build flow passes in clean environment
+  - `python scripts/check_release_consistency.py` passes
 
 ### 7) Security Posture
 

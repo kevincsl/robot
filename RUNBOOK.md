@@ -109,6 +109,8 @@ If behavior is inconsistent after crash/restart:
 Before push/release:
 
 1. `pytest -q`
-2. Verify docs links in `README.md`
-3. Confirm dependency constraints and strategy docs are current
-4. Confirm quality gate status in `QUALITY_GATE_90.md`
+2. `python scripts/check_release_consistency.py`
+3. `python scripts/check_dependency_health.py`
+4. Verify docs links in `README.md`
+5. Confirm dependency constraints and strategy docs are current
+6. Confirm quality gate status in `QUALITY_GATE_90.md`
