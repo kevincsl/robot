@@ -516,6 +516,18 @@ class AgentCoordinator:
                     "elapsed_seconds": result.elapsed_seconds,
                 },
             )
+            self._store.set_last_provider_timing(
+                chat_id,
+                {
+                    "job_id": str(job.get("job_id") or ""),
+                    "kind": str(job.get("kind") or "provider"),
+                    "provider": str(job.get("provider") or ""),
+                    "model": str(job.get("model") or ""),
+                    "elapsed_seconds": int(result.elapsed_seconds),
+                    "cancelled": bool(result.cancelled),
+                    "return_code": int(result.return_code),
+                },
+            )
             await self._emit(chat_id, result.final_text, event_type="output")
 
     async def _heartbeat_loop(self, chat_id: int, job: dict[str, Any]) -> None:

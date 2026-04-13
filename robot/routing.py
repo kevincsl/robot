@@ -625,6 +625,7 @@ def _status_text(chat_id: int, store: ChatStateStore) -> str:
     state = store.get_chat_state(chat_id)
     current_run = state["agent_current_run"] if isinstance(state["agent_current_run"], dict) else {}
     last_run = state["agent_last_run"] if isinstance(state["agent_last_run"], dict) else {}
+    provider_timing = state.get("last_provider_timing") if isinstance(state.get("last_provider_timing"), dict) else {}
     teleapp_status_edit = "enabled"
     teleapp_raw_status = "enabled"
     return "\n".join(
@@ -638,6 +639,9 @@ def _status_text(chat_id: int, store: ChatStateStore) -> str:
             f"thread_id: {state['thread_id'] or '-'}",
             f"current_run: {current_run.get('job_id', '-')}",
             f"last_run: {last_run.get('job_id', '-')}",
+            f"provider_elapsed_seconds: {provider_timing.get('elapsed_seconds', '-')}",
+            f"provider_return_code: {provider_timing.get('return_code', '-')}",
+            f"provider_cancelled: {provider_timing.get('cancelled', '-')}",
             f"ui_build: {UI_BUILD_TAG}",
             f"hosted_build: {HOSTED_BUILD_TAG}",
             f"teleapp_status_edit: {teleapp_status_edit}",

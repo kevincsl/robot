@@ -5,7 +5,7 @@ import contextlib
 import sys
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.error import Conflict
+from telegram.error import BadRequest, Conflict
 from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from teleapp.config import TeleappConfig
@@ -177,6 +177,17 @@ class TelegramGateway:
             lines.append(
                 f"chat {session.chat_id}: queued={session.queued_requests} active={session.active_request_id or '-'}"
             )
+            timing = session.last_timing or {}
+            if timing:
+                lines.append(
+                    "  "
+                    + "last_timing: "
+                    + f"request_id={timing.get('request_id') or '-'} "
+                    + f"queued_ms={timing.get('queued_ms') or 0} "
+                    + f"first_event_ms={timing.get('first_event_ms') or 0} "
+                    + f"total_ms={timing.get('total_ms') or 0} "
+                    + f"event={timing.get('event_type') or '-'}"
+                )
         await update.message.reply_text(_clip("\n".join(lines)))
 
     async def _restart_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -249,6 +260,9 @@ class TelegramGateway:
     async def _send_event(self, app, chat_id: int, event: AppEvent) -> None:
         raw = event.raw or {}
         event_type = event.type
+        session = self._supervisor.state.chat_sessions.setdefault(chat_id, ChatSessionState(chat_id=chat_id))
+        status_key = _safe_text(str(raw.get("status_key") or "")).strip()
+        replace = bool(raw.get("replace"))
 
         if event_type == "photo":
             if raw.get("file_path"):
@@ -363,10 +377,29 @@ class TelegramGateway:
             keyboard = InlineKeyboardMarkup(
                 [[InlineKeyboardButton(_safe_text(button["text"]), callback_data=button["data"])] for button in buttons]
             )
-            await app.bot.send_message(chat_id=chat_id, text=_clip(event.text), reply_markup=keyboard)
+            message = await app.bot.send_message(chat_id=chat_id, text=_clip(event.text), reply_markup=keyboard)
+            if status_key and hasattr(message, "message_id"):
+                session.status_messages[status_key] = int(message.message_id)
             return
 
-        await app.bot.send_message(chat_id=chat_id, text=_clip(self._render_event(event)))
+        text = _clip(self._render_event(event))
+        if replace and status_key:
+            message_id = session.status_messages.get(status_key)
+            if message_id:
+                try:
+                    await app.bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text)
+                    return
+                except BadRequest as exc:
+                    detail = str(exc).lower()
+                    if "message is not modified" in detail:
+                        return
+                    if "message to edit not found" not in detail:
+                        raise
+                    session.status_messages.pop(status_key, None)
+
+        message = await app.bot.send_message(chat_id=chat_id, text=text)
+        if status_key and hasattr(message, "message_id"):
+            session.status_messages[status_key] = int(message.message_id)
 
     @staticmethod
     def _build_message_context(update: Update) -> MessageContext:

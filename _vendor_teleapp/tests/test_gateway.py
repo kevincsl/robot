@@ -22,9 +22,16 @@ class DummyMessage:
 class DummyBot:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
+        self._next_message_id = 100
 
     async def send_message(self, **kwargs):
         self.calls.append(("message", kwargs))
+        self._next_message_id += 1
+        return SimpleNamespace(message_id=self._next_message_id)
+
+    async def edit_message_text(self, **kwargs):
+        self.calls.append(("edit_message_text", kwargs))
+        return SimpleNamespace(message_id=kwargs.get("message_id"))
 
     async def send_photo(self, **kwargs):
         self.calls.append(("photo", kwargs))
@@ -224,6 +231,25 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(app.bot.calls[7][0], "video")
         self.assertEqual(app.bot.calls[8][0], "contact")
         self.assertEqual(app.bot.calls[9][0], "poll")
+
+    async def test_send_event_reuses_status_message_when_replace_is_true(self) -> None:
+        gateway = TelegramGateway(self.config)
+        app = SimpleNamespace(bot=DummyBot())
+
+        await gateway._send_event(
+            app,
+            1,
+            AppEvent(type="status", text="first", raw={"status_key": "heartbeat", "replace": True}),
+        )
+        await gateway._send_event(
+            app,
+            1,
+            AppEvent(type="status", text="second", raw={"status_key": "heartbeat", "replace": True}),
+        )
+
+        self.assertEqual(app.bot.calls[0][0], "message")
+        self.assertEqual(app.bot.calls[1][0], "edit_message_text")
+        self.assertEqual(app.bot.calls[1][1]["message_id"], 101)
 
 
 if __name__ == "__main__":

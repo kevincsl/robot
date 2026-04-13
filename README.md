@@ -84,20 +84,19 @@ Linux/macOS:
 - `menu`, `model`, and `brain` support Telegram button menus in addition to slash commands.
 - `brain` supports second-brain capture, inbox, search, summaries, decision support, and schedule workflows.
 - Natural-language schedule creation is supported for phrases such as:
-  - `今天下午6點半要吃藥`
-  - `30分鐘後要休息`
-  - `每週三晚上8點吃火鍋`
-  - `4月20日中午12點有一個升學輔導會議在第一會議室`
+  - `提醒我今天 6 點開會`
+  - `30 分鐘後叫我休息`
+  - `明天早上 8 點提醒我交報告`
+  - `4/20 下午 2 點提醒我和客戶確認需求`
 - Schedule views support:
-  - `今日行程`
+  - `今天行程`
   - `本週行程`
   - `下週行程`
-  - `本月行程`
-  - `查看行程`
-- Schedule follow-up queries support references such as `這個行程是幾點`.
+  - `今天提醒`
+  - `未來提醒`
+- Schedule follow-up queries support references such as `第一個行程改到 3 點`.
 - Schedule update and delete flows require confirmation before changing notes.
 - Past-due archive only applies to one-time schedules and skips recurring reminders.
-
 ## Automation
 
 - `/brainauto [on|off|status]`
@@ -116,8 +115,12 @@ Linux/macOS:
 - Start scripts run `teleapp robot.py`.
 - `teleapp` hot reload is enabled by default, but this project currently runs with hot reload disabled in `.env` until the restart path is fully stabilized.
 - To disable hot reload, use `teleapp robot.py --no-hot-reload`.
+- Codex execution flags can be controlled with:
+  - `ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX` (`1` or `0`)
+  - `ROBOT_CODEX_SKIP_GIT_REPO_CHECK` (`1` or `0`)
 - You can tune reload behavior with:
   - `TELEAPP_RELOAD_QUIET_SECONDS`
   - `TELEAPP_RELOAD_POLL_SECONDS`
   - `TELEAPP_WATCH_MODE` (`app-dir` or `app-file-only`)
   - `--watch <path>` for explicit watch paths
+

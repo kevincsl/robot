@@ -97,10 +97,12 @@ class RoutingTests(unittest.TestCase):
         self.assertIsNone(self.store.get_ui_flow(1))
 
     def test_status_includes_build_tags(self) -> None:
+        self.store.set_last_provider_timing(1, {"elapsed_seconds": 8, "return_code": 0, "cancelled": False})
         request = classify_request(MessageContext(chat_id=1, text="/status", command="status"))
         body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
         self.assertIn("ui_build: ui-build:2026-04-10-b", body)
         self.assertIn("hosted_build: hosted-build:2026-04-10-c", body)
+        self.assertIn("provider_elapsed_seconds: 8", body)
 
     def test_continue_without_active_job_falls_through_to_agent(self) -> None:
         self.store.set_agent_current_run(1, None)

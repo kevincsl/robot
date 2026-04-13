@@ -24,6 +24,8 @@ class QueuedRequest:
     request_id: str
     queued_at: datetime
     command: str | None = None
+    dispatched_at: datetime | None = None
+    first_event_at: datetime | None = None
 
 
 def _console(message: str) -> None:
@@ -243,6 +245,7 @@ class AppSupervisor:
             assert self._runner is not None
 
             try:
+                request.dispatched_at = datetime.now()
                 await asyncio.to_thread(
                     self._runner.send_input,
                     chat_id=request.chat_id,
@@ -270,9 +273,34 @@ class AppSupervisor:
             self._refresh_busy_state()
             return
 
+        now = datetime.now()
+        if active.first_event_at is None:
+            active.first_event_at = now
+
         session = self._get_session(active.chat_id)
         session.active_request_id = None
-        session.last_activity_at = datetime.now()
+        session.last_activity_at = now
+        queued_ms = int((active.dispatched_at - active.queued_at).total_seconds() * 1000) if active.dispatched_at else 0
+        first_event_ms = int((active.first_event_at - active.dispatched_at).total_seconds() * 1000) if active.dispatched_at and active.first_event_at else 0
+        total_ms = int((now - active.queued_at).total_seconds() * 1000)
+        session.last_timing = {
+            "request_id": active.request_id,
+            "chat_id": active.chat_id,
+            "command": active.command or "",
+            "queued_ms": queued_ms,
+            "first_event_ms": first_event_ms,
+            "total_ms": total_ms,
+            "event_type": event.type,
+        }
+        _console(
+            "request timing "
+            f"chat={active.chat_id} "
+            f"request_id={active.request_id} "
+            f"queued_ms={queued_ms} "
+            f"first_event_ms={first_event_ms} "
+            f"total_ms={total_ms} "
+            f"event_type={event.type}"
+        )
         self._clear_active_request()
         await self._dispatch_next_request()
 

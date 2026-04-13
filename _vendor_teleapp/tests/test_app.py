@@ -114,7 +114,7 @@ class TeleAppTests(unittest.TestCase):
         supervisor._active_request = type(
             "Req",
             (),
-            {"chat_id": 1, "request_id": "1-1", "text": "", "command": "menu"},
+            {"chat_id": 1, "request_id": "1-1", "text": "", "command": "menu", "queued_at": __import__("datetime").datetime.now(), "dispatched_at": __import__("datetime").datetime.now(), "first_event_at": None},
         )()
         event = decode_output_line(
             '{"type":"buttons","text":"pick","chat_id":1,"request_id":"1-1","raw":{"buttons":[{"text":"A","data":"a"}]}}',
@@ -123,6 +123,9 @@ class TeleAppTests(unittest.TestCase):
         assert event is not None
         __import__("asyncio").run(supervisor._complete_request(event))
         self.assertIsNone(supervisor._active_request)
+        timing = supervisor.state.chat_sessions[1].last_timing
+        self.assertEqual(timing["request_id"], "1-1")
+        self.assertEqual(timing["event_type"], "buttons")
 
     def test_route_decorator_registers_predicate_handler(self) -> None:
         app = TeleApp(build_runtime_config())

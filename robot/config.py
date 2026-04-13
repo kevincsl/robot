@@ -74,6 +74,18 @@ def _split_command(raw: str) -> list[str]:
     return parts if parts else [raw]
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 @dataclass(frozen=True)
 class Settings:
     project_root: Path
@@ -88,6 +100,8 @@ class Settings:
     brain_cli_command: list[str]
     brain_vault_name: str
     brain_vault_path: Path | None
+    codex_bypass_approvals_and_sandbox: bool
+    codex_skip_git_repo_check: bool
 
 
 def normalize_provider(provider: str | None) -> str:
@@ -143,6 +157,8 @@ def load_settings(project_root: Path | None = None) -> Settings:
     brain_cli_command = _split_command(os.getenv("ROBOT_BRAIN_CLI_CMD", "obsidian"))
     brain_vault_name = (os.getenv("ROBOT_BRAIN_VAULT", "secondbrain") or "secondbrain").strip()
     brain_vault_path = _resolve_brain_vault_path(root, os.getenv("ROBOT_BRAIN_VAULT_PATH"), brain_vault_name)
+    codex_bypass_approvals_and_sandbox = _env_flag("ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX", True)
+    codex_skip_git_repo_check = _env_flag("ROBOT_CODEX_SKIP_GIT_REPO_CHECK", True)
 
     raw_roots = (os.getenv("ROBOT_PROJECTS_ROOTS", "") or "").strip()
     roots: list[Path] = []
@@ -177,4 +193,6 @@ def load_settings(project_root: Path | None = None) -> Settings:
         brain_cli_command=brain_cli_command,
         brain_vault_name=brain_vault_name,
         brain_vault_path=brain_vault_path,
+        codex_bypass_approvals_and_sandbox=codex_bypass_approvals_and_sandbox,
+        codex_skip_git_repo_check=codex_skip_git_repo_check,
     )

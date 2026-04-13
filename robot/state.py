@@ -79,6 +79,7 @@ class ChatStateStore:
             bucket["agent_schedules"] = []
         bucket.setdefault("agent_current_run", None)
         bucket.setdefault("agent_last_run", None)
+        bucket.setdefault("last_provider_timing", {})
         bucket.setdefault("ui_flow", None)
         bucket.setdefault("last_schedule_candidate", None)
         last_schedule_results = bucket.setdefault("last_schedule_results", [])
@@ -111,6 +112,7 @@ class ChatStateStore:
                 "project_path": bucket.get("project_path") or None,
                 "agent_current_run": bucket.get("agent_current_run"),
                 "agent_last_run": bucket.get("agent_last_run"),
+                "last_provider_timing": bucket.get("last_provider_timing") if isinstance(bucket.get("last_provider_timing"), dict) else {},
             }
 
     def set_provider(self, chat_id: int, provider: str) -> dict[str, Any]:
@@ -258,6 +260,12 @@ class ChatStateStore:
         with self._lock:
             bucket = self._bucket(chat_id)
             bucket["agent_last_run"] = run
+            self._save()
+
+    def set_last_provider_timing(self, chat_id: int, timing: dict[str, Any] | None) -> None:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            bucket["last_provider_timing"] = timing if isinstance(timing, dict) else {}
             self._save()
 
     def get_ui_flow(self, chat_id: int) -> dict[str, Any] | None:

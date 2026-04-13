@@ -81,6 +81,13 @@ class StateTests(unittest.TestCase):
         self.assertEqual(queue[0]["job_id"], "job-1")
         self.assertTrue(queue[0]["recovered_after_restart"])
 
+    def test_last_provider_timing_round_trip(self) -> None:
+        timing = {"job_id": "job-1", "elapsed_seconds": 9, "return_code": 0}
+        self.store.set_last_provider_timing(1, timing)
+
+        state = self.store.get_chat_state(1)
+        self.assertEqual(state["last_provider_timing"], timing)
+
 
 if __name__ == "__main__":
     unittest.main()

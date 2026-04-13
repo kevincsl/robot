@@ -271,13 +271,17 @@ async def _run_codex(
     invocation: RunningInvocation | None,
 ) -> AgentRunResult:
     command = list(settings.provider_commands["codex"])
+    shared_flags: list[str] = []
+    if settings.codex_bypass_approvals_and_sandbox:
+        shared_flags.append("--dangerously-bypass-approvals-and-sandbox")
+    if settings.codex_skip_git_repo_check:
+        shared_flags.append("--skip-git-repo-check")
     if thread_id:
         command.extend(
             [
                 "exec",
                 "resume",
-                "--dangerously-bypass-approvals-and-sandbox",
-                "--skip-git-repo-check",
+                *shared_flags,
                 "--json",
                 "-m",
                 model,
@@ -289,8 +293,7 @@ async def _run_codex(
         command.extend(
             [
                 "exec",
-                "--dangerously-bypass-approvals-and-sandbox",
-                "--skip-git-repo-check",
+                *shared_flags,
                 "--json",
                 "-m",
                 model,
