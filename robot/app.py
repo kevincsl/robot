@@ -31,15 +31,28 @@ UI_BUILD_TAG = "ui-build:2026-04-10-b"
 async def on_startup():
     AGENTS.attach_supervisor(app.supervisor)
     AGENTS.start()
+    risk_enabled = bool(
+        SETTINGS.codex_bypass_approvals_and_sandbox or SETTINGS.codex_skip_git_repo_check
+    )
     queue = getattr(app.supervisor, "_event_queue", None)
     if queue is not None:
         chat_ids = STORE.list_chat_ids()
         target_chat_id = chat_ids[0] if chat_ids else app.config.allowed_user_id
         if target_chat_id:
+            lines = [f"robot booted\n{UI_BUILD_TAG}"]
+            if risk_enabled:
+                lines.extend(
+                    [
+                        "",
+                        "SECURITY WARNING",
+                        f"- codex_bypass_approvals_and_sandbox={SETTINGS.codex_bypass_approvals_and_sandbox}",
+                        f"- codex_skip_git_repo_check={SETTINGS.codex_skip_git_repo_check}",
+                    ]
+                )
             queue.put_nowait(
                 AppEvent(
                     type="status",
-                    text=f"robot booted\n{UI_BUILD_TAG}",
+                    text="\n".join(lines),
                     chat_id=target_chat_id,
                     request_id=None,
                     stream="inprocess",

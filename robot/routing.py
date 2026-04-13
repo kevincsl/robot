@@ -622,13 +622,14 @@ def classify_request(ctx: MessageContext) -> ClassifiedRequest:
     return ClassifiedRequest(AGENT_REQUEST, None, text)
 
 
-def _status_text(chat_id: int, store: ChatStateStore) -> str:
+def _status_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str:
     state = store.get_chat_state(chat_id)
     current_run = state["agent_current_run"] if isinstance(state["agent_current_run"], dict) else {}
     last_run = state["agent_last_run"] if isinstance(state["agent_last_run"], dict) else {}
     provider_timing = state.get("last_provider_timing") if isinstance(state.get("last_provider_timing"), dict) else {}
     teleapp_status_edit = "enabled"
     teleapp_raw_status = "enabled"
+    risk_mode = bool(settings.codex_bypass_approvals_and_sandbox or settings.codex_skip_git_repo_check)
     return "\n".join(
         [
             "robot status",
@@ -643,6 +644,9 @@ def _status_text(chat_id: int, store: ChatStateStore) -> str:
             f"provider_elapsed_seconds: {provider_timing.get('elapsed_seconds', '-')}",
             f"provider_return_code: {provider_timing.get('return_code', '-')}",
             f"provider_cancelled: {provider_timing.get('cancelled', '-')}",
+            f"security_risk_mode: {'on' if risk_mode else 'off'}",
+            f"codex_bypass_approvals_and_sandbox: {settings.codex_bypass_approvals_and_sandbox}",
+            f"codex_skip_git_repo_check: {settings.codex_skip_git_repo_check}",
             f"ui_build: {UI_BUILD_TAG}",
             f"hosted_build: {HOSTED_BUILD_TAG}",
             f"teleapp_status_edit: {teleapp_status_edit}",
@@ -1370,7 +1374,7 @@ async def _handle_menu_action(
 
     if command == "menu:status":
         store.clear_ui_flow(chat_id)
-        return _status_text(chat_id, store)
+        return _status_text(chat_id, store, settings)
 
     if command == "menu:provider":
         store.clear_ui_flow(chat_id)
@@ -1796,7 +1800,7 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         return "robot\nteleapp-based Telegram task router\nOnly agent requests are sent to providers."
 
     if request.command == "status":
-        return _status_text(chat_id, store)
+        return _status_text(chat_id, store, settings)
 
     if request.command == "doctor":
         return build_doctor_report(settings)

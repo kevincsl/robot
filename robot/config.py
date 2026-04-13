@@ -157,8 +157,9 @@ def load_settings(project_root: Path | None = None) -> Settings:
     brain_cli_command = _split_command(os.getenv("ROBOT_BRAIN_CLI_CMD", "obsidian"))
     brain_vault_name = (os.getenv("ROBOT_BRAIN_VAULT", "secondbrain") or "secondbrain").strip()
     brain_vault_path = _resolve_brain_vault_path(root, os.getenv("ROBOT_BRAIN_VAULT_PATH"), brain_vault_name)
-    codex_bypass_approvals_and_sandbox = _env_flag("ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX", True)
-    codex_skip_git_repo_check = _env_flag("ROBOT_CODEX_SKIP_GIT_REPO_CHECK", True)
+    # Security-first defaults: dangerous Codex flags are opt-in.
+    codex_bypass_approvals_and_sandbox = _env_flag("ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX", False)
+    codex_skip_git_repo_check = _env_flag("ROBOT_CODEX_SKIP_GIT_REPO_CHECK", False)
 
     raw_roots = (os.getenv("ROBOT_PROJECTS_ROOTS", "") or "").strip()
     roots: list[Path] = []

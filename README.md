@@ -121,6 +121,8 @@ Linux/macOS:
 - Codex execution flags can be controlled with:
   - `ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX` (`1` or `0`)
   - `ROBOT_CODEX_SKIP_GIT_REPO_CHECK` (`1` or `0`)
+  - default is `0` (disabled); enable only when you explicitly accept the risk.
+  - when enabled, startup status emits `SECURITY WARNING` and `/status` shows `security_risk_mode: on`.
 - You can tune reload behavior with:
   - `TELEAPP_RELOAD_QUIET_SECONDS`
   - `TELEAPP_RELOAD_POLL_SECONDS`

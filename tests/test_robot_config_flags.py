@@ -17,24 +17,24 @@ class ConfigTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
-    def test_codex_flag_defaults_enabled(self) -> None:
+    def test_codex_flag_defaults_disabled(self) -> None:
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
             settings = load_settings(self.root)
-        self.assertTrue(settings.codex_bypass_approvals_and_sandbox)
-        self.assertTrue(settings.codex_skip_git_repo_check)
+        self.assertFalse(settings.codex_bypass_approvals_and_sandbox)
+        self.assertFalse(settings.codex_skip_git_repo_check)
 
-    def test_codex_flags_can_be_disabled_via_env(self) -> None:
+    def test_codex_flags_can_be_enabled_via_env(self) -> None:
         with unittest.mock.patch.dict(
             os.environ,
             {
-                "ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX": "0",
-                "ROBOT_CODEX_SKIP_GIT_REPO_CHECK": "false",
+                "ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX": "1",
+                "ROBOT_CODEX_SKIP_GIT_REPO_CHECK": "true",
             },
             clear=True,
         ):
             settings = load_settings(self.root)
-        self.assertFalse(settings.codex_bypass_approvals_and_sandbox)
-        self.assertFalse(settings.codex_skip_git_repo_check)
+        self.assertTrue(settings.codex_bypass_approvals_and_sandbox)
+        self.assertTrue(settings.codex_skip_git_repo_check)
 
 
 if __name__ == "__main__":

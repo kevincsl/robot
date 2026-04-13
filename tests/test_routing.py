@@ -107,6 +107,16 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("ui_build: ui-build:2026-04-10-b", body)
         self.assertIn("hosted_build: hosted-build:2026-04-10-c", body)
         self.assertIn("provider_elapsed_seconds: 8", body)
+        self.assertIn("security_risk_mode: off", body)
+        self.assertIn("codex_bypass_approvals_and_sandbox: False", body)
+        self.assertIn("codex_skip_git_repo_check: False", body)
+
+    def test_status_shows_risk_mode_when_dangerous_flags_enabled(self) -> None:
+        object.__setattr__(self.settings, "codex_bypass_approvals_and_sandbox", True)
+        request = classify_request(MessageContext(chat_id=1, text="/status", command="status"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("security_risk_mode: on", body)
+        self.assertIn("codex_bypass_approvals_and_sandbox: True", body)
 
     def test_continue_without_active_job_falls_through_to_agent(self) -> None:
         self.store.set_agent_current_run(1, None)
