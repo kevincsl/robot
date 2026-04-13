@@ -6,8 +6,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from markitdown._exceptions import FileConversionException
 from teleapp import ButtonResponse
-from teleapp.context import MessageContext
+from teleapp.context import DocumentInput, MessageContext
 
 from robot.agents import AgentCoordinator
 from robot.config import load_settings
@@ -169,6 +170,29 @@ class RoutingTests(unittest.TestCase):
             ],
         )
         self.assertIsNone(self.store.get_ui_flow(1))
+
+    def test_brain_schedule_button_opens_schedule_menu(self) -> None:
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="brain:schedule"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("行程選單", body.text)
+        self.assertEqual(
+            [button.data for button in body.buttons or []],
+            [
+                "brain:schedule_new",
+                "brain:schedule_today",
+                "brain:schedule_week",
+                "brain:schedule_month",
+                "brain:schedule_list",
+                "brain:cancel",
+            ],
+        )
 
     def test_menu_command_without_text_still_returns_buttons(self) -> None:
         body = self.loop.run_until_complete(
@@ -507,6 +531,79 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("Resource", body)
         self.assertIn("04 Resources/AI article.md", body)
 
+    def test_document_upload_imports_markitdown_resource(self) -> None:
+        ctx = MessageContext(
+            chat_id=1,
+            text="Meeting notes",
+            caption="Meeting notes",
+            document=DocumentInput(
+                file_id="f1",
+                file_unique_id="u1",
+                file_name="meeting.pdf",
+                mime_type="application/pdf",
+                local_path="C:\\temp\\meeting.pdf",
+            ),
+        )
+        with patch(
+            "robot.routing.import_markitdown_resource",
+            return_value=("04 Resources/Meeting notes.md", "# Meeting notes\n\nSummary body"),
+        ) as mock_import:
+            body = self.loop.run_until_complete(handle_request(ctx, self.settings, self.store, self.agents))
+        mock_import.assert_called_once()
+        args, kwargs = mock_import.call_args
+        self.assertEqual(args[0], self.settings)
+        self.assertEqual(args[1], Path("C:/temp/meeting.pdf"))
+        self.assertEqual(kwargs["title"], "Meeting notes")
+        self.assertIn("已匯入文件到 secondbrain", body)
+        self.assertIn("04 Resources/Meeting notes.md", body)
+        self.assertIn("meeting.pdf", body)
+        self.assertIn("Summary body", body)
+
+    def test_document_upload_without_local_path_returns_error(self) -> None:
+        ctx = MessageContext(
+            chat_id=1,
+            text="",
+            document=DocumentInput(
+                file_id="f1",
+                file_unique_id="u1",
+                file_name="meeting.pdf",
+                mime_type="application/pdf",
+                local_path=None,
+            ),
+        )
+        body = self.loop.run_until_complete(handle_request(ctx, self.settings, self.store, self.agents))
+        self.assertIn("沒有可讀取的本機路徑", body)
+
+    def test_document_upload_pdf_missing_dependency_returns_friendly_error(self) -> None:
+        ctx = MessageContext(
+            chat_id=1,
+            text="Meeting notes",
+            document=DocumentInput(
+                file_id="f1",
+                file_unique_id="u1",
+                file_name="meeting.pdf",
+                mime_type="application/pdf",
+                local_path="C:\\temp\\meeting.pdf",
+            ),
+        )
+        with patch(
+            "robot.routing.import_markitdown_resource",
+            side_effect=FileConversionException(
+                message=(
+                    "File conversion failed after 1 attempts:\n"
+                    "- PdfConverter threw MissingDependencyException with message: "
+                    "PdfConverter recognized the input as a potential .pdf file, but the dependencies needed "
+                    "to read .pdf files have not been installed. To resolve this error, include the optional "
+                    "dependency [pdf] or [all] when installing MarkItDown. For example:\n"
+                    "* pip install markitdown[pdf]"
+                )
+            ),
+        ):
+            body = self.loop.run_until_complete(handle_request(ctx, self.settings, self.store, self.agents))
+        self.assertIn("還沒有安裝 PDF 轉換依賴", body)
+        self.assertIn("meeting.pdf", body)
+        self.assertIn("markitdown[pdf]", body)
+
     def test_brainschedule_command_without_payload_starts_flow(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/brainschedule", command="brainschedule"))
         body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
@@ -515,10 +612,10 @@ class RoutingTests(unittest.TestCase):
         self.assertIsInstance(flow, dict)
         self.assertEqual(flow.get("kind"), "await_brain_schedule_title")
 
-    def test_brainschedule_flow_creates_schedule_note(self) -> None:
+    def test_brain_schedule_new_flow_creates_schedule_note(self) -> None:
         self.loop.run_until_complete(
             handle_request(
-                MessageContext(chat_id=1, text="", command="brain:schedule"),
+                MessageContext(chat_id=1, text="", command="brain:schedule_new"),
                 self.settings,
                 self.store,
                 self.agents,
@@ -558,6 +655,496 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("Schedule", body)
         self.assertIn("Weekly sync.md", body)
         self.assertIsNone(self.store.get_ui_flow(1))
+
+
+    def test_brain_schedule_new_flow_accepts_natural_language_then_confirms(self) -> None:
+        self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="brain:schedule_new"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        confirm = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="今天下午6點半要吃藥"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(confirm, ButtonResponse)
+        self.assertIn("看起來像一筆行程，要怎麼處理？", confirm.text)
+        self.assertIn("標題: 吃藥", confirm.text)
+        self.assertIn("日期: 2026-04-13", confirm.text)
+        self.assertIn("時間: 18:30", confirm.text)
+        self.assertEqual(
+            [button.data for button in confirm.buttons or []],
+            ["brain:schedule_confirm", "brain:schedule_send_agent", "brain:cancel"],
+        )
+
+        with patch("robot.routing.create_schedule_note", return_value="06 Schedule/吃藥.md") as mock_create:
+            with patch("robot.routing.read_note", return_value="# Schedule\n\ncontent"):
+                body = self.loop.run_until_complete(
+                    handle_request(
+                        MessageContext(chat_id=1, text="", command="brain:schedule_confirm"),
+                        self.settings,
+                        self.store,
+                        self.agents,
+                    )
+                )
+        mock_create.assert_called_once_with(
+            self.settings,
+            "吃藥",
+            date_text="2026-04-13",
+            time_text="18:30",
+            recurrence_type="",
+            recurrence_value="",
+        )
+        self.assertIn("已建立 Schedule 筆記", body)
+        self.assertIn("06 Schedule/吃藥.md", body)
+        self.assertIsNone(self.store.get_ui_flow(1))
+
+    def test_plain_natural_language_schedule_message_offers_confirmation(self) -> None:
+        self.store.clear_ui_flow(1)
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="提醒我今天下午6點半吃藥"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("看起來像一筆行程，要怎麼處理？", body.text)
+        self.assertIn("標題: 吃藥", body.text)
+        self.assertEqual(
+            [button.data for button in body.buttons or []],
+            ["brain:schedule_confirm", "brain:schedule_send_agent", "brain:cancel"],
+        )
+
+    def test_plain_natural_language_schedule_with_point_minutes_offers_confirmation(self) -> None:
+        self.store.clear_ui_flow(1)
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="幫我加入行程 今天晚上23點40分要睡覺"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("看起來像一筆行程，要怎麼處理？", body.text)
+        self.assertIn("標題: 睡覺", body.text)
+        self.assertIn("時間: 23:40", body.text)
+
+    def test_plain_relative_schedule_message_offers_confirmation(self) -> None:
+        self.store.clear_ui_flow(1)
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="30分鐘後要休息"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("看起來像一筆行程，要怎麼處理？", body.text)
+        self.assertIn("標題: 休息", body.text)
+
+    def test_plain_next_weekday_schedule_message_offers_confirmation(self) -> None:
+        self.store.clear_ui_flow(1)
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="安排下週二下午3點交報告"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("看起來像一筆行程，要怎麼處理？", body.text)
+        self.assertIn("標題: 交報告", body.text)
+        self.assertIn("時間: 15:00", body.text)
+
+    def test_plain_weekly_recurring_schedule_message_offers_confirmation(self) -> None:
+        self.store.clear_ui_flow(1)
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="每週三晚上8點吃火鍋"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("看起來像一筆行程，要怎麼處理？", body.text)
+        self.assertIn("標題: 吃火鍋", body.text)
+        self.assertIn("時間: 20:00", body.text)
+
+    def test_schedule_send_agent_routes_original_text_to_codex(self) -> None:
+        self.store.set_ui_flow(
+            1,
+            {
+                "kind": "await_brain_schedule_confirm",
+                "title": "吃藥",
+                "date_text": "2026-04-13",
+                "time_text": "18:30",
+                "source_text": "提醒我今天下午6點半吃藥",
+            },
+        )
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="", command="brain:schedule_send_agent"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
+        self.assertIsNone(self.store.get_ui_flow(1))
+
+    def test_schedule_send_agent_uses_last_candidate_when_flow_was_cleared(self) -> None:
+        self.store.set_last_schedule_candidate(
+            1,
+            {
+                "kind": "await_brain_schedule_confirm",
+                "title": "log",
+                "date_text": "2026-04-13",
+                "time_text": "23:40",
+                "source_text": "今天晚上11點40分那個 log 你看一下",
+            },
+        )
+        self.store.clear_ui_flow(1)
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="", command="brain:schedule_send_agent"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
+        self.assertIsNone(self.store.get_ui_flow(1))
+        self.assertIsNone(self.store.get_last_schedule_candidate(1))
+
+    def test_delete_schedule_phrase_offers_delete_confirmation(self) -> None:
+        with patch(
+            "robot.routing.find_schedule_notes",
+            return_value=[
+                {
+                    "title": "吃藥",
+                    "date": "2026-04-13",
+                    "time": "07:30",
+                    "path": "06 Schedule/吃藥.md",
+                    "recurrence_type": "daily",
+                    "recurrence_value": "daily",
+                }
+            ],
+        ):
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="去除吃藥行程"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("看起來你是要刪除一筆行程", body.text)
+        self.assertIn("06 Schedule/吃藥.md", body.text)
+        self.assertIn("這是一筆週期性行程。刪除後會停止未來所有重複提醒。", body.text)
+        self.assertEqual(
+            [button.data for button in body.buttons or []],
+            ["brain:schedule_delete_confirm", "brain:schedule_send_agent", "brain:cancel"],
+        )
+
+    def test_schedule_delete_confirm_archives_note(self) -> None:
+        self.store.set_ui_flow(
+            1,
+            {
+                "kind": "await_brain_schedule_delete_confirm",
+                "title": "吃藥",
+                "path": "06 Schedule/吃藥.md",
+                "source_text": "去除吃藥行程",
+            },
+        )
+        with patch("robot.routing.archive_schedule_note", return_value="99 Archive/Deleted Schedule/吃藥.md") as mock_archive:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="", command="brain:schedule_delete_confirm"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        mock_archive.assert_called_once_with(self.settings, "06 Schedule/吃藥.md")
+        self.assertIn("已封存行程", body)
+        self.assertIn("99 Archive/Deleted Schedule/吃藥.md", body)
+
+    def test_delete_schedule_send_agent_routes_original_text_to_codex(self) -> None:
+        self.store.set_ui_flow(
+            1,
+            {
+                "kind": "await_brain_schedule_delete_confirm",
+                "title": "吃藥",
+                "path": "06 Schedule/吃藥.md",
+                "source_text": "去除吃藥行程",
+            },
+        )
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="", command="brain:schedule_send_agent"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
+
+    def test_schedule_cancel_button_routes_original_text_to_codex(self) -> None:
+        self.store.set_ui_flow(
+            1,
+            {
+                "kind": "await_brain_schedule_confirm",
+                "title": "log",
+                "date_text": "2026-04-13",
+                "time_text": "23:40",
+                "source_text": "今天晚上11點40分那個 log 你看一下",
+            },
+        )
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="", command="brain:cancel"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
+        self.assertIsNone(self.store.get_ui_flow(1))
+
+    def test_schedule_cancel_text_routes_original_text_to_codex(self) -> None:
+        self.store.set_ui_flow(
+            1,
+            {
+                "kind": "await_brain_schedule_confirm",
+                "title": "log",
+                "date_text": "2026-04-13",
+                "time_text": "23:40",
+                "source_text": "今天晚上11點40分那個 log 你看一下",
+            },
+        )
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="cancel"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
+        self.assertIsNone(self.store.get_ui_flow(1))
+
+    def test_schedule_confirm_writes_recurring_properties(self) -> None:
+        self.store.set_ui_flow(
+            1,
+            {
+                "kind": "await_brain_schedule_confirm",
+                "title": "吃火鍋",
+                "date_text": "2026-04-15",
+                "time_text": "20:00",
+                "recurrence_type": "weekly",
+                "recurrence_value": "2",
+            },
+        )
+        with patch("robot.routing.create_schedule_note", return_value="06 Schedule/吃火鍋.md") as mock_create:
+            with patch("robot.routing.read_note", return_value="# Schedule\n\ncontent"):
+                body = self.loop.run_until_complete(
+                    handle_request(
+                        MessageContext(chat_id=1, text="", command="brain:schedule_confirm"),
+                        self.settings,
+                        self.store,
+                        self.agents,
+                    )
+                )
+        mock_create.assert_called_once_with(
+            self.settings,
+            "吃火鍋",
+            date_text="2026-04-15",
+            time_text="20:00",
+            recurrence_type="weekly",
+            recurrence_value="2",
+        )
+        self.assertIn("已建立 Schedule 筆記", body)
+
+    def test_plain_question_still_reaches_agent(self) -> None:
+        self.store.clear_ui_flow(1)
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="請幫我檢查目前queue卡住的原因"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
+
+    def test_plain_time_mention_without_schedule_intent_reaches_agent(self) -> None:
+        self.store.clear_ui_flow(1)
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="今天晚上11點40分那個 log 你看一下"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
+    def test_brain_schedule_today_returns_brief(self) -> None:
+        with patch("robot.routing.build_schedule_range_brief", return_value="今日行程 2026-04-12\n\n- 09:00 | Standup") as mock_brief:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="", command="brain:schedule_today"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        mock_brief.assert_called_once_with(self.settings, period="day", limit=50)
+        self.assertIn("今日行程", body)
+
+    def test_brain_schedule_week_returns_brief(self) -> None:
+        with patch("robot.routing.build_schedule_range_brief", return_value="本週行程\n\n- 07:30 | 吃藥") as mock_brief:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="", command="brain:schedule_week"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        mock_brief.assert_called_once_with(self.settings, period="week", limit=80)
+        self.assertIn("本週行程", body)
+
+    def test_flat_week_schedule_phrase_returns_week_schedule(self) -> None:
+        with patch("robot.routing.build_schedule_range_brief", return_value="本週行程\n\n- 07:30 | 吃藥") as mock_brief:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="這一週行程"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        mock_brief.assert_called_once_with(self.settings, period="week", limit=80)
+        self.assertIn("本週行程", body)
+
+    def test_semantic_week_schedule_phrase_returns_week_schedule(self) -> None:
+        with patch("robot.routing.build_schedule_range_brief", return_value="本週行程\n\n- 07:30 | 吃藥") as mock_brief:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="幫我看這禮拜有哪些行程"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        mock_brief.assert_called_once_with(self.settings, period="week", limit=80)
+        self.assertIn("本週行程", body)
+
+    def test_flat_month_schedule_phrase_returns_month_schedule(self) -> None:
+        with patch("robot.routing.build_schedule_range_brief", return_value="本月行程\n\n- 07:30 | 吃藥") as mock_brief:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="這個月行程"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        mock_brief.assert_called_once_with(self.settings, period="month", limit=120)
+        self.assertIn("本月行程", body)
+
+    def test_schedule_create_phrase_does_not_get_misrouted_to_range_view(self) -> None:
+        with patch("robot.routing.build_schedule_range_brief") as mock_brief:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="幫我加入行程 今天晚上23點40分要睡覺"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        mock_brief.assert_not_called()
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("看起來像一筆行程", body.text)
+
+    def test_brain_schedule_list_returns_brief(self) -> None:
+        with patch("robot.routing.build_schedule_brief", return_value="行程列表\n\n- 2026-04-13 10:00 | Review") as mock_brief:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="", command="brain:schedule_list"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        mock_brief.assert_called_once_with(self.settings, today_only=False, limit=10)
+        self.assertIn("行程列表", body)
+
+    def test_brain_schedule_archive_past_returns_summary(self) -> None:
+        with patch(
+            "robot.routing.archive_past_due_schedule_notes",
+            return_value=[
+                {
+                    "title": "休息",
+                    "date": "2026-04-13",
+                    "time": "01:10",
+                    "path": "06 Schedule/休息.md",
+                    "archived_path": "99 Archive/Deleted Schedule/休息.md",
+                }
+            ],
+        ) as mock_archive:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="", command="brain:schedule_archive_past"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        mock_archive.assert_called_once_with(self.settings, limit=200)
+        self.assertIn("已封存過期行程", body)
+        self.assertIn("06 Schedule/休息.md", body)
+
+    def test_semantic_archive_past_schedule_phrase_executes_action(self) -> None:
+        with patch("robot.routing.archive_past_due_schedule_notes", return_value=[]) as mock_archive:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="將已經超過時間的行程封存"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        mock_archive.assert_called_once_with(self.settings, limit=200)
+        self.assertIn("目前沒有已過期且可封存的單次行程", body)
 
     def test_menu_model_flow_updates_model_from_button_callback(self) -> None:
         open_menu = self.loop.run_until_complete(
@@ -824,4 +1411,6 @@ class RoutingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
 

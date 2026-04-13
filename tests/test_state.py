@@ -43,6 +43,8 @@ class StateTests(unittest.TestCase):
         self.assertEqual(automation["daily_time"], "21:00")
         self.assertEqual(automation["weekly_day"], 0)
         self.assertEqual(automation["weekly_time"], "09:00")
+        self.assertEqual(automation["last_schedule_alert_key"], "")
+        self.assertEqual(automation["schedule_alert_window_minutes"], 60)
 
     def test_brain_automation_can_be_updated(self) -> None:
         automation = self.store.update_brain_automation(1, enabled=False, daily_time="22:30")

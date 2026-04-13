@@ -10,7 +10,13 @@ from uuid import uuid4
 
 from teleapp.protocol import AppEvent
 
-from robot.brain import build_daily_brief, build_weekly_brief, collect_brain_reminders
+from robot.brain import (
+    build_daily_brief,
+    build_schedule_alert,
+    build_weekly_brief,
+    collect_brain_reminders,
+    get_active_or_next_schedule,
+)
 from robot.config import Settings
 from robot.providers import (
     RunningInvocation,
@@ -359,6 +365,62 @@ class AgentCoordinator:
             payload = build_weekly_brief(self._settings, limit=10)
             await self._emit(chat_id, payload)
             self._store.update_brain_automation(chat_id, last_weekly_key=week_key)
+
+        lookahead_minutes = self._coerce_schedule_window(automation.get("schedule_alert_window_minutes"))
+        schedule = get_active_or_next_schedule(self._settings, now=now, lookahead_minutes=lookahead_minutes)
+        last_schedule_key = str(automation.get("last_schedule_alert_key") or "")
+        if schedule is None:
+            if last_schedule_key:
+                self._store.update_brain_automation(chat_id, last_schedule_alert_key="")
+            return
+
+        schedule_key = self._build_schedule_alert_key(schedule)
+        if schedule_key == last_schedule_key:
+            return
+
+        payload = build_schedule_alert(self._settings, now=now)
+        if payload is None:
+            return
+        await self._emit(chat_id, payload)
+        self._store.update_brain_automation(chat_id, last_schedule_alert_key=schedule_key)
+
+    @staticmethod
+    def _coerce_schedule_window(value: Any) -> int:
+        try:
+            minutes = int(value)
+        except (TypeError, ValueError):
+            minutes = 60
+        return max(1, minutes)
+
+    @staticmethod
+    def _build_schedule_alert_key(schedule: dict[str, str]) -> str:
+        stage = AgentCoordinator._schedule_alert_stage(schedule)
+        return "|".join(
+            [
+                stage,
+                str(schedule.get("status") or ""),
+                str(schedule.get("date") or ""),
+                str(schedule.get("time") or ""),
+                str(schedule.get("path") or ""),
+                str(schedule.get("title") or ""),
+            ]
+        )
+
+    @staticmethod
+    def _schedule_alert_stage(schedule: dict[str, str]) -> str:
+        status = str(schedule.get("status") or "")
+        try:
+            minutes_until = int(schedule.get("minutes_until") or "0")
+        except (TypeError, ValueError):
+            minutes_until = 0
+
+        if status == "now" or minutes_until <= 0:
+            return "start"
+        if minutes_until <= 10:
+            return "10m"
+        if minutes_until <= 30:
+            return "30m"
+        return "60m"
 
     async def _worker_loop(self, chat_id: int) -> None:
         while True:

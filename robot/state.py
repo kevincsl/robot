@@ -79,6 +79,7 @@ class ChatStateStore:
         bucket.setdefault("agent_current_run", None)
         bucket.setdefault("agent_last_run", None)
         bucket.setdefault("ui_flow", None)
+        bucket.setdefault("last_schedule_candidate", None)
         automation = bucket.setdefault("brain_automation", {})
         if not isinstance(automation, dict):
             automation = {}
@@ -89,6 +90,8 @@ class ChatStateStore:
         automation.setdefault("weekly_time", "09:00")
         automation.setdefault("last_daily_date", "")
         automation.setdefault("last_weekly_key", "")
+        automation.setdefault("last_schedule_alert_key", "")
+        automation.setdefault("schedule_alert_window_minutes", 60)
         return bucket
 
     def get_chat_state(self, chat_id: int) -> dict[str, Any]:
@@ -237,6 +240,21 @@ class ChatStateStore:
 
     def clear_ui_flow(self, chat_id: int) -> None:
         self.set_ui_flow(chat_id, None)
+
+    def get_last_schedule_candidate(self, chat_id: int) -> dict[str, Any] | None:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            candidate = bucket.get("last_schedule_candidate")
+            return candidate if isinstance(candidate, dict) else None
+
+    def set_last_schedule_candidate(self, chat_id: int, candidate: dict[str, Any] | None) -> None:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            bucket["last_schedule_candidate"] = candidate if isinstance(candidate, dict) else None
+            self._save()
+
+    def clear_last_schedule_candidate(self, chat_id: int) -> None:
+        self.set_last_schedule_candidate(chat_id, None)
 
     def get_brain_automation(self, chat_id: int) -> dict[str, Any]:
         with self._lock:
