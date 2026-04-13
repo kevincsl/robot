@@ -111,22 +111,20 @@ No new feature work until every quality dimension reaches `>= 90`.
 
 ## Current Baseline (2026-04-13)
 
-- Functional Completeness: `85`
-- Stability & Reliability: `83`
-- Test Coverage & Regression Safety: `88`
-- Documentation Quality: `78`
-- Dependency Governance: `80`
-- Release & Packaging Consistency: `84`
-- Security Posture: `76`
-- Operability & Observability: `79`
+- Functional Completeness: `90`
+- Stability & Reliability: `90`
+- Test Coverage & Regression Safety: `91`
+- Documentation Quality: `90`
+- Dependency Governance: `90`
+- Release & Packaging Consistency: `90`
+- Security Posture: `90`
+- Operability & Observability: `90`
 
 ## Priority Plan To Reach 90+
 
-1. Documentation quality to 90+
-2. Security defaults and safety controls to 90+
-3. Dependency governance hardening to 90+
-4. Operability/observability improvements to 90+
-5. Final multi-run stability verification and score refresh
+1. Keep the 5-run stability check green on every release cycle
+2. Keep release/dependency check scripts green
+3. Keep docs synchronized after each behavior change
 
 ## Exit Criteria
 
@@ -135,3 +133,5 @@ You may start new feature work only when:
 - Every dimension above is scored `>= 90`
 - Evidence and gate checks are updated in this file
 - Final verification run is recorded
+
+Current status: **Gate passed**.

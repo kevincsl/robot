@@ -133,5 +133,6 @@ Linux/macOS:
 
 - Semantic shortcut policy: `SEMANTIC_SHORTCUTS.md`
 - Dependency strategy and compatibility: `DEPENDENCY_STRATEGY.md`
+- Core flow coverage map: `CORE_FLOW_COVERAGE.md`
 - Quality gate before new features: `QUALITY_GATE_90.md`
 - Operations runbook and troubleshooting: `RUNBOOK.md`
