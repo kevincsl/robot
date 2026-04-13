@@ -3,6 +3,7 @@
 import argparse
 import re
 import shlex
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -155,6 +156,20 @@ FLOW_AWAIT_BRAIN_ORGANIZE_TITLE = "await_brain_organize_title"
 FLOW_BRAIN_SEARCH_RESULTS = "brain_search_results"
 FLOW_BRAIN_BATCH_RESULTS = "brain_batch_results"
 FLOW_AWAIT_SHORTCUT_CONFIRM = "await_shortcut_confirm"
+
+
+def _runtime_git_commit() -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=1.5,
+        )
+    except (FileNotFoundError, OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return "-"
+    return (completed.stdout or "").strip() or "-"
 
 
 def _schedule_confirm_response(parsed: dict[str, str]) -> ButtonResponse:
@@ -619,6 +634,8 @@ def classify_request(ctx: MessageContext) -> ClassifiedRequest:
         return ClassifiedRequest(COMMAND_REQUEST, command, _resolved_payload(text, command))
     if command in CONTROL_NAMES:
         return ClassifiedRequest(CONTROL_REQUEST, command, _resolved_payload(text, command))
+    if command is not None:
+        return ClassifiedRequest(COMMAND_REQUEST, command, _resolved_payload(text, command))
     if text.startswith("/"):
         return ClassifiedRequest(COMMAND_REQUEST, command, _command_payload(text))
     return ClassifiedRequest(AGENT_REQUEST, None, text)
@@ -658,6 +675,7 @@ def _status_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str
             f"codex_skip_git_repo_check: {settings.codex_skip_git_repo_check}",
             f"ui_build: {UI_BUILD_TAG}",
             f"hosted_build: {HOSTED_BUILD_TAG}",
+            f"runtime_commit: {_runtime_git_commit()}",
             f"teleapp_status_edit: {teleapp_status_edit}",
             f"teleapp_raw_status: {teleapp_raw_status}",
             "",
@@ -2281,7 +2299,7 @@ async def handle_control(chat_id: int, request: ClassifiedRequest, store: ChatSt
 async def handle_agent(chat_id: int, request: ClassifiedRequest, agents: AgentCoordinator) -> str:
     prompt = request.payload.strip()
     if not prompt:
-        return "Empty agent request."
+        return "空白訊息，沒有可送給 AI 的內容。請輸入文字或使用 /help。"
     job_id, position, started = agents.enqueue(chat_id, prompt, source="message")
     if started:
         return f"Provider run started.\njob: {job_id}\ngoal: {prompt}"

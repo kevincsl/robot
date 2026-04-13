@@ -85,6 +85,12 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(request.kind, AGENT_REQUEST)
         self.assertIsNone(request.command)
 
+    def test_classify_unknown_ctx_command_as_command_request(self) -> None:
+        ctx = MessageContext(chat_id=1, text="", command="not_a_real_command")
+        request = classify_request(ctx)
+        self.assertEqual(request.kind, COMMAND_REQUEST)
+        self.assertEqual(request.command, "not_a_real_command")
+
     def test_menu_trigger_returns_buttons(self) -> None:
         body = self.loop.run_until_complete(
             handle_request(
@@ -114,6 +120,7 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("security_risk_mode: off", body)
         self.assertIn("codex_bypass_approvals_and_sandbox: False", body)
         self.assertIn("codex_skip_git_repo_check: False", body)
+        self.assertIn("runtime_commit:", body)
 
     def test_status_shows_risk_mode_when_dangerous_flags_enabled(self) -> None:
         object.__setattr__(self.settings, "codex_bypass_approvals_and_sandbox", True)
