@@ -38,6 +38,10 @@ Expected healthy signs:
 - `busy: no` when idle
 - `queued_requests: 0` when idle
 - no `last_error`
+- `/status` shows:
+  - `queued_jobs: 0` when no waiting agent jobs
+  - `scheduled_jobs` matches expected scheduled count
+  - `ui_flow: -` when no interactive flow is active
 
 ## 3) Common Issues
 

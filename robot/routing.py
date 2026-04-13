@@ -624,6 +624,10 @@ def classify_request(ctx: MessageContext) -> ClassifiedRequest:
 
 def _status_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str:
     state = store.get_chat_state(chat_id)
+    queued_jobs = len(store.get_agent_queue(chat_id))
+    scheduled_jobs = len(store.get_agent_schedules(chat_id))
+    flow = store.get_ui_flow(chat_id)
+    flow_kind = flow.get("kind") if isinstance(flow, dict) else None
     current_run = state["agent_current_run"] if isinstance(state["agent_current_run"], dict) else {}
     last_run = state["agent_last_run"] if isinstance(state["agent_last_run"], dict) else {}
     provider_timing = state.get("last_provider_timing") if isinstance(state.get("last_provider_timing"), dict) else {}
@@ -639,6 +643,9 @@ def _status_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str
             f"project: {state['project_name']}",
             f"path: {state['project_path']}",
             f"thread_id: {state['thread_id'] or '-'}",
+            f"queued_jobs: {queued_jobs}",
+            f"scheduled_jobs: {scheduled_jobs}",
+            f"ui_flow: {flow_kind or '-'}",
             f"current_run: {current_run.get('job_id', '-')}",
             f"last_run: {last_run.get('job_id', '-')}",
             f"provider_elapsed_seconds: {provider_timing.get('elapsed_seconds', '-')}",
