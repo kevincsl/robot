@@ -1163,6 +1163,179 @@ def create_resource_note_from_text(settings: Settings, title: str, source_text: 
     return path
 
 
+def _normalize_for_auto_organize(text: str) -> str:
+    return (text or "").strip().lower()
+
+
+def _infer_auto_organize_target(text: str) -> str:
+    normalized = _normalize_for_auto_organize(text)
+    if not normalized:
+        return "knowledge"
+
+    project_keywords = (
+        "專案",
+        "project",
+        "roadmap",
+        "milestone",
+        "deadline",
+        "需求",
+        "待辦",
+        "todo",
+        "bug",
+        "issue",
+        "版本",
+        "交付",
+        "開發",
+    )
+    resource_keywords = (
+        "http://",
+        "https://",
+        "www.",
+        ".pdf",
+        ".ppt",
+        ".pptx",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".csv",
+        ".md",
+        ".txt",
+        "連結",
+        "網址",
+        "參考",
+        "article",
+        "paper",
+        "repo",
+        "github",
+        "youtube",
+        "影片",
+    )
+
+    if any(keyword in normalized for keyword in project_keywords):
+        return "project"
+    if any(keyword in normalized for keyword in resource_keywords):
+        return "resource"
+    return "knowledge"
+
+
+def _extract_auto_organize_title(text: str, fallback: str) -> str:
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    if not lines:
+        return fallback
+    first = lines[0]
+    if first.startswith("#"):
+        first = first.lstrip("#").strip()
+    first = re.sub(r"^\[[0-9]{1,2}:[0-9]{2}\]\s*", "", first)
+    first = re.sub(r"\s+", " ", first).strip(" -:：")
+    if not first:
+        return fallback
+    return first[:60]
+
+
+def auto_organize_recent_notes(settings: Settings, *, limit: int = 10) -> dict[str, object]:
+    bounded_limit = max(1, min(limit, 50))
+    recent_items = _list_notes_with_mtime(settings, "00 Inbox") + _list_notes_with_mtime(settings, "01 Daily Notes")
+    recent_items.sort(key=lambda item: item[1], reverse=True)
+    selected_paths = [path for path, _ in recent_items[:bounded_limit]]
+    if not selected_paths:
+        return {
+            "processed": 0,
+            "created": 0,
+            "failed": 0,
+            "skipped": 0,
+            "by_type": {"project": 0, "knowledge": 0, "resource": 0},
+            "items": [],
+        }
+
+    by_type: Counter[str] = Counter()
+    results: list[dict[str, str]] = []
+    created = 0
+    failed = 0
+    skipped = 0
+
+    for index, source_path in enumerate(selected_paths, start=1):
+        fallback_title = f"Auto Organized {datetime.now().strftime('%Y-%m-%d')} #{index}"
+        try:
+            source_text = read_note(settings, source_path).strip()
+        except OSError as exc:
+            failed += 1
+            results.append(
+                {
+                    "source_path": source_path,
+                    "target": "",
+                    "title": "",
+                    "path": "",
+                    "status": "failed",
+                    "error": str(exc),
+                }
+            )
+            continue
+
+        if not source_text:
+            skipped += 1
+            results.append(
+                {
+                    "source_path": source_path,
+                    "target": "",
+                    "title": "",
+                    "path": "",
+                    "status": "skipped",
+                    "error": "empty note",
+                }
+            )
+            continue
+
+        target = _infer_auto_organize_target(source_text)
+        title = _extract_auto_organize_title(source_text, fallback_title)
+        try:
+            if target == "project":
+                new_path = create_project_note_from_text(settings, title, source_text)
+            elif target == "resource":
+                new_path = create_resource_note_from_text(settings, title, source_text)
+            else:
+                new_path = create_knowledge_note_from_text(settings, title, source_text)
+        except OSError as exc:
+            failed += 1
+            results.append(
+                {
+                    "source_path": source_path,
+                    "target": target,
+                    "title": title,
+                    "path": "",
+                    "status": "failed",
+                    "error": str(exc),
+                }
+            )
+            continue
+
+        created += 1
+        by_type[target] += 1
+        results.append(
+            {
+                "source_path": source_path,
+                "target": target,
+                "title": title,
+                "path": new_path,
+                "status": "created",
+                "error": "",
+            }
+        )
+
+    return {
+        "processed": len(selected_paths),
+        "created": created,
+        "failed": failed,
+        "skipped": skipped,
+        "by_type": {
+            "project": int(by_type.get("project", 0)),
+            "knowledge": int(by_type.get("knowledge", 0)),
+            "resource": int(by_type.get("resource", 0)),
+        },
+        "items": results,
+    }
+
+
 def import_markitdown_resource(settings: Settings, source_path: Path, title: str | None = None) -> tuple[str, str]:
     md = MarkItDown()
     result = md.convert(str(source_path))

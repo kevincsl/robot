@@ -13,6 +13,7 @@ from teleapp.context import MessageContext
 
 from robot.agents import AgentCoordinator
 from robot.brain import (
+    auto_organize_recent_notes,
     archive_schedule_note,
     archive_past_due_schedule_notes,
     append_to_daily,
@@ -81,6 +82,7 @@ COMMAND_NAMES = {
     "brainschedule",
     "brainorganize",
     "brainbatch",
+    "brainbatchauto",
     "brainremind",
     "braindaily",
     "brainweekly",
@@ -691,6 +693,7 @@ def _help_text() -> str:
             "/brainsearch <query>",
             "/brainorganize",
             "/brainbatch",
+            "/brainbatchauto [limit]",
             "/brainproject <title>",
             "/brainknowledge <title>",
             "/brainresource <title>",
@@ -768,6 +771,7 @@ def _brain_text() -> str:
             "- 搜尋",
             "- 整理",
             "- 批次整理",
+            "- 自動批次整理",
             "- 專案",
             "- 知識卡",
             "- Resource",
@@ -791,6 +795,7 @@ def _brain_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
             Button("搜尋", "brain:search"),
             Button("整理", "brain:organize"),
             Button("批次整理", "brain:batch"),
+            Button("自動批次整理", "brain:batch_auto"),
             Button("專案", "brain:project"),
             Button("知識卡", "brain:knowledge"),
             Button("Resource", "brain:resource"),
@@ -852,6 +857,43 @@ async def _handle_brain_action(
             "選一篇最近的 Inbox / Daily 筆記來整理：",
             buttons=[Button(item, f"brain:batch_open:{idx}") for idx, item in enumerate(items)],
         )
+
+    if command == "brain:batch_auto":
+        summary = auto_organize_recent_notes(settings, limit=10)
+        processed = int(summary.get("processed") or 0)
+        if processed == 0:
+            return "目前沒有可自動整理的 Inbox / Daily 筆記。"
+        by_type = summary.get("by_type")
+        items = summary.get("items")
+        if not isinstance(by_type, dict):
+            by_type = {}
+        if not isinstance(items, list):
+            items = []
+        lines = [
+            "自動批次整理完成：",
+            f"- processed: {processed}",
+            f"- created: {int(summary.get('created') or 0)}",
+            f"- skipped: {int(summary.get('skipped') or 0)}",
+            f"- failed: {int(summary.get('failed') or 0)}",
+            "",
+            "分類統計：",
+            f"- project: {int(by_type.get('project') or 0)}",
+            f"- knowledge: {int(by_type.get('knowledge') or 0)}",
+            f"- resource: {int(by_type.get('resource') or 0)}",
+        ]
+        created_items = [item for item in items if isinstance(item, dict) and item.get("status") == "created"]
+        if created_items:
+            lines.append("")
+            lines.append("新建立筆記：")
+            for item in created_items[:10]:
+                lines.append(f"- {item.get('source_path')} -> {item.get('path')} ({item.get('target')})")
+        failed_items = [item for item in items if isinstance(item, dict) and item.get("status") == "failed"]
+        if failed_items:
+            lines.append("")
+            lines.append("失敗項目：")
+            for item in failed_items[:5]:
+                lines.append(f"- {item.get('source_path')}: {item.get('error') or 'unknown error'}")
+        return "\n".join(lines)
 
     if command == "brain:project":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_PROJECT})
@@ -1152,6 +1194,8 @@ def _resolve_flat_brain_action(text: str, *, contains_match: bool) -> str | None
         return "brain:read"
     if (contains_match and _contains_any(normalized, ("搜尋", "search"))) or normalized in {"搜尋", "search"}:
         return "brain:search"
+    if (contains_match and _contains_any(normalized, ("自動批次整理", "自動整理", "batch auto", "auto organize"))) or normalized in {"自動批次整理", "自動整理", "batch auto", "auto organize"}:
+        return "brain:batch_auto"
     if (contains_match and _contains_any(normalized, ("整理", "organize"))) or normalized in {"整理", "organize"}:
         return "brain:organize"
     if (contains_match and _contains_any(normalized, ("批次整理", "batch"))) or normalized in {"批次整理", "batch"}:
@@ -1211,6 +1255,7 @@ def _shortcut_action_label(action: str) -> str:
         "brain:inbox": "Inbox",
         "brain:read": "讀今日",
         "brain:search": "搜尋",
+        "brain:batch_auto": "自動批次整理",
         "brain:organize": "整理",
         "brain:batch": "批次整理",
         "brain:project": "專案",
@@ -1954,6 +1999,51 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
 
     if request.command == "brainbatch":
         return await _handle_brain_action(chat_id, "brain:batch", settings, store, agents)
+
+    if request.command == "brainbatchauto":
+        payload = request.payload.strip()
+        if not payload:
+            return await _handle_brain_action(chat_id, "brain:batch_auto", settings, store, agents)
+        try:
+            limit = int(payload)
+        except ValueError:
+            return "Usage: /brainbatchauto [limit]"
+        bounded_limit = max(1, min(limit, 50))
+        summary = auto_organize_recent_notes(settings, limit=bounded_limit)
+        processed = int(summary.get("processed") or 0)
+        if processed == 0:
+            return "目前沒有可自動整理的 Inbox / Daily 筆記。"
+        by_type = summary.get("by_type")
+        items = summary.get("items")
+        if not isinstance(by_type, dict):
+            by_type = {}
+        if not isinstance(items, list):
+            items = []
+        lines = [
+            f"自動批次整理完成 (limit={bounded_limit})：",
+            f"- processed: {processed}",
+            f"- created: {int(summary.get('created') or 0)}",
+            f"- skipped: {int(summary.get('skipped') or 0)}",
+            f"- failed: {int(summary.get('failed') or 0)}",
+            "",
+            "分類統計：",
+            f"- project: {int(by_type.get('project') or 0)}",
+            f"- knowledge: {int(by_type.get('knowledge') or 0)}",
+            f"- resource: {int(by_type.get('resource') or 0)}",
+        ]
+        created_items = [item for item in items if isinstance(item, dict) and item.get("status") == "created"]
+        if created_items:
+            lines.append("")
+            lines.append("新建立筆記：")
+            for item in created_items[:10]:
+                lines.append(f"- {item.get('source_path')} -> {item.get('path')} ({item.get('target')})")
+        failed_items = [item for item in items if isinstance(item, dict) and item.get("status") == "failed"]
+        if failed_items:
+            lines.append("")
+            lines.append("失敗項目：")
+            for item in failed_items[:5]:
+                lines.append(f"- {item.get('source_path')}: {item.get('error') or 'unknown error'}")
+        return "\n".join(lines)
 
     if request.command == "brainproject":
         payload = request.payload.strip()

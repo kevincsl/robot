@@ -3,6 +3,7 @@
 import asyncio
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -202,6 +203,7 @@ class RoutingTests(unittest.TestCase):
                 "brain:search",
                 "brain:organize",
                 "brain:batch",
+                "brain:batch_auto",
                 "brain:project",
                 "brain:knowledge",
                 "brain:resource",
@@ -565,6 +567,69 @@ class RoutingTests(unittest.TestCase):
             ["brain:organize_target:project", "brain:organize_target:knowledge", "brain:organize_target:resource"],
         )
 
+    def test_brain_batch_auto_returns_summary(self) -> None:
+        with patch(
+            "robot.routing.auto_organize_recent_notes",
+            return_value={
+                "processed": 2,
+                "created": 2,
+                "skipped": 0,
+                "failed": 0,
+                "by_type": {"project": 1, "knowledge": 1, "resource": 0},
+                "items": [
+                    {
+                        "source_path": "00 Inbox/a.md",
+                        "path": "02 Projects/A.md",
+                        "target": "project",
+                        "status": "created",
+                    },
+                    {
+                        "source_path": "01 Daily Notes/2026-04-10.md",
+                        "path": "03 Knowledge/B.md",
+                        "target": "knowledge",
+                        "status": "created",
+                    },
+                ],
+            },
+        ) as mock_auto:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="", command="brain:batch_auto"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        mock_auto.assert_called_once_with(self.settings, limit=10)
+        self.assertIn("自動批次整理完成", body)
+        self.assertIn("processed: 2", body)
+        self.assertIn("02 Projects/A.md", body)
+
+    def test_brainbatchauto_command_accepts_limit(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/brainbatchauto 3", command="brainbatchauto"))
+        with patch(
+            "robot.routing.auto_organize_recent_notes",
+            return_value={
+                "processed": 1,
+                "created": 1,
+                "skipped": 0,
+                "failed": 0,
+                "by_type": {"project": 0, "knowledge": 1, "resource": 0},
+                "items": [
+                    {
+                        "source_path": "00 Inbox/a.md",
+                        "path": "03 Knowledge/A.md",
+                        "target": "knowledge",
+                        "status": "created",
+                    }
+                ],
+            },
+        ) as mock_auto:
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        mock_auto.assert_called_once_with(self.settings, limit=3)
+        self.assertIn("limit=3", body)
+        self.assertIn("created: 1", body)
+
     def test_brainknowledge_command_creates_knowledge_note(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/brainknowledge Prompt Engineering", command="brainknowledge"))
         with patch("robot.routing.create_knowledge_note", return_value="03 Knowledge/Prompt Engineering.md"):
@@ -725,13 +790,14 @@ class RoutingTests(unittest.TestCase):
         self.assertIsInstance(confirm, ButtonResponse)
         self.assertIn("看起來像一筆行程，要怎麼處理？", confirm.text)
         self.assertIn("標題: 吃藥", confirm.text)
-        self.assertIn("日期: 2026-04-13", confirm.text)
+        self.assertIn(f"日期: {datetime.now().strftime('%Y-%m-%d')}", confirm.text)
         self.assertIn("時間: 18:30", confirm.text)
         self.assertEqual(
             [button.data for button in confirm.buttons or []],
             ["brain:schedule_confirm", "brain:schedule_send_agent", "brain:cancel"],
         )
 
+        today = datetime.now().strftime("%Y-%m-%d")
         with patch("robot.routing.create_schedule_note", return_value="06 Schedule/吃藥.md") as mock_create:
             with patch("robot.routing.read_note", return_value="# Schedule\n\ncontent"):
                 body = self.loop.run_until_complete(
@@ -745,7 +811,7 @@ class RoutingTests(unittest.TestCase):
         mock_create.assert_called_once_with(
             self.settings,
             "吃藥",
-            date_text="2026-04-13",
+            date_text=today,
             time_text="18:30",
             recurrence_type="",
             recurrence_value="",

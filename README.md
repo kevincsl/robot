@@ -84,6 +84,7 @@ Linux/macOS:
 
 - `menu`, `model`, and `brain` support Telegram button menus in addition to slash commands.
 - `brain` supports second-brain capture, inbox, search, summaries, decision support, and schedule workflows.
+- Use `/brainbatchauto [limit]` for one-click auto organize from recent `00 Inbox` and `01 Daily Notes` into Project/Knowledge/Resource notes.
 - Natural-language schedule creation examples:
   - `提醒我今天 6 點開會`
   - `30 分鐘後叫我休息`
