@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from robot.agents import AgentCoordinator
 from robot.config import load_settings
@@ -105,6 +106,35 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.store.get_brain_automation(chat_id)["last_schedule_alert_key"], "")
         self.assertEqual(self.events, [])
+
+    async def test_start_recovers_interrupted_current_run(self) -> None:
+        chat_id = 3
+        self.store.set_agent_current_run(
+            chat_id,
+            {
+                "job_id": "job-42",
+                "kind": "provider",
+                "goal": "finish interrupted work",
+                "project_name": "robot",
+                "provider": "codex",
+                "model": "gpt-5.4",
+            },
+        )
+
+        with (
+            patch.object(self.coordinator, "_scheduler_loop", new=AsyncMock(return_value=None)),
+            patch.object(self.coordinator, "ensure_worker") as ensure_worker,
+        ):
+            self.coordinator.start()
+            await asyncio.sleep(0)
+
+        queue = self.store.get_agent_queue(chat_id)
+        self.assertEqual(len(queue), 1)
+        self.assertEqual(queue[0]["job_id"], "job-42")
+        self.assertTrue(queue[0]["recovered_after_restart"])
+        self.assertIsNone(self.store.get_chat_state(chat_id)["agent_current_run"])
+        ensure_worker.assert_called_once_with(chat_id)
+        self.assertTrue(any("Recovered interrupted run after restart." in text for _, _, text in self.events))
 
 
 if __name__ == "__main__":

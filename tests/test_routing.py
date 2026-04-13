@@ -188,6 +188,7 @@ class RoutingTests(unittest.TestCase):
                 "brain:schedule_new",
                 "brain:schedule_today",
                 "brain:schedule_week",
+                "brain:schedule_next_week",
                 "brain:schedule_month",
                 "brain:schedule_list",
                 "brain:cancel",
@@ -909,6 +910,71 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(body, "agent delegated")
         mock_handle_agent.assert_awaited_once()
 
+    def test_update_schedule_phrase_offers_update_confirmation(self) -> None:
+        with patch(
+            "robot.routing.find_schedule_notes",
+            return_value=[
+                {
+                    "title": "升學輔導會議在第一會議室",
+                    "date": "2026-04-20",
+                    "time": "12:00",
+                    "path": "06 Schedule/升學輔導會議在第一會議室.md",
+                    "recurrence_type": "",
+                    "recurrence_value": "",
+                }
+            ],
+        ):
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="把升學輔導會議在第一會議室改到下午1點"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("看起來你是要修改一筆行程", body.text)
+        self.assertIn("目前: 2026-04-20 12:00", body.text)
+        self.assertIn("更新後: 13:00", body.text)
+        self.assertEqual(
+            [button.data for button in body.buttons or []],
+            ["brain:schedule_update_confirm", "brain:schedule_send_agent", "brain:cancel"],
+        )
+
+    def test_schedule_update_confirm_updates_note(self) -> None:
+        self.store.set_ui_flow(
+            1,
+            {
+                "kind": "await_brain_schedule_update_confirm",
+                "title": "升學輔導會議在第一會議室",
+                "path": "06 Schedule/升學輔導會議在第一會議室.md",
+                "date_text": "2026-04-20",
+                "time_text": "13:00",
+                "recurrence_type": "",
+                "recurrence_value": "",
+                "source_text": "把升學輔導會議在第一會議室改到下午1點",
+            },
+        )
+        with patch("robot.routing.update_schedule_note", return_value="06 Schedule/升學輔導會議在第一會議室.md") as mock_update:
+            with patch("robot.routing.read_note", return_value="# Schedule\n\ntime updated"):
+                body = self.loop.run_until_complete(
+                    handle_request(
+                        MessageContext(chat_id=1, text="", command="brain:schedule_update_confirm"),
+                        self.settings,
+                        self.store,
+                        self.agents,
+                    )
+                )
+        mock_update.assert_called_once_with(
+            self.settings,
+            "06 Schedule/升學輔導會議在第一會議室.md",
+            date_text="2026-04-20",
+            time_text="13:00",
+            recurrence_type="",
+            recurrence_value="",
+        )
+        self.assertIn("已更新 Schedule 筆記", body)
+
     def test_schedule_cancel_button_routes_original_text_to_codex(self) -> None:
         self.store.set_ui_flow(
             1,
@@ -1017,7 +1083,10 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(body, "agent delegated")
         mock_handle_agent.assert_awaited_once()
     def test_brain_schedule_today_returns_brief(self) -> None:
-        with patch("robot.routing.build_schedule_range_brief", return_value="今日行程 2026-04-12\n\n- 09:00 | Standup") as mock_brief:
+        with patch(
+            "robot.routing.list_schedule_occurrences",
+            return_value=("今日行程", [{"title": "Standup", "date": "2026-04-12", "time": "09:00", "path": "06 Schedule/Standup.md", "recurrence": ""}]),
+        ) as mock_brief:
             body = self.loop.run_until_complete(
                 handle_request(
                     MessageContext(chat_id=1, text="", command="brain:schedule_today"),
@@ -1030,7 +1099,10 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("今日行程", body)
 
     def test_brain_schedule_week_returns_brief(self) -> None:
-        with patch("robot.routing.build_schedule_range_brief", return_value="本週行程\n\n- 07:30 | 吃藥") as mock_brief:
+        with patch(
+            "robot.routing.list_schedule_occurrences",
+            return_value=("本週行程", [{"title": "吃藥", "date": "2026-04-13", "time": "07:30", "path": "06 Schedule/吃藥.md", "recurrence": "每天"}]),
+        ) as mock_brief:
             body = self.loop.run_until_complete(
                 handle_request(
                     MessageContext(chat_id=1, text="", command="brain:schedule_week"),
@@ -1042,8 +1114,64 @@ class RoutingTests(unittest.TestCase):
         mock_brief.assert_called_once_with(self.settings, period="week", limit=80)
         self.assertIn("本週行程", body)
 
+    def test_brain_schedule_next_week_returns_brief(self) -> None:
+        with patch(
+            "robot.routing.list_schedule_occurrences",
+            return_value=(
+                "下週行程",
+                [
+                    {
+                        "title": "會議",
+                        "date": "2026-04-20",
+                        "time": "13:00",
+                        "path": "06 Schedule/會議.md",
+                        "recurrence": "",
+                    }
+                ],
+            ),
+        ) as mock_occurrences:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="", command="brain:schedule_next_week"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        mock_occurrences.assert_called_once_with(self.settings, period="next_week", limit=80)
+        self.assertIn("下週行程", body)
+        self.assertEqual(self.store.get_last_schedule_results(1)[0]["title"], "會議")
+
+    def test_last_schedule_reference_answers_time_without_agent(self) -> None:
+        self.store.set_last_schedule_results(
+            1,
+            [
+                {
+                    "title": "升學輔導會議在第一會議室",
+                    "date": "2026-04-20",
+                    "time": "13:00",
+                    "path": "06 Schedule/升學輔導會議在第一會議室.md",
+                    "recurrence": "",
+                }
+            ],
+        )
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="這個行程是幾點"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertEqual(body, "升學輔導會議在第一會議室 是 2026-04-20 13:00。")
+        mock_handle_agent.assert_not_awaited()
+
     def test_flat_week_schedule_phrase_returns_week_schedule(self) -> None:
-        with patch("robot.routing.build_schedule_range_brief", return_value="本週行程\n\n- 07:30 | 吃藥") as mock_brief:
+        with patch(
+            "robot.routing.list_schedule_occurrences",
+            return_value=("本週行程", [{"title": "吃藥", "date": "2026-04-13", "time": "07:30", "path": "06 Schedule/吃藥.md", "recurrence": "每天"}]),
+        ) as mock_brief:
             body = self.loop.run_until_complete(
                 handle_request(
                     MessageContext(chat_id=1, text="這一週行程"),
@@ -1056,7 +1184,10 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("本週行程", body)
 
     def test_semantic_week_schedule_phrase_returns_week_schedule(self) -> None:
-        with patch("robot.routing.build_schedule_range_brief", return_value="本週行程\n\n- 07:30 | 吃藥") as mock_brief:
+        with patch(
+            "robot.routing.list_schedule_occurrences",
+            return_value=("本週行程", [{"title": "吃藥", "date": "2026-04-13", "time": "07:30", "path": "06 Schedule/吃藥.md", "recurrence": "每天"}]),
+        ) as mock_brief:
             body = self.loop.run_until_complete(
                 handle_request(
                     MessageContext(chat_id=1, text="幫我看這禮拜有哪些行程"),
@@ -1068,8 +1199,27 @@ class RoutingTests(unittest.TestCase):
         mock_brief.assert_called_once_with(self.settings, period="week", limit=80)
         self.assertIn("本週行程", body)
 
+    def test_semantic_next_week_schedule_phrase_returns_next_week_schedule(self) -> None:
+        with patch(
+            "robot.routing.list_schedule_occurrences",
+            return_value=("下週行程", [{"title": "會議", "date": "2026-04-20", "time": "12:00", "path": "06 Schedule/會議.md", "recurrence": ""}]),
+        ) as mock_brief:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="下週行程"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        mock_brief.assert_called_once_with(self.settings, period="next_week", limit=80)
+        self.assertIn("下週行程", body)
+
     def test_flat_month_schedule_phrase_returns_month_schedule(self) -> None:
-        with patch("robot.routing.build_schedule_range_brief", return_value="本月行程\n\n- 07:30 | 吃藥") as mock_brief:
+        with patch(
+            "robot.routing.list_schedule_occurrences",
+            return_value=("本月行程", [{"title": "吃藥", "date": "2026-04-13", "time": "07:30", "path": "06 Schedule/吃藥.md", "recurrence": "每天"}]),
+        ) as mock_brief:
             body = self.loop.run_until_complete(
                 handle_request(
                     MessageContext(chat_id=1, text="這個月行程"),

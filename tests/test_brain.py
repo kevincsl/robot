@@ -16,15 +16,19 @@ from robot.brain import (
     build_schedule_brief,
     build_schedule_range_brief,
     collect_brain_reminders,
+    create_schedule_note,
     create_inbox_note,
     create_knowledge_note_from_text,
     create_project_note_from_text,
     create_resource_note_from_text,
     get_active_or_next_schedule,
+    list_schedule_notes,
     parse_natural_language_schedule,
+    parse_schedule_update_details,
     read_daily,
     read_note,
     search_vault,
+    update_schedule_note,
 )
 from robot.config import load_settings
 
@@ -101,6 +105,25 @@ class BrainTests(unittest.TestCase):
             "review: true\n"
             "---\n\n"
             "# Resource\n",
+            encoding="utf-8",
+        )
+        (self.vault / "98 Templates" / "Template - Schedule Note.md").write_text(
+            "---\n"
+            "type: schedule\n"
+            "status: active\n"
+            "created:\n"
+            "updated:\n"
+            "project:\n"
+            "topic:\n"
+            "tags:\n"
+            "source:\n"
+            "review: true\n"
+            "date:\n"
+            "time:\n"
+            "recurrence_type:\n"
+            "recurrence_value:\n"
+            "---\n\n"
+            "# Schedule\n",
             encoding="utf-8",
         )
         (self.vault / "03 Knowledge" / "Obsidian.md").write_text(
@@ -267,6 +290,21 @@ class BrainTests(unittest.TestCase):
         self.assertEqual(parsed["date_text"], "2026-04-21")
         self.assertEqual(parsed["time_text"], "15:00")
 
+    def test_schedule_cache_is_invalidated_after_update(self) -> None:
+        with patch("robot.brain._run_brain_command", side_effect=subprocess.CalledProcessError(1, ["obsidian"])):
+            relative_path = create_schedule_note(
+                self.settings,
+                "升學輔導會議",
+                "2026-04-20",
+                "12:00",
+            )
+            first = list_schedule_notes(self.settings, limit=10)
+            update_schedule_note(self.settings, relative_path, time_text="13:00")
+            second = list_schedule_notes(self.settings, limit=10)
+
+        self.assertEqual(first[0]["time"], "12:00")
+        self.assertEqual(second[0]["time"], "13:00")
+
     def test_parse_natural_language_schedule_supports_daily_recurrence(self) -> None:
         parsed = parse_natural_language_schedule(
             "每天早上7點吃藥",
@@ -319,6 +357,32 @@ class BrainTests(unittest.TestCase):
         self.assertEqual(parsed["title"], "升學輔導會議在第一會議室")
         self.assertEqual(parsed["date_text"], "2026-04-20")
         self.assertEqual(parsed["time_text"], "12:00")
+
+    def test_parse_schedule_update_details_supports_time_only_update(self) -> None:
+        parsed = parse_schedule_update_details(
+            "下午1點",
+            current_title="升學輔導會議在第一會議室",
+            now=datetime(2026, 4, 13, 9, 0),
+        )
+
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed["date_text"], "")
+        self.assertEqual(parsed["time_text"], "13:00")
+        self.assertEqual(parsed["title"], "升學輔導會議在第一會議室")
+
+    def test_parse_schedule_update_details_supports_recurring_update(self) -> None:
+        parsed = parse_schedule_update_details(
+            "每天早上8點",
+            current_title="吃藥",
+            now=datetime(2026, 4, 13, 9, 0),
+        )
+
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed["time_text"], "08:00")
+        self.assertEqual(parsed["recurrence_type"], "daily")
+        self.assertEqual(parsed["recurrence_value"], "daily")
 
     def test_schedule_brief_shows_daily_recurrence(self) -> None:
         (self.vault / "06 Schedule" / "吃藥.md").write_text(
@@ -427,6 +491,27 @@ class BrainTests(unittest.TestCase):
         self.assertIn("2026-04-13 07:30 | 吃藥 (每天)", body)
         self.assertIn("2026-04-19 07:30 | 吃藥 (每天)", body)
 
+    def test_next_week_schedule_range_has_next_week_title(self) -> None:
+        (self.vault / "06 Schedule" / "會議.md").write_text(
+            "---\n"
+            "type: schedule\n"
+            "date: 2026-04-20\n"
+            "time: 12:00\n"
+            "---\n\n"
+            "# 會議\n",
+            encoding="utf-8",
+        )
+
+        body = build_schedule_range_brief(
+            self.settings,
+            period="next_week",
+            now=datetime(2026, 4, 13, 9, 0),
+            limit=20,
+        )
+
+        self.assertIn("下週行程 2026-04-20 ~ 2026-04-26", body)
+        self.assertIn("2026-04-20 12:00 | 會議", body)
+
     def test_month_schedule_range_includes_monthly_recurrence(self) -> None:
         (self.vault / "06 Schedule" / "繳房租.md").write_text(
             "---\n"
@@ -493,6 +578,33 @@ class BrainTests(unittest.TestCase):
         self.assertFalse((self.vault / "06 Schedule" / "休息.md").exists())
         self.assertTrue((self.vault / "99 Archive" / "Deleted Schedule" / "休息.md").exists())
         self.assertTrue((self.vault / "06 Schedule" / "吃藥.md").exists())
+
+    def test_update_schedule_note_updates_properties(self) -> None:
+        note = self.vault / "06 Schedule" / "會議.md"
+        note.write_text(
+            "---\n"
+            "type: schedule\n"
+            "date: 2026-04-20\n"
+            "time: 12:00\n"
+            "recurrence_type: \n"
+            "recurrence_value: \n"
+            "---\n\n"
+            "# 會議\n",
+            encoding="utf-8",
+        )
+
+        update_schedule_note(
+            self.settings,
+            "06 Schedule/會議.md",
+            time_text="13:00",
+            recurrence_type="daily",
+            recurrence_value="daily",
+        )
+
+        body = note.read_text(encoding="utf-8")
+        self.assertIn("time: 13:00", body)
+        self.assertIn("recurrence_type: daily", body)
+        self.assertIn("recurrence_value: daily", body)
 if __name__ == "__main__":
     unittest.main()
 

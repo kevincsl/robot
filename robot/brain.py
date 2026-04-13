@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,6 +17,8 @@ INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*]+')
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n?", re.DOTALL)
 TOPIC_RE = re.compile(r"topic:\s*(.+)")
 CLI_TIMEOUT_SECONDS = 5
+SCHEDULE_CACHE_TTL_SECONDS = 15.0
+_SCHEDULE_NOTES_CACHE: dict[str, dict[str, object]] = {}
 WEEKDAY_NAMES = ["一", "二", "三", "四", "五", "六", "日"]
 
 
@@ -63,6 +66,10 @@ def _read_file(path: Path) -> str:
 def _write_file(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _invalidate_schedule_cache(settings: Settings) -> None:
+    _SCHEDULE_NOTES_CACHE.pop(str(_vault_root(settings).resolve()), None)
 
 
 def _template_path(settings: Settings, template_name: str) -> Path:
@@ -295,7 +302,29 @@ def create_schedule_note(
         set_note_property(settings, path, "recurrence_type", recurrence_type)
     if recurrence_value:
         set_note_property(settings, path, "recurrence_value", recurrence_value)
+    _invalidate_schedule_cache(settings)
     return path
+
+
+def update_schedule_note(
+    settings: Settings,
+    relative_path: str,
+    *,
+    date_text: str | None = None,
+    time_text: str | None = None,
+    recurrence_type: str | None = None,
+    recurrence_value: str | None = None,
+) -> str:
+    if date_text is not None:
+        set_note_property(settings, relative_path, "date", date_text, type_name="date")
+    if time_text is not None:
+        set_note_property(settings, relative_path, "time", time_text)
+    if recurrence_type is not None:
+        set_note_property(settings, relative_path, "recurrence_type", recurrence_type)
+    if recurrence_value is not None:
+        set_note_property(settings, relative_path, "recurrence_value", recurrence_value)
+    _invalidate_schedule_cache(settings)
+    return relative_path
 
 
 def parse_natural_language_schedule(text: str, *, now: datetime | None = None) -> dict[str, str] | None:
@@ -461,6 +490,163 @@ def parse_natural_language_schedule(text: str, *, now: datetime | None = None) -
         "recurrence_type": recurrence_type,
         "recurrence_value": recurrence_value,
         "source_text": raw,
+    }
+
+
+def parse_schedule_update_details(
+    text: str,
+    *,
+    current_title: str,
+    now: datetime | None = None,
+) -> dict[str, str] | None:
+    raw = (text or "").strip()
+    if not raw:
+        return None
+
+    current = now or datetime.now()
+    working = raw
+    explicit_date = False
+    explicit_time = False
+    recurrence_type = None
+    recurrence_value = None
+    target_date: datetime.date | None = None
+    hour: int | None = None
+    minute: int | None = None
+
+    weekday_map = {
+        "一": 0,
+        "二": 1,
+        "三": 2,
+        "四": 3,
+        "五": 4,
+        "六": 5,
+        "日": 6,
+        "天": 6,
+    }
+
+    if "每天" in working:
+        recurrence_type = "daily"
+        recurrence_value = "daily"
+        working = working.replace("每天", " ")
+    else:
+        weekly_match = re.search(r"每週(?P<weekday>[一二三四五六日天])", working)
+        monthly_match = re.search(r"每月(?P<day>\d{1,2})號", working)
+        if weekly_match:
+            recurrence_type = "weekly"
+            recurrence_value = str(weekday_map[weekly_match.group("weekday")])
+            target_weekday = int(recurrence_value)
+            days_until = (target_weekday - current.weekday()) % 7
+            target_date = (current + timedelta(days=days_until)).date()
+            explicit_date = True
+            working = working.replace(weekly_match.group(0), " ")
+        elif monthly_match:
+            recurrence_type = "monthly"
+            recurrence_value = monthly_match.group("day")
+            candidate_day = int(recurrence_value)
+            year = current.year
+            month = current.month
+            while True:
+                try:
+                    candidate_date = datetime(year, month, candidate_day).date()
+                except ValueError:
+                    return None
+                if candidate_date >= current.date():
+                    target_date = candidate_date
+                    explicit_date = True
+                    break
+                month += 1
+                if month > 12:
+                    month = 1
+                    year += 1
+            working = working.replace(monthly_match.group(0), " ")
+
+    explicit_date_match = re.search(r"(?P<year>\d{4})[-/](?P<month>\d{1,2})[-/](?P<day>\d{1,2})", working)
+    month_day_match = re.search(r"(?P<month>\d{1,2})月(?P<day>\d{1,2})日", working)
+    weekday_match = re.search(r"下週(?P<weekday>[一二三四五六日天])", working)
+    if explicit_date_match:
+        target_date = datetime(
+            int(explicit_date_match.group("year")),
+            int(explicit_date_match.group("month")),
+            int(explicit_date_match.group("day")),
+        ).date()
+        explicit_date = True
+        working = working.replace(explicit_date_match.group(0), " ")
+    elif month_day_match:
+        month = int(month_day_match.group("month"))
+        day = int(month_day_match.group("day"))
+        year = current.year
+        while True:
+            try:
+                candidate_date = datetime(year, month, day).date()
+            except ValueError:
+                return None
+            if candidate_date >= current.date():
+                target_date = candidate_date
+                explicit_date = True
+                break
+            year += 1
+        working = working.replace(month_day_match.group(0), " ")
+    elif weekday_match:
+        target_weekday = weekday_map[weekday_match.group("weekday")]
+        days_until = (target_weekday - current.weekday()) % 7
+        if days_until == 0:
+            days_until = 7
+        target_date = (current + timedelta(days=days_until + 7)).date()
+        explicit_date = True
+        working = working.replace(weekday_match.group(0), " ")
+    else:
+        date_keywords = {
+            "今天": 0,
+            "今日": 0,
+            "明天": 1,
+            "明日": 1,
+            "後天": 2,
+        }
+        for keyword, offset in date_keywords.items():
+            if keyword in working:
+                target_date = (current + timedelta(days=offset)).date()
+                explicit_date = True
+                working = working.replace(keyword, " ")
+                break
+
+    period_match = re.search(r"(凌晨|清晨|明早|早上|上午|中午|下午|晚上|今晚|明晚|傍晚)", working)
+    period = period_match.group(1) if period_match else ""
+    if period_match:
+        working = working.replace(period_match.group(1), " ")
+
+    time_match = re.search(
+        r"(?P<hour>\d{1,2})\s*(?:[:：]\s*(?P<minute_colon>\d{1,2})|點\s*(?:(?P<half>半)|(?P<minute_zh>\d{1,2})(?:\s*分)?)?)",
+        working,
+    )
+    if time_match is not None:
+        hour = int(time_match.group("hour"))
+        minute_raw = time_match.group("minute_colon") or time_match.group("minute_zh") or ""
+        minute = 30 if time_match.group("half") else int(minute_raw or "0")
+        explicit_time = True
+        if period in {"下午", "晚上", "今晚", "明晚", "傍晚"} and 1 <= hour <= 11:
+            hour += 12
+        elif period == "中午":
+            if hour != 12 and 1 <= hour <= 11:
+                hour += 12
+        elif period in {"凌晨", "清晨"} and hour == 12:
+            hour = 0
+
+    if not explicit_date and not explicit_time and recurrence_type is None:
+        return None
+
+    parsed = parse_natural_language_schedule(f"{raw} {current_title}", now=current)
+    title_text = current_title
+    if parsed is not None:
+        candidate_title = (parsed.get("title") or "").strip()
+        if candidate_title and candidate_title != current_title:
+            title_text = candidate_title
+
+    return {
+        "title": title_text,
+        "date_text": target_date.strftime("%Y-%m-%d") if explicit_date and target_date is not None else "",
+        "time_text": f"{hour:02d}:{minute:02d}" if explicit_time and hour is not None and minute is not None else "",
+        "recurrence_type": recurrence_type or "",
+        "recurrence_value": recurrence_value or "",
     }
 
 
@@ -635,6 +821,14 @@ def list_schedule_notes(settings: Settings, limit: int = 10) -> list[dict[str, s
     if not base.exists():
         return []
 
+    cache_key = str(vault_root.resolve())
+    cached = _SCHEDULE_NOTES_CACHE.get(cache_key)
+    if cached:
+        cached_at = float(cached.get("cached_at") or 0.0)
+        cached_items = cached.get("items")
+        if time.monotonic() - cached_at <= SCHEDULE_CACHE_TTL_SECONDS and isinstance(cached_items, list):
+            return [dict(item) for item in cached_items[: max(1, limit)]]
+
     items: list[dict[str, str]] = []
     for path in base.rglob("*.md"):
         if path.name.lower() == "readme.md":
@@ -663,7 +857,11 @@ def list_schedule_notes(settings: Settings, limit: int = 10) -> list[dict[str, s
         )
 
     items.sort(key=sort_key)
-    return items[: max(1, limit)]
+    _SCHEDULE_NOTES_CACHE[cache_key] = {
+        "cached_at": time.monotonic(),
+        "items": [dict(item) for item in items],
+    }
+    return [dict(item) for item in items[: max(1, limit)]]
 
 
 def find_schedule_notes(settings: Settings, query: str, limit: int = 10) -> list[dict[str, str]]:
@@ -697,6 +895,7 @@ def archive_schedule_note(settings: Settings, relative_path: str) -> str:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         target = archive_dir / f"{source.stem}-{stamp}{source.suffix}"
     source.replace(target)
+    _invalidate_schedule_cache(settings)
     return _relative_posix(target, vault_root)
 
 
@@ -778,7 +977,11 @@ def build_schedule_range_brief(
     limit: int = 50,
 ) -> str:
     current = now or datetime.now()
-    if period == "week":
+    if period == "next_week":
+        start = (current - timedelta(days=current.weekday()) + timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=7) - timedelta(microseconds=1)
+        title = f"下週行程 {start.strftime('%Y-%m-%d')} ~ {end.strftime('%Y-%m-%d')}"
+    elif period == "week":
         start = (current - timedelta(days=current.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=7) - timedelta(microseconds=1)
         title = f"本週行程 {start.strftime('%Y-%m-%d')} ~ {end.strftime('%Y-%m-%d')}"
@@ -812,6 +1015,56 @@ def build_schedule_range_brief(
         lines.append(f"- {when.strftime('%Y-%m-%d')} {time_text} | {item.get('title')}{recurrence_note}")
         lines.append(f"  {item.get('path')}")
     return "\n".join(lines)
+
+
+def list_schedule_occurrences(
+    settings: Settings,
+    *,
+    period: str = "day",
+    now: datetime | None = None,
+    limit: int = 50,
+) -> tuple[str, list[dict[str, str]]]:
+    current = now or datetime.now()
+    if period == "next_week":
+        start = (current - timedelta(days=current.weekday()) + timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=7) - timedelta(microseconds=1)
+        title = f"下週行程 {start.strftime('%Y-%m-%d')} ~ {end.strftime('%Y-%m-%d')}"
+    elif period == "week":
+        start = (current - timedelta(days=current.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=7) - timedelta(microseconds=1)
+        title = f"本週行程 {start.strftime('%Y-%m-%d')} ~ {end.strftime('%Y-%m-%d')}"
+    elif period == "month":
+        start = current.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if start.month == 12:
+            next_month = start.replace(year=start.year + 1, month=1)
+        else:
+            next_month = start.replace(month=start.month + 1)
+        end = next_month - timedelta(microseconds=1)
+        title = f"本月行程 {start.strftime('%Y-%m')}"
+    else:
+        start = current.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1) - timedelta(microseconds=1)
+        title = f"今日行程 {start.strftime('%Y-%m-%d')}"
+
+    occurrences: list[tuple[datetime, dict[str, str]]] = []
+    for item in list_schedule_notes(settings, limit=max(limit * 4, 100)):
+        occurrences.extend(_schedule_occurrences_between(item, start, end))
+    occurrences.sort(key=lambda occurrence: (occurrence[0], occurrence[1].get("title") or ""))
+
+    results: list[dict[str, str]] = []
+    for when, item in occurrences[: max(1, limit)]:
+        time_text = (item.get("time") or "").strip() or "未排時間"
+        recurrence = _recurrence_label(item)
+        results.append(
+            {
+                "title": item.get("title") or "",
+                "date": when.strftime("%Y-%m-%d"),
+                "time": time_text,
+                "path": item.get("path") or "",
+                "recurrence": recurrence,
+            }
+        )
+    return title, results
 
 
 def get_active_or_next_schedule(

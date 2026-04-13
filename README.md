@@ -79,6 +79,34 @@ Linux/macOS:
 - `/agentresume [run_id_or_path] [--profile NAME] [--config PATH] [--commit] [--push] [--pr] [--no-post-run]`
 - `/schedule YYYY-MM-DD HH:MM [--profile NAME] [--config PATH] [--commit] [--push] [--pr] [--no-post-run] <goal>`
 
+## Brain Features
+
+- `menu`, `model`, and `brain` support Telegram button menus in addition to slash commands.
+- `brain` supports second-brain capture, inbox, search, summaries, decision support, and schedule workflows.
+- Natural-language schedule creation is supported for phrases such as:
+  - `今天下午6點半要吃藥`
+  - `30分鐘後要休息`
+  - `每週三晚上8點吃火鍋`
+  - `4月20日中午12點有一個升學輔導會議在第一會議室`
+- Schedule views support:
+  - `今日行程`
+  - `本週行程`
+  - `下週行程`
+  - `本月行程`
+  - `查看行程`
+- Schedule follow-up queries support references such as `這個行程是幾點`.
+- Schedule update and delete flows require confirmation before changing notes.
+- Past-due archive only applies to one-time schedules and skips recurring reminders.
+
+## Automation
+
+- `/brainauto [on|off|status]`
+- `/brainautodaily HH:MM`
+- `/brainautoweekly <weekday 0-6> HH:MM`
+- Daily briefs, weekly briefs, and schedule alerts can be pushed automatically.
+- Long-running jobs emit heartbeat status updates while running.
+- If the app restarts while a job is active, the job is recovered and resumed automatically on startup.
+
 ## Notes
 
 - `Codex` is the best-supported provider because it keeps a resumable `thread_id`.
@@ -86,7 +114,7 @@ Linux/macOS:
 - Auto-dev commands (`/agent`, `/agentresume`, `/agentprofiles`, `/schedule`) call `ROBOT_AUTO_DEV_CMD` in the selected project workspace.
 - `teleapp` handles Telegram polling, filtering, per-chat request queues, `/restart`, and hot reload.
 - Start scripts run `teleapp robot.py`.
-- `teleapp` hot reload is enabled by default.
+- `teleapp` hot reload is enabled by default, but this project currently runs with hot reload disabled in `.env` until the restart path is fully stabilized.
 - To disable hot reload, use `teleapp robot.py --no-hot-reload`.
 - You can tune reload behavior with:
   - `TELEAPP_RELOAD_QUIET_SECONDS`

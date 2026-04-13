@@ -36,10 +36,13 @@ from robot.brain import (
     find_schedule_notes,
     import_markitdown_resource,
     list_recent_notes,
+    list_schedule_occurrences,
+    parse_schedule_update_details,
     parse_natural_language_schedule,
     read_daily,
     read_note,
     search_vault,
+    update_schedule_note,
 )
 from robot.config import MODEL_CHOICES, MODEL_DESCRIPTIONS, PROVIDER_LABELS, SUPPORTED_MODELS, Settings, VERSION
 from robot.diagnostics import build_doctor_report
@@ -143,6 +146,7 @@ FLOW_AWAIT_BRAIN_SCHEDULE_DATE = "await_brain_schedule_date"
 FLOW_AWAIT_BRAIN_SCHEDULE_TIME = "await_brain_schedule_time"
 FLOW_AWAIT_BRAIN_SCHEDULE_CONFIRM = "await_brain_schedule_confirm"
 FLOW_AWAIT_BRAIN_SCHEDULE_DELETE_CONFIRM = "await_brain_schedule_delete_confirm"
+FLOW_AWAIT_BRAIN_SCHEDULE_UPDATE_CONFIRM = "await_brain_schedule_update_confirm"
 FLOW_AWAIT_BRAIN_ORGANIZE_TEXT = "await_brain_organize_text"
 FLOW_AWAIT_BRAIN_ORGANIZE_TARGET = "await_brain_organize_target"
 FLOW_AWAIT_BRAIN_ORGANIZE_TITLE = "await_brain_organize_title"
@@ -211,6 +215,54 @@ def _schedule_delete_confirm_response(match: dict[str, str], source_text: str) -
     )
 
 
+def _schedule_update_confirm_response(match: dict[str, str], updates: dict[str, str], source_text: str) -> ButtonResponse:
+    current_when = " ".join(part for part in [match.get("date") or "", match.get("time") or ""] if part).strip() or "未排時間"
+    new_when = " ".join(part for part in [updates.get("date_text") or "", updates.get("time_text") or ""] if part).strip() or current_when
+    recurrence_type = (updates.get("recurrence_type") or "").strip()
+    recurrence_value = (updates.get("recurrence_value") or "").strip()
+    recurrence_line = ""
+    if recurrence_type == "daily":
+        recurrence_line = "新的週期: 每天"
+    elif recurrence_type == "weekly":
+        labels = ["每週一", "每週二", "每週三", "每週四", "每週五", "每週六", "每週日"]
+        try:
+            weekday = int(recurrence_value)
+        except ValueError:
+            weekday = -1
+        recurrence_line = f"新的週期: {labels[weekday] if 0 <= weekday < len(labels) else '每週'}"
+    elif recurrence_type == "monthly":
+        recurrence_line = f"新的週期: 每月{recurrence_value}號" if recurrence_value else "新的週期: 每月"
+    elif recurrence_type == "":
+        recurrence_line = "新的週期: 單次行程"
+    lines = [
+        "看起來你是要修改一筆行程，要怎麼處理？",
+        "",
+        f"標題: {match.get('title') or ''}",
+        f"目前: {current_when}",
+        f"更新後: {new_when}",
+    ]
+    if recurrence_line:
+        lines.append(recurrence_line)
+    lines.extend(
+        [
+            f"path: {match.get('path') or ''}",
+            "",
+            f"原文: {source_text}",
+            "",
+            "按「確認修改」會直接更新這筆行程。",
+            "按「改送 Codex」會把原句直接送去 AI。",
+        ]
+    )
+    return ButtonResponse(
+        "\n".join(lines),
+        buttons=[
+            Button("確認修改", "brain:schedule_update_confirm"),
+            Button("改送 Codex", "brain:schedule_send_agent"),
+            Button("取消", "brain:cancel"),
+        ],
+    )
+
+
 def _should_offer_schedule_confirmation(text: str) -> bool:
     normalized = (text or "").strip()
     if not normalized:
@@ -253,6 +305,74 @@ def _parse_schedule_delete_intent(text: str) -> str | None:
     return query or None
 
 
+def _parse_schedule_update_intent(text: str) -> tuple[str, str] | None:
+    normalized = (text or "").strip()
+    if not normalized:
+        return None
+    match = re.search(r"^(?:把|將)?(?P<query>.+?)(?:改到|改成|改為)(?P<details>.+)$", normalized)
+    if not match:
+        return None
+    query = match.group("query").strip(" ，,。.;；：:")
+    details = match.group("details").strip(" ，,。.;；：:")
+    if not query or not details:
+        return None
+    return query, details
+
+
+def _schedule_occurrences_response(
+    chat_id: int,
+    store: ChatStateStore,
+    settings: Settings,
+    *,
+    period: str,
+    limit: int,
+) -> str:
+    title, items = list_schedule_occurrences(settings, period=period, limit=limit)
+    store.set_last_schedule_results(chat_id, items)
+    lines = [title, ""]
+    if not items:
+        lines.append("- 目前沒有符合條件的行程")
+        return "\n".join(lines)
+    for item in items:
+        recurrence_note = f" ({item.get('recurrence')})" if item.get("recurrence") else ""
+        lines.append(f"- {item.get('date')} {item.get('time')} | {item.get('title')}{recurrence_note}")
+        lines.append(f"  {item.get('path')}")
+    return "\n".join(lines)
+
+
+def _answer_last_schedule_reference(text: str, store: ChatStateStore, chat_id: int) -> str | None:
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return None
+    if any(marker in normalized for marker in ("這個月", "這月", "本月", "下週", "本週", "這週", "今天", "今日")):
+        return None
+    reference_markers = ("這個行程", "這筆行程", "這個", "這筆", "那個行程", "那筆行程")
+    if not any(marker in normalized for marker in reference_markers):
+        return None
+    detail_markers = ("幾點", "時間", "什麼時候", "when", "哪天", "日期", "幾號", "day", "date", "在哪", "哪裡", "地點", "位置", "where")
+    if any(marker in normalized for marker in ("這個", "這筆")) and not any(marker in normalized for marker in detail_markers):
+        return None
+    results = store.get_last_schedule_results(chat_id)
+    if not results:
+        return "目前沒有上一筆行程查詢結果。你可以先輸入「今日行程」或「下週行程」。"
+    if len(results) > 1:
+        lines = ["上一輪有多筆行程，請指定第幾筆：", ""]
+        for index, item in enumerate(results[:10], start=1):
+            lines.append(f"{index}. {item.get('date')} {item.get('time')} | {item.get('title')}")
+        return "\n".join(lines)
+    item = results[0]
+    if any(marker in normalized for marker in ("幾點", "時間", "什麼時候", "when")):
+        return f"{item.get('title')} 是 {item.get('date')} {item.get('time')}。"
+    if any(marker in normalized for marker in ("哪天", "日期", "幾號", "day", "date")):
+        return f"{item.get('title')} 的日期是 {item.get('date')}。"
+    if any(marker in normalized for marker in ("在哪", "哪裡", "地點", "位置", "where")):
+        title = item.get("title") or ""
+        if "在" in title:
+            return f"{title}"
+        return f"我目前只看到標題：{title}。沒有獨立地點欄位。"
+    return f"{item.get('date')} {item.get('time')} | {item.get('title')}\n{item.get('path')}"
+
+
 def _set_schedule_confirm_flow(chat_id: int, store: ChatStateStore, parsed: dict[str, str]) -> None:
     flow = {"kind": FLOW_AWAIT_BRAIN_SCHEDULE_CONFIRM, **parsed}
     store.set_ui_flow(chat_id, flow)
@@ -266,6 +386,7 @@ async def _send_schedule_confirm_source_to_agent(
 ) -> str:
     flow = store.get_ui_flow(chat_id)
     valid_kinds = {FLOW_AWAIT_BRAIN_SCHEDULE_CONFIRM, FLOW_AWAIT_BRAIN_SCHEDULE_DELETE_CONFIRM}
+    valid_kinds.add(FLOW_AWAIT_BRAIN_SCHEDULE_UPDATE_CONFIRM)
     if not isinstance(flow, dict) or flow.get("kind") not in valid_kinds:
         flow = store.get_last_schedule_candidate(chat_id)
     if not isinstance(flow, dict) or flow.get("kind") not in valid_kinds:
@@ -735,6 +856,7 @@ async def _handle_brain_action(
                 Button("新增", "brain:schedule_new"),
                 Button("今日", "brain:schedule_today"),
                 Button("本週", "brain:schedule_week"),
+                Button("下週", "brain:schedule_next_week"),
                 Button("本月", "brain:schedule_month"),
                 Button("列表", "brain:schedule_list"),
                 Button("Cancel", "brain:cancel"),
@@ -746,13 +868,16 @@ async def _handle_brain_action(
         return "請輸入行程標題，或直接輸入自然語言，例如：今天下午6點半要吃藥。輸入 cancel 可離開。"
 
     if command == "brain:schedule_today":
-        return build_schedule_range_brief(settings, period="day", limit=50)
+        return _schedule_occurrences_response(chat_id, store, settings, period="day", limit=50)
 
     if command == "brain:schedule_week":
-        return build_schedule_range_brief(settings, period="week", limit=80)
+        return _schedule_occurrences_response(chat_id, store, settings, period="week", limit=80)
+
+    if command == "brain:schedule_next_week":
+        return _schedule_occurrences_response(chat_id, store, settings, period="next_week", limit=80)
 
     if command == "brain:schedule_month":
-        return build_schedule_range_brief(settings, period="month", limit=120)
+        return _schedule_occurrences_response(chat_id, store, settings, period="month", limit=120)
 
     if command == "brain:schedule_list":
         return build_schedule_brief(settings, today_only=False, limit=10)
@@ -810,6 +935,28 @@ async def _handle_brain_action(
         store.clear_ui_flow(chat_id)
         store.clear_last_schedule_candidate(chat_id)
         return f"已封存行程。\nfrom: {path}\nto: {archived_path}"
+
+    if command == "brain:schedule_update_confirm":
+        flow = store.get_ui_flow(chat_id)
+        if not isinstance(flow, dict) or flow.get("kind") != FLOW_AWAIT_BRAIN_SCHEDULE_UPDATE_CONFIRM:
+            return "目前沒有待確認修改的行程。請重新開始。"
+        path = str(flow.get("path") or "").strip()
+        if not path:
+            store.clear_ui_flow(chat_id)
+            store.clear_last_schedule_candidate(chat_id)
+            return "行程路徑遺失，請重新開始。"
+        update_schedule_note(
+            settings,
+            path,
+            date_text=(flow.get("date_text") if "date_text" in flow else None),
+            time_text=(flow.get("time_text") if "time_text" in flow else None),
+            recurrence_type=(flow.get("recurrence_type") if "recurrence_type" in flow else None),
+            recurrence_value=(flow.get("recurrence_value") if "recurrence_value" in flow else None),
+        )
+        body = read_note(settings, path).strip()
+        store.clear_ui_flow(chat_id)
+        store.clear_last_schedule_candidate(chat_id)
+        return f"已更新 Schedule 筆記：{path}\n\n{body}"
 
     if command == "brain:summary":
         path = ensure_weekly_summary_note(settings)
@@ -962,6 +1109,8 @@ def _resolve_flat_brain_action(text: str) -> str | None:
     if has_schedule_query_marker and not any(marker in normalized for marker in schedule_create_markers):
         if any(marker in normalized for marker in ("今天", "今日", "每日", "現在", "day", "daily")):
             return "brain:schedule_today"
+        if any(marker in normalized for marker in ("下週", "下个星期", "下個星期", "next week")):
+            return "brain:schedule_next_week"
         if any(marker in normalized for marker in ("本週", "這週", "這一週", "一週", "這禮拜", "本禮拜", "week", "weekly")):
             return "brain:schedule_week"
         if any(marker in normalized for marker in ("本月", "這月", "這個月", "這月份", "month", "monthly")):
@@ -990,9 +1139,11 @@ def _resolve_flat_brain_action(text: str) -> str | None:
         return "brain:schedule_archive_past"
     if normalized in {"今日行程", "今天行程", "每日行程", "day schedule", "daily schedule"}:
         return "brain:schedule_today"
+    if normalized in {"下週行程", "下個星期行程", "下个星期行程", "next week schedule"}:
+        return "brain:schedule_next_week"
     if normalized in {"本週行程", "這週行程", "這一週行程", "一週行程", "week schedule", "weekly schedule"}:
         return "brain:schedule_week"
-    if normalized in {"本月行程", "這月行程", "這個月行程", "月行程", "month schedule", "monthly schedule"}:
+    if normalized in {"本月行程", "這月行程", "這個月行程", "這個月行程", "月行程", "month schedule", "monthly schedule"}:
         return "brain:schedule_month"
     if normalized in {"每週摘要", "summary"}:
         return "brain:summary"
@@ -1408,6 +1559,10 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
         store.clear_ui_flow(ctx.chat_id)
         return _brain_menu_response(ctx.chat_id, store)
 
+    last_schedule_answer = _answer_last_schedule_reference(text, store, ctx.chat_id)
+    if last_schedule_answer is not None:
+        return last_schedule_answer
+
     lowered = text.lower()
     phrase_control = COMMON_CONTROL_PHRASES.get(lowered) or COMMON_CONTROL_PHRASES.get(text)
     if phrase_control in {"continue", "next"}:
@@ -1477,6 +1632,31 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
                 lines.append(f"  {item.get('path')}")
             return "\n".join(lines)
         return f"找不到符合「{delete_query}」的行程。你可以先輸入「今日行程」或「本週行程」確認名稱。"
+    update_intent = _parse_schedule_update_intent(text)
+    if update_intent:
+        query, details = update_intent
+        matches = find_schedule_notes(settings, query, limit=5)
+        if len(matches) == 1:
+            match = dict(matches[0])
+            updates = parse_schedule_update_details(details, current_title=str(match.get("title") or ""))
+            if updates is None:
+                return f"我找到行程「{match.get('title') or ''}」，但還看不懂你要改成什麼。請再說清楚日期或時間。"
+            flow = {"kind": FLOW_AWAIT_BRAIN_SCHEDULE_UPDATE_CONFIRM, "path": match.get("path") or "", "source_text": text}
+            flow.update(match)
+            for key, value in updates.items():
+                if value != "":
+                    flow[key] = value
+            store.set_ui_flow(ctx.chat_id, flow)
+            store.set_last_schedule_candidate(ctx.chat_id, flow)
+            return _schedule_update_confirm_response(match, updates, text)
+        if len(matches) > 1:
+            lines = ["找到多筆可能要修改的行程，請講得更精準：", ""]
+            for item in matches:
+                when = " ".join(part for part in [item.get("date") or "", item.get("time") or ""] if part).strip() or "未排時間"
+                lines.append(f"- {when} | {item.get('title')}")
+                lines.append(f"  {item.get('path')}")
+            return "\n".join(lines)
+        return f"找不到符合「{query}」的行程。你可以先輸入「查看行程」確認名稱。"
     if all(marker in text for marker in ("行程", "封存")) and any(marker in text for marker in ("已過期", "超過時間", "過期")):
         return await _handle_brain_action(ctx.chat_id, "brain:schedule_archive_past", settings, store, agents)
     return await handle_agent(ctx.chat_id, request, agents)

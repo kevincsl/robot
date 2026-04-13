@@ -51,6 +51,36 @@ class StateTests(unittest.TestCase):
         self.assertFalse(automation["enabled"])
         self.assertEqual(automation["daily_time"], "22:30")
 
+    def test_last_schedule_results_round_trip(self) -> None:
+        results = [{"title": "會議", "date": "2026-04-20", "time": "13:00"}]
+        self.store.set_last_schedule_results(1, results)
+
+        self.assertEqual(self.store.get_last_schedule_results(1), results)
+        self.store.clear_last_schedule_results(1)
+        self.assertEqual(self.store.get_last_schedule_results(1), [])
+
+    def test_recover_agent_current_run_moves_job_back_to_queue(self) -> None:
+        self.store.set_agent_current_run(
+            1,
+            {
+                "job_id": "job-1",
+                "kind": "provider",
+                "goal": "continue working",
+                "project_name": "robot",
+            },
+        )
+
+        recovered = self.store.recover_agent_current_run(1)
+
+        self.assertIsNotNone(recovered)
+        assert recovered is not None
+        self.assertEqual(recovered["job_id"], "job-1")
+        self.assertEqual(self.store.get_chat_state(1)["agent_current_run"], None)
+        queue = self.store.get_agent_queue(1)
+        self.assertEqual(len(queue), 1)
+        self.assertEqual(queue[0]["job_id"], "job-1")
+        self.assertTrue(queue[0]["recovered_after_restart"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -80,6 +80,9 @@ class ChatStateStore:
         bucket.setdefault("agent_last_run", None)
         bucket.setdefault("ui_flow", None)
         bucket.setdefault("last_schedule_candidate", None)
+        last_schedule_results = bucket.setdefault("last_schedule_results", [])
+        if not isinstance(last_schedule_results, list):
+            bucket["last_schedule_results"] = []
         automation = bucket.setdefault("brain_automation", {})
         if not isinstance(automation, dict):
             automation = {}
@@ -185,6 +188,36 @@ class ChatStateStore:
             bucket["agent_queue"] = []
             self._save()
 
+    def recover_agent_current_run(self, chat_id: int) -> dict[str, Any] | None:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            current = bucket.get("agent_current_run")
+            if not isinstance(current, dict):
+                return None
+
+            queue = bucket.setdefault("agent_queue", [])
+            if not isinstance(queue, list):
+                queue = []
+                bucket["agent_queue"] = queue
+
+            current_job_id = str(current.get("job_id") or "").strip()
+            exists = False
+            if current_job_id:
+                for item in queue:
+                    if isinstance(item, dict) and str(item.get("job_id") or "").strip() == current_job_id:
+                        exists = True
+                        break
+
+            recovered = dict(current)
+            recovered["source"] = str(recovered.get("source") or "recovered")
+            recovered["recovered_after_restart"] = True
+            if not exists:
+                queue.insert(0, recovered)
+
+            bucket["agent_current_run"] = None
+            self._save()
+            return recovered
+
     def get_agent_schedules(self, chat_id: int) -> list[dict[str, Any]]:
         with self._lock:
             bucket = self._bucket(chat_id)
@@ -255,6 +288,21 @@ class ChatStateStore:
 
     def clear_last_schedule_candidate(self, chat_id: int) -> None:
         self.set_last_schedule_candidate(chat_id, None)
+
+    def get_last_schedule_results(self, chat_id: int) -> list[dict[str, Any]]:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            results = bucket.get("last_schedule_results")
+            return [dict(item) for item in results if isinstance(item, dict)] if isinstance(results, list) else []
+
+    def set_last_schedule_results(self, chat_id: int, results: list[dict[str, Any]]) -> None:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            bucket["last_schedule_results"] = [dict(item) for item in results if isinstance(item, dict)]
+            self._save()
+
+    def clear_last_schedule_results(self, chat_id: int) -> None:
+        self.set_last_schedule_results(chat_id, [])
 
     def get_brain_automation(self, chat_id: int) -> dict[str, Any]:
         with self._lock:

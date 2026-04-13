@@ -87,6 +87,24 @@ class AgentCoordinator:
         if self._scheduler_task is None or self._scheduler_task.done():
             self._scheduler_task = asyncio.create_task(self._scheduler_loop())
         for chat_id in self._store.list_chat_ids():
+            recovered = self._store.recover_agent_current_run(chat_id)
+            if recovered is not None:
+                asyncio.create_task(
+                    self._emit(
+                        chat_id,
+                        "\n".join(
+                            [
+                                "Recovered interrupted run after restart.",
+                                f"kind: {recovered.get('kind') or 'provider'}",
+                                f"job: {recovered.get('job_id') or '-'}",
+                                f"doing: {recovered.get('goal') or '<resume>'}",
+                                f"project: {recovered.get('project_name') or '-'}",
+                            ]
+                        ),
+                        event_type="status",
+                        raw={"status_key": "heartbeat", "replace": True},
+                    )
+                )
             if self._store.get_agent_queue(chat_id):
                 self.ensure_worker(chat_id)
 
