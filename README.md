@@ -110,6 +110,7 @@ Linux/macOS:
 
 - `Codex` is the best-supported provider because it keeps a resumable `thread_id`.
 - `Gemini` and `Copilot` are executed as plain subprocess commands and currently do not preserve thread state.
+- Semantic shortcut routing rules are documented in `SEMANTIC_SHORTCUTS.md`.
 - Auto-dev commands (`/agent`, `/agentresume`, `/agentprofiles`, `/schedule`) call `ROBOT_AUTO_DEV_CMD` in the selected project workspace.
 - `teleapp` handles Telegram polling, filtering, per-chat request queues, `/restart`, and hot reload.
 - Start scripts run `teleapp robot.py`.

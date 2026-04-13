@@ -152,6 +152,7 @@ FLOW_AWAIT_BRAIN_ORGANIZE_TARGET = "await_brain_organize_target"
 FLOW_AWAIT_BRAIN_ORGANIZE_TITLE = "await_brain_organize_title"
 FLOW_BRAIN_SEARCH_RESULTS = "brain_search_results"
 FLOW_BRAIN_BATCH_RESULTS = "brain_batch_results"
+FLOW_AWAIT_SHORTCUT_CONFIRM = "await_shortcut_confirm"
 
 
 def _schedule_confirm_response(parsed: dict[str, str]) -> ButtonResponse:
@@ -1090,22 +1091,35 @@ def _provider_menu_response(chat_id: int, store: ChatStateStore) -> str:
     return "\n".join(lines)
 
 
-def _resolve_flat_menu_action(text: str) -> str | None:
+def _semantic_text_length(text: str) -> int:
+    return len("".join(ch for ch in text if not ch.isspace()))
+
+
+def _contains_any(normalized: str, keywords: tuple[str, ...]) -> bool:
+    return any(keyword and keyword in normalized for keyword in keywords)
+
+
+def _resolve_flat_menu_action(text: str, *, contains_match: bool) -> str | None:
     normalized = text.strip().lower()
-    if normalized in {"status", "狀態"}:
+    status_keywords = ("status", "狀態")
+    provider_keywords = ("provider", "供應商")
+    model_keywords = ("model", "模型")
+    projects_keywords = ("projects", "project", "專案")
+    menu_keywords = ("menu", "選單")
+    if (contains_match and _contains_any(normalized, status_keywords)) or normalized in status_keywords:
         return "menu:status"
-    if normalized in {"provider", "供應商"}:
+    if (contains_match and _contains_any(normalized, provider_keywords)) or normalized in provider_keywords:
         return "menu:provider"
-    if normalized in {"model", "模型"}:
+    if (contains_match and _contains_any(normalized, model_keywords)) or normalized in model_keywords:
         return "menu:model"
-    if normalized in {"projects", "project", "專案"}:
+    if (contains_match and _contains_any(normalized, projects_keywords)) or normalized in projects_keywords:
         return "menu:projects"
-    if normalized in {"menu", "選單"}:
+    if (contains_match and _contains_any(normalized, menu_keywords)) or normalized in menu_keywords:
         return "menu:open"
     return None
 
 
-def _resolve_flat_brain_action(text: str) -> str | None:
+def _resolve_flat_brain_action(text: str, *, contains_match: bool) -> str | None:
     normalized = text.strip().lower()
     schedule_query_markers = ("行程", "日程", "calendar", "schedule")
     has_schedule_query_marker = any(marker in normalized for marker in schedule_query_markers)
@@ -1119,49 +1133,112 @@ def _resolve_flat_brain_action(text: str) -> str | None:
             return "brain:schedule_week"
         if any(marker in normalized for marker in ("本月", "這月", "這個月", "這月份", "month", "monthly")):
             return "brain:schedule_month"
-    if normalized in {"寫入今日", "capture"}:
+    if (contains_match and _contains_any(normalized, ("寫入今日", "capture"))) or normalized in {"寫入今日", "capture"}:
         return "brain:capture"
-    if normalized in {"inbox"}:
+    if (contains_match and _contains_any(normalized, ("inbox",))) or normalized in {"inbox"}:
         return "brain:inbox"
-    if normalized in {"讀今日", "read"}:
+    if (contains_match and _contains_any(normalized, ("讀今日", "read"))) or normalized in {"讀今日", "read"}:
         return "brain:read"
-    if normalized in {"搜尋", "search"}:
+    if (contains_match and _contains_any(normalized, ("搜尋", "search"))) or normalized in {"搜尋", "search"}:
         return "brain:search"
-    if normalized in {"整理", "organize"}:
+    if (contains_match and _contains_any(normalized, ("整理", "organize"))) or normalized in {"整理", "organize"}:
         return "brain:organize"
-    if normalized in {"批次整理", "batch"}:
+    if (contains_match and _contains_any(normalized, ("批次整理", "batch"))) or normalized in {"批次整理", "batch"}:
         return "brain:batch"
-    if normalized in {"專案", "project"}:
+    if (contains_match and _contains_any(normalized, ("專案", "project"))) or normalized in {"專案", "project"}:
         return "brain:project"
-    if normalized in {"知識卡", "knowledge"}:
+    if (contains_match and _contains_any(normalized, ("知識卡", "knowledge"))) or normalized in {"知識卡", "knowledge"}:
         return "brain:knowledge"
-    if normalized in {"resource"}:
+    if (contains_match and _contains_any(normalized, ("resource",))) or normalized in {"resource"}:
         return "brain:resource"
-    if normalized in {"行程", "schedule"}:
+    if (contains_match and _contains_any(normalized, ("行程", "schedule"))) or normalized in {"行程", "schedule"}:
         return "brain:schedule"
-    if normalized in {"封存過期行程", "封存已過期行程", "清掉過期行程", "archive past schedule", "archive overdue schedules"}:
+    if (
+        contains_match
+        and _contains_any(normalized, ("封存過期行程", "封存已過期行程", "清掉過期行程", "archive past schedule", "archive overdue schedules"))
+    ) or normalized in {"封存過期行程", "封存已過期行程", "清掉過期行程", "archive past schedule", "archive overdue schedules"}:
         return "brain:schedule_archive_past"
-    if normalized in {"今日行程", "今天行程", "每日行程", "day schedule", "daily schedule"}:
+    if (
+        contains_match and _contains_any(normalized, ("今日行程", "今天行程", "每日行程", "day schedule", "daily schedule"))
+    ) or normalized in {"今日行程", "今天行程", "每日行程", "day schedule", "daily schedule"}:
         return "brain:schedule_today"
-    if normalized in {"下週行程", "下個星期行程", "下个星期行程", "next week schedule"}:
+    if (
+        contains_match and _contains_any(normalized, ("下週行程", "下個星期行程", "下个星期行程", "next week schedule"))
+    ) or normalized in {"下週行程", "下個星期行程", "下个星期行程", "next week schedule"}:
         return "brain:schedule_next_week"
-    if normalized in {"本週行程", "這週行程", "這一週行程", "一週行程", "week schedule", "weekly schedule"}:
+    if (
+        contains_match and _contains_any(normalized, ("本週行程", "這週行程", "這一週行程", "一週行程", "week schedule", "weekly schedule"))
+    ) or normalized in {"本週行程", "這週行程", "這一週行程", "一週行程", "week schedule", "weekly schedule"}:
         return "brain:schedule_week"
-    if normalized in {"本月行程", "這月行程", "這個月行程", "這個月行程", "月行程", "month schedule", "monthly schedule"}:
+    if (
+        contains_match and _contains_any(normalized, ("本月行程", "這月行程", "這個月行程", "月行程", "month schedule", "monthly schedule"))
+    ) or normalized in {"本月行程", "這月行程", "這個月行程", "這個月行程", "月行程", "month schedule", "monthly schedule"}:
         return "brain:schedule_month"
-    if normalized in {"每週摘要", "summary"}:
+    if (contains_match and _contains_any(normalized, ("每週摘要", "summary"))) or normalized in {"每週摘要", "summary"}:
         return "brain:summary"
-    if normalized in {"決策支援", "decide"}:
+    if (contains_match and _contains_any(normalized, ("決策支援", "decide"))) or normalized in {"決策支援", "decide"}:
         return "brain:decide"
-    if normalized in {"提醒", "remind"}:
+    if (contains_match and _contains_any(normalized, ("提醒", "remind"))) or normalized in {"提醒", "remind"}:
         return "brain:remind"
-    if normalized in {"每日摘要", "daily"}:
+    if (contains_match and _contains_any(normalized, ("每日摘要", "daily"))) or normalized in {"每日摘要", "daily"}:
         return "brain:daily"
-    if normalized in {"週摘要", "weekly"}:
+    if (contains_match and _contains_any(normalized, ("週摘要", "weekly"))) or normalized in {"週摘要", "weekly"}:
         return "brain:weekly"
-    if normalized in {"brain", "第二大腦", "筆記"}:
+    if (contains_match and _contains_any(normalized, ("brain", "第二大腦", "筆記"))) or normalized in {"brain", "第二大腦", "筆記"}:
         return "brain:open"
     return None
+
+
+def _shortcut_action_label(action: str) -> str:
+    labels = {
+        "menu:status": "狀態",
+        "menu:provider": "供應商",
+        "menu:model": "模型",
+        "menu:projects": "專案",
+        "menu:open": "主選單",
+        "brain:capture": "寫入今日",
+        "brain:inbox": "Inbox",
+        "brain:read": "讀今日",
+        "brain:search": "搜尋",
+        "brain:organize": "整理",
+        "brain:batch": "批次整理",
+        "brain:project": "專案",
+        "brain:knowledge": "知識卡",
+        "brain:resource": "Resource",
+        "brain:schedule": "行程選單",
+        "brain:schedule_archive_past": "封存過期行程",
+        "brain:schedule_today": "今日行程",
+        "brain:schedule_week": "本週行程",
+        "brain:schedule_next_week": "下週行程",
+        "brain:schedule_month": "本月行程",
+        "brain:summary": "每週摘要",
+        "brain:decide": "決策支援",
+        "brain:remind": "提醒",
+        "brain:daily": "每日摘要",
+        "brain:weekly": "週摘要",
+        "brain:open": "Brain 選單",
+    }
+    return labels.get(action, action)
+
+
+def _shortcut_confirm_response(action: str, source_text: str) -> ButtonResponse:
+    return ButtonResponse(
+        "\n".join(
+            [
+                "偵測到可能的捷徑意圖，是否要直接執行？",
+                f"捷徑: {_shortcut_action_label(action)}",
+                f"原文: {source_text}",
+                "",
+                "按「執行捷徑」會直接走捷徑。",
+                "按「送給 AI」會把這句當一般對話交給 AI。",
+            ]
+        ),
+        buttons=[
+            Button("執行捷徑", "shortcut:confirm"),
+            Button("送給 AI", "shortcut:send_agent"),
+            Button("取消", "shortcut:cancel"),
+        ],
+    )
 
 
 def _model_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
@@ -1522,6 +1599,29 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
     if "@" in command:
         command = command.split("@", 1)[0].strip()
 
+    if command.startswith("shortcut:"):
+        flow = store.get_ui_flow(ctx.chat_id)
+        if not isinstance(flow, dict) or flow.get("kind") != FLOW_AWAIT_SHORTCUT_CONFIRM:
+            return "目前沒有待確認的捷徑。"
+        action = str(flow.get("action") or "").strip()
+        source_text = str(flow.get("source_text") or "").strip()
+        store.clear_ui_flow(ctx.chat_id)
+        if command == "shortcut:cancel":
+            return "已取消捷徑。"
+        if command == "shortcut:send_agent":
+            if not source_text:
+                return "原始訊息遺失，請重新輸入。"
+            return await handle_agent(ctx.chat_id, ClassifiedRequest(AGENT_REQUEST, None, source_text), agents)
+        if command == "shortcut:confirm":
+            if action.startswith("menu:"):
+                return await _handle_menu_action(ctx.chat_id, action, settings, store, agents)
+            if action.startswith("brain:"):
+                if action == "brain:open":
+                    store.clear_ui_flow(ctx.chat_id)
+                return await _handle_brain_action(ctx.chat_id, action, settings, store, agents)
+            return f"Unknown shortcut action: {action}"
+        return f"Unknown shortcut command: {command}"
+
     if ctx.document is not None and not command:
         local_path = str(ctx.document.local_path or "").strip()
         if not local_path:
@@ -1576,19 +1676,34 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
             request = ClassifiedRequest(CONTROL_REQUEST, phrase_control, text)
             return await handle_control(ctx.chat_id, request, store, agents)
 
-    flat_menu_action = _resolve_flat_menu_action(text)
-    if flat_menu_action is not None:
-        return await _handle_menu_action(ctx.chat_id, flat_menu_action, settings, store, agents)
-
-    flat_brain_action = _resolve_flat_brain_action(text)
-    if flat_brain_action is not None:
-        if flat_brain_action == "brain:open":
-            store.clear_ui_flow(ctx.chat_id)
-        return await _handle_brain_action(ctx.chat_id, flat_brain_action, settings, store, agents)
-
     flow_response = await _handle_flow_input(ctx.chat_id, ctx, settings, store, agents)
     if flow_response is not None:
         return flow_response
+
+    delete_like = _parse_schedule_delete_intent(text) is not None
+    update_like = _parse_schedule_update_intent(text) is not None
+    semantic_len = _semantic_text_length(text)
+    contains_shortcut_match = semantic_len <= 10 and not delete_like and not update_like
+    if contains_shortcut_match:
+        flat_menu_action = _resolve_flat_menu_action(text, contains_match=True)
+        flat_brain_action = _resolve_flat_brain_action(text, contains_match=True)
+        matched_action = flat_menu_action or flat_brain_action
+        if matched_action is not None:
+            if semantic_len <= 5:
+                if matched_action.startswith("menu:"):
+                    return await _handle_menu_action(ctx.chat_id, matched_action, settings, store, agents)
+                if matched_action == "brain:open":
+                    store.clear_ui_flow(ctx.chat_id)
+                return await _handle_brain_action(ctx.chat_id, matched_action, settings, store, agents)
+            store.set_ui_flow(
+                ctx.chat_id,
+                {
+                    "kind": FLOW_AWAIT_SHORTCUT_CONFIRM,
+                    "action": matched_action,
+                    "source_text": text,
+                },
+            )
+            return _shortcut_confirm_response(matched_action, text)
 
     request = classify_request(ctx)
     if request.kind == COMMAND_REQUEST:

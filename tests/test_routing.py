@@ -30,6 +30,10 @@ class RoutingTests(unittest.TestCase):
         root = Path(self.tempdir.name)
         (root / "README.md").write_text("# robot\n", encoding="utf-8")
         self.settings = load_settings(root)
+        state_home = root / ".robot_state"
+        state_home.mkdir(parents=True, exist_ok=True)
+        object.__setattr__(self.settings, "state_home", state_home)
+        object.__setattr__(self.settings, "session_state_path", state_home / "robot_state.json")
         self.store = ChatStateStore(self.settings)
         self.agents = AgentCoordinator(self.settings, self.store)
         self.loop = asyncio.new_event_loop()
@@ -245,8 +249,10 @@ class RoutingTests(unittest.TestCase):
                 self.agents,
             )
         )
-        self.assertIsInstance(body, str)
-        self.assertIn("robot status", body.lower())
+        self.assertIsInstance(body, ButtonResponse)
+        assert isinstance(body, ButtonResponse)
+        self.assertIn("偵測到可能的捷徑意圖", body.text)
+        self.assertEqual([button.data for button in body.buttons or []], ["shortcut:confirm", "shortcut:send_agent", "shortcut:cancel"])
 
     def test_flat_brain_text_action_works_without_open_brain_flow(self) -> None:
         body = self.loop.run_until_complete(
@@ -1185,11 +1191,8 @@ class RoutingTests(unittest.TestCase):
         mock_brief.assert_called_once_with(self.settings, period="week", limit=80)
         self.assertIn("本週行程", body)
 
-    def test_semantic_week_schedule_phrase_returns_week_schedule(self) -> None:
-        with patch(
-            "robot.routing.list_schedule_occurrences",
-            return_value=("本週行程", [{"title": "吃藥", "date": "2026-04-13", "time": "07:30", "path": "06 Schedule/吃藥.md", "recurrence": "每天"}]),
-        ) as mock_brief:
+    def test_semantic_week_schedule_phrase_over_ten_chars_routes_to_agent(self) -> None:
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
             body = self.loop.run_until_complete(
                 handle_request(
                     MessageContext(chat_id=1, text="幫我看這禮拜有哪些行程"),
@@ -1198,8 +1201,86 @@ class RoutingTests(unittest.TestCase):
                     self.agents,
                 )
             )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
+
+    def test_semantic_shortcut_within_five_chars_runs_directly(self) -> None:
+        with patch(
+            "robot.routing.list_schedule_occurrences",
+            return_value=("本週行程", [{"title": "吃藥", "date": "2026-04-13", "time": "07:30", "path": "06 Schedule/吃藥.md", "recurrence": "每天"}]),
+        ) as mock_brief:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="看本週行程"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
         mock_brief.assert_called_once_with(self.settings, period="week", limit=80)
         self.assertIn("本週行程", body)
+
+    def test_semantic_shortcut_six_to_ten_chars_requires_confirmation(self) -> None:
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="請看本週行程"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(body, ButtonResponse)
+        assert isinstance(body, ButtonResponse)
+        self.assertIn("偵測到可能的捷徑意圖", body.text)
+        self.assertEqual([button.data for button in body.buttons or []], ["shortcut:confirm", "shortcut:send_agent", "shortcut:cancel"])
+        flow = self.store.get_ui_flow(1)
+        self.assertIsInstance(flow, dict)
+        self.assertEqual(flow.get("kind"), "await_shortcut_confirm")
+
+    def test_shortcut_confirm_executes_detected_action(self) -> None:
+        self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="請看本週行程"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        with patch(
+            "robot.routing.list_schedule_occurrences",
+            return_value=("本週行程", [{"title": "吃藥", "date": "2026-04-13", "time": "07:30", "path": "06 Schedule/吃藥.md", "recurrence": "每天"}]),
+        ) as mock_brief:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="", command="shortcut:confirm"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        mock_brief.assert_called_once_with(self.settings, period="week", limit=80)
+        self.assertIn("本週行程", body)
+
+    def test_shortcut_send_agent_routes_original_text_to_agent(self) -> None:
+        self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="請看本週行程"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="", command="shortcut:send_agent"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
     def test_semantic_next_week_schedule_phrase_returns_next_week_schedule(self) -> None:
         with patch(
@@ -1377,8 +1458,9 @@ class RoutingTests(unittest.TestCase):
                 self.agents,
             )
         )
-        self.assertIsInstance(body, str)
-        self.assertIn("robot status", body.lower())
+        self.assertIsInstance(body, ButtonResponse)
+        assert isinstance(body, ButtonResponse)
+        self.assertIn("偵測到可能的捷徑意圖", body.text)
 
     def test_menu_flow_allows_natural_language_to_reach_agent(self) -> None:
         self.loop.run_until_complete(
