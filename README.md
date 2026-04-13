@@ -1,15 +1,15 @@
 # robot
 
-`robot` is a smaller Telegram app built on top of `teleapp`.
+`robot` is a Telegram app built on top of `teleapp`.
 
-It keeps Telegram transport and runtime behavior inside `teleapp`, while `robot` only handles:
+It keeps Telegram transport and runtime behavior inside `teleapp`, while `robot` handles:
 
 - deterministic bot commands
 - per-chat provider/model/project state
 - agent request routing
 - subprocess execution for Codex/Gemini/Copilot style CLIs
 
-## Request classes
+## Request Classes
 
 Each incoming request is classified before any model is called:
 
@@ -22,7 +22,7 @@ Each incoming request is classified before any model is called:
 
 Only `agent request` goes to a provider runner.
 
-## Quick start
+## Quick Start
 
 1. Bootstrap the environment.
 
@@ -39,6 +39,7 @@ Linux/macOS:
 ```
 
 `bootstrap_robot` will create/update `.env` and prompt for:
+
 - `TELEAPP_TOKEN`
 - `TELEAPP_ALLOWED_USER_ID`
 
@@ -83,20 +84,22 @@ Linux/macOS:
 
 - `menu`, `model`, and `brain` support Telegram button menus in addition to slash commands.
 - `brain` supports second-brain capture, inbox, search, summaries, decision support, and schedule workflows.
-- Natural-language schedule creation is supported for phrases such as:
+- Natural-language schedule creation examples:
   - `提醒我今天 6 點開會`
   - `30 分鐘後叫我休息`
   - `明天早上 8 點提醒我交報告`
   - `4/20 下午 2 點提醒我和客戶確認需求`
-- Schedule views support:
+- Schedule view phrases:
   - `今天行程`
   - `本週行程`
   - `下週行程`
   - `今天提醒`
   - `未來提醒`
-- Schedule follow-up queries support references such as `第一個行程改到 3 點`.
-- Schedule update and delete flows require confirmation before changing notes.
+- Schedule follow-up references:
+  - `第一個行程改到 3 點`
+- Schedule update/delete flows require confirmation before changing notes.
 - Past-due archive only applies to one-time schedules and skips recurring reminders.
+
 ## Automation
 
 - `/brainauto [on|off|status]`
@@ -110,11 +113,10 @@ Linux/macOS:
 
 - `Codex` is the best-supported provider because it keeps a resumable `thread_id`.
 - `Gemini` and `Copilot` are executed as plain subprocess commands and currently do not preserve thread state.
-- Semantic shortcut routing rules are documented in `SEMANTIC_SHORTCUTS.md`.
 - Auto-dev commands (`/agent`, `/agentresume`, `/agentprofiles`, `/schedule`) call `ROBOT_AUTO_DEV_CMD` in the selected project workspace.
 - `teleapp` handles Telegram polling, filtering, per-chat request queues, `/restart`, and hot reload.
 - Start scripts run `teleapp robot.py`.
-- `teleapp` hot reload is enabled by default, but this project currently runs with hot reload disabled in `.env` until the restart path is fully stabilized.
+- `teleapp` hot reload is enabled by default, but this project currently runs with hot reload disabled in `.env` until restart path is fully stabilized.
 - To disable hot reload, use `teleapp robot.py --no-hot-reload`.
 - Codex execution flags can be controlled with:
   - `ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX` (`1` or `0`)
@@ -125,3 +127,9 @@ Linux/macOS:
   - `TELEAPP_WATCH_MODE` (`app-dir` or `app-file-only`)
   - `--watch <path>` for explicit watch paths
 
+## Documentation
+
+- Semantic shortcut policy: `SEMANTIC_SHORTCUTS.md`
+- Dependency strategy and compatibility: `DEPENDENCY_STRATEGY.md`
+- Quality gate before new features: `QUALITY_GATE_90.md`
+- Operations runbook and troubleshooting: `RUNBOOK.md`

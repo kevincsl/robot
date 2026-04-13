@@ -34,3 +34,9 @@ This rule is applied to semantic shortcut path in request routing:
 - ambiguity confirmation range: `6-10`
 - send-to-AI min length: `11`
 
+## Related Docs
+
+- `README.md`
+- `RUNBOOK.md`
+- `QUALITY_GATE_90.md`
+

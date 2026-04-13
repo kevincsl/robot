@@ -1,0 +1,110 @@
+# RUNBOOK
+
+Operational runbook for `robot`.
+
+## 1) Start / Stop
+
+Windows:
+
+```powershell
+bootstrap_robot.bat
+start_robot.bat
+```
+
+Linux/macOS:
+
+```bash
+./bootstrap_robot.sh
+./start_robot.sh
+```
+
+Stop local process:
+
+- Use your terminal stop signal, or platform process tools.
+- Telegram-side restart command: `/restart` (managed by `teleapp` supervisor).
+
+## 2) Basic Health Check
+
+In Telegram:
+
+- `/status`
+- `/doctor`
+- `/queue`
+- `/agentstatus`
+
+Expected healthy signs:
+
+- running process exists
+- `busy: no` when idle
+- `queued_requests: 0` when idle
+- no `last_error`
+
+## 3) Common Issues
+
+### A) Polling conflict
+
+Symptom:
+
+- Conflict error, bot does not receive updates.
+
+Action:
+
+1. Stop duplicate bot processes using the same token.
+2. Start only one instance.
+3. Verify `/status`.
+
+### B) Job appears stuck
+
+Symptom:
+
+- Long-running task with no visible progress.
+
+Action:
+
+1. Check `/agentstatus` and `/queue`.
+2. If needed, send stop intent (`stop`) or clear queue (`/clearqueue`).
+3. Re-run with `/run <goal>` or `/agent <goal>`.
+
+### C) Missing dependencies after bootstrap
+
+Symptom:
+
+- Import/runtime errors after install.
+
+Action:
+
+1. Re-run bootstrap script.
+2. Ensure constraints-based install is used (`constraints.txt`).
+3. Re-check with `/doctor`.
+
+### D) Markdown/PDF import problems
+
+Symptom:
+
+- Document conversion errors.
+
+Action:
+
+1. Confirm `markitdown[pdf]` is installed in current venv.
+2. Re-check dependency compatibility in `DEPENDENCY_STRATEGY.md`.
+
+## 4) Recovery Steps
+
+If behavior is inconsistent after crash/restart:
+
+1. `/status`
+2. `/agentstatus`
+3. `/queue`
+4. If stale state is suspected:
+   - `/reset` (clear thread state)
+   - `/clearqueue` (if queue should be empty)
+5. Restart process and verify health commands again.
+
+## 5) Pre-Release Checks
+
+Before push/release:
+
+1. `pytest -q`
+2. Verify docs links in `README.md`
+3. Confirm dependency constraints and strategy docs are current
+4. Confirm quality gate status in `QUALITY_GATE_90.md`

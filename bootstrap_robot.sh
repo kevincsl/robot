@@ -10,5 +10,5 @@ fi
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install wheel
-python -m pip install --no-build-isolation -e .
+python -m pip install --no-build-isolation -c constraints.txt -e .
 python scripts/setup_env.py
