@@ -61,7 +61,7 @@ class TelegramGateway:
         app = ApplicationBuilder().token(self._config.telegram_token).build()
         app.add_error_handler(self._telegram_error_handler)
         app.add_handler(CommandHandler("start", self._start_command))
-        app.add_handler(CommandHandler("syshelp", self._syshelp_command))
+        app.add_handler(CommandHandler("help", self._help_command))
         app.add_handler(CommandHandler("status", self._status_command))
         app.add_handler(CommandHandler("restart", self._restart_command))
         for name in sorted(self._custom_commands):
@@ -101,7 +101,7 @@ class TelegramGateway:
         return self._supervisor
 
     def set_custom_commands(self, names: set[str]) -> None:
-        reserved = {"start", "syshelp", "status", "restart"}
+        reserved = {"start", "help", "status", "restart"}
         self._custom_commands = {name for name in names if name not in reserved}
 
     def set_lifecycle_hooks(self, startup_hook, shutdown_hook) -> None:
@@ -145,9 +145,9 @@ class TelegramGateway:
             _clip(
                 "\n".join(
                     [
-                        "robot",
-                        "/help  (robot commands)",
-                        "/syshelp  (teleapp runtime commands)",
+                        "teleapp",
+                        "/status",
+                        "/restart",
                         "",
                         "Send any text to forward it to the hosted app.",
                     ]
@@ -155,23 +155,8 @@ class TelegramGateway:
             )
         )
 
-    async def _syshelp_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._is_allowed(update):
-            return
-        await update.message.reply_text(
-            _clip(
-                "\n".join(
-                    [
-                        "teleapp",
-                        "/status",
-                        "/restart",
-                        "/syshelp",
-                        "",
-                        "Use /help for robot command help.",
-                    ]
-                )
-            )
-        )
+    async def _help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await self._start_command(update, context)
 
     async def _status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_allowed(update):
