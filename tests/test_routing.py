@@ -50,6 +50,12 @@ class RoutingTests(unittest.TestCase):
         request = classify_request(ctx)
         self.assertEqual(request.kind, COMMAND_REQUEST)
 
+    def test_classify_quick_command_request(self) -> None:
+        ctx = MessageContext(chat_id=1, text="/quick", command="quick")
+        request = classify_request(ctx)
+        self.assertEqual(request.kind, COMMAND_REQUEST)
+        self.assertEqual(request.command, "quick")
+
     def test_classify_command_request_without_ctx_command(self) -> None:
         ctx = MessageContext(chat_id=1, text="/model")
         request = classify_request(ctx)
@@ -94,7 +100,7 @@ class RoutingTests(unittest.TestCase):
     def test_menu_trigger_returns_buttons(self) -> None:
         body = self.loop.run_until_complete(
             handle_request(
-                MessageContext(chat_id=1, text="menu"),
+                MessageContext(chat_id=1, text="", command="menu"),
                 self.settings,
                 self.store,
                 self.agents,
@@ -121,6 +127,21 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("codex_bypass_approvals_and_sandbox: False", body)
         self.assertIn("codex_skip_git_repo_check: False", body)
         self.assertIn("runtime_commit:", body)
+
+    def test_quick_command_returns_quick_reference(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/quick", command="quick"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("quick reference", body)
+        self.assertIn("/brainbatchauto [limit]", body)
+        self.assertIn("/menu", body)
+        self.assertIn("/model [name]", body)
+
+    def test_guide_command_returns_docs_overview(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/guide", command="guide"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("features guide", body)
+        self.assertIn("FEATURES_GUIDE.md", body)
+        self.assertIn("/provider /model /projects /project", body)
 
     def test_status_shows_risk_mode_when_dangerous_flags_enabled(self) -> None:
         object.__setattr__(self.settings, "codex_bypass_approvals_and_sandbox", True)
@@ -179,20 +200,22 @@ class RoutingTests(unittest.TestCase):
                 "goal": "test goal",
             },
         )
-        body = self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="繼續"),
-                self.settings,
-                self.store,
-                self.agents,
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="繼續"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
             )
-        )
-        self.assertIn("An agent run is already active.", body)
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
     def test_brain_trigger_returns_buttons(self) -> None:
         body = self.loop.run_until_complete(
             handle_request(
-                MessageContext(chat_id=1, text="brain"),
+                MessageContext(chat_id=1, text="", command="brain"),
                 self.settings,
                 self.store,
                 self.agents,
@@ -288,39 +311,62 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("brain menu", body.text.lower())
         self.assertIsNone(self.store.get_ui_flow(1))
 
-    def test_flat_menu_text_action_works_without_open_menu_flow(self) -> None:
-        body = self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="status"),
-                self.settings,
-                self.store,
-                self.agents,
+    def test_plain_text_menu_routes_to_agent(self) -> None:
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="menu"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
             )
-        )
-        self.assertIsInstance(body, ButtonResponse)
-        assert isinstance(body, ButtonResponse)
-        self.assertIn("偵測到可能的捷徑意圖", body.text)
-        self.assertEqual([button.data for button in body.buttons or []], ["shortcut:confirm", "shortcut:send_agent", "shortcut:cancel"])
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
+
+    def test_plain_text_brain_routes_to_agent(self) -> None:
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="brain"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
+
+    def test_flat_menu_text_action_works_without_open_menu_flow(self) -> None:
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="status"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
     def test_flat_brain_text_action_works_without_open_brain_flow(self) -> None:
-        body = self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="搜尋"),
-                self.settings,
-                self.store,
-                self.agents,
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="搜尋"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
             )
-        )
-        self.assertIsInstance(body, str)
-        self.assertIn("請輸入要搜尋 secondbrain 的關鍵字", body)
-        flow = self.store.get_ui_flow(1)
-        self.assertIsInstance(flow, dict)
-        self.assertEqual(flow.get("kind"), "await_brain_search")
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
     def test_brain_capture_flow_appends_to_daily(self) -> None:
         self.loop.run_until_complete(
             handle_request(
-                MessageContext(chat_id=1, text="brain"),
+                MessageContext(chat_id=1, text="", command="brain"),
                 self.settings,
                 self.store,
                 self.agents,
@@ -334,7 +380,7 @@ class RoutingTests(unittest.TestCase):
                 self.agents,
             )
         )
-        with patch("robot.routing.append_to_daily", return_value="01 Daily Notes/2026-04-09.md"):
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
             body = self.loop.run_until_complete(
                 handle_request(
                     MessageContext(chat_id=1, text="今天整理第二大腦流程"),
@@ -343,7 +389,8 @@ class RoutingTests(unittest.TestCase):
                     self.agents,
                 )
             )
-        self.assertIn("已寫入今日筆記", body)
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
         self.assertIsNone(self.store.get_ui_flow(1))
 
     def test_brainread_command_reads_daily(self) -> None:
@@ -351,6 +398,37 @@ class RoutingTests(unittest.TestCase):
         with patch("robot.routing.read_daily", return_value="# Daily\n\ncontent"):
             body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
         self.assertIn("content", body)
+
+    def test_brainweb_command_captures_url_to_daily(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/brainweb https://example.com", command="brainweb"))
+        with patch(
+            "robot.routing.capture_web_to_daily",
+            return_value=(
+                "01 Daily Notes/2026-04-14.md",
+                "Example Title",
+                "Example body content",
+                ["point 1", "point 2", "point 3"],
+                ["example.com", "api"],
+            ),
+        ) as mock_capture:
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        mock_capture.assert_called_once_with(self.settings, "https://example.com", max_chars=2500)
+        self.assertIn("已寫入今日筆記（網頁收錄）", body)
+        self.assertIn("Example Title", body)
+        self.assertIn("tags: example.com, api", body)
+        self.assertIn("摘要重點：", body)
+        self.assertIn("- point 1", body)
+
+    def test_brainweb_command_requires_url(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/brainweb", command="brainweb"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("Usage: /brainweb <url>", body)
+
+    def test_brainweb_command_handles_invalid_url(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/brainweb bad-url", command="brainweb"))
+        with patch("robot.routing.capture_web_to_daily", side_effect=ValueError("Invalid URL")):
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("網址格式錯誤", body)
 
     def test_brainsearch_command_lists_matches(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/brainsearch product", command="brainsearch"))
@@ -363,7 +441,7 @@ class RoutingTests(unittest.TestCase):
     def test_brain_search_flow_returns_clickable_results(self) -> None:
         self.loop.run_until_complete(
             handle_request(
-                MessageContext(chat_id=1, text="brain"),
+                MessageContext(chat_id=1, text="", command="brain"),
                 self.settings,
                 self.store,
                 self.agents,
@@ -377,7 +455,7 @@ class RoutingTests(unittest.TestCase):
                 self.agents,
             )
         )
-        with patch("robot.routing.search_vault", return_value=["03 Knowledge/product.md"]):
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
             body = self.loop.run_until_complete(
                 handle_request(
                     MessageContext(chat_id=1, text="product"),
@@ -386,11 +464,8 @@ class RoutingTests(unittest.TestCase):
                     self.agents,
                 )
             )
-        self.assertIsInstance(body, ButtonResponse)
-        self.assertEqual([button.data for button in body.buttons or []], ["brain:open_note:0"])
-        flow = self.store.get_ui_flow(1)
-        self.assertIsInstance(flow, dict)
-        self.assertEqual(flow.get("kind"), "brain_search_results")
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
     def test_brain_open_note_reads_selected_result(self) -> None:
         self.store.set_ui_flow(1, {"kind": "brain_search_results", "results": ["03 Knowledge/product.md"]})
@@ -466,7 +541,7 @@ class RoutingTests(unittest.TestCase):
     def test_brain_project_flow_creates_and_reads_note(self) -> None:
         self.loop.run_until_complete(
             handle_request(
-                MessageContext(chat_id=1, text="brain"),
+                MessageContext(chat_id=1, text="", command="brain"),
                 self.settings,
                 self.store,
                 self.agents,
@@ -480,23 +555,22 @@ class RoutingTests(unittest.TestCase):
                 self.agents,
             )
         )
-        with patch("robot.routing.create_project_note", return_value="02 Projects/Roadmap.md"):
-            with patch("robot.routing.read_note", return_value="# Project\n\ncontent"):
-                body = self.loop.run_until_complete(
-                    handle_request(
-                        MessageContext(chat_id=1, text="Roadmap"),
-                        self.settings,
-                        self.store,
-                        self.agents,
-                    )
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="Roadmap"),
+                    self.settings,
+                    self.store,
+                    self.agents,
                 )
-        self.assertIn("Roadmap.md", body)
-        self.assertIn("content", body)
+            )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
     def test_brain_organize_flow_creates_project_from_text(self) -> None:
         self.loop.run_until_complete(
             handle_request(
-                MessageContext(chat_id=1, text="brain"),
+                MessageContext(chat_id=1, text="", command="brain"),
                 self.settings,
                 self.store,
                 self.agents,
@@ -510,39 +584,18 @@ class RoutingTests(unittest.TestCase):
                 self.agents,
             )
         )
-        target_menu = self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="這是一段要整理成專案的原始內容"),
-                self.settings,
-                self.store,
-                self.agents,
-            )
-        )
-        self.assertIsInstance(target_menu, ButtonResponse)
-        self.assertEqual(
-            [button.data for button in target_menu.buttons or []],
-            ["brain:organize_target:project", "brain:organize_target:knowledge", "brain:organize_target:resource"],
-        )
-        self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="", command="brain:organize_target:project"),
-                self.settings,
-                self.store,
-                self.agents,
-            )
-        )
-        with patch("robot.routing.create_project_note_from_text", return_value="02 Projects/Roadmap.md"):
-            with patch("robot.routing.read_note", return_value="# Project\n\nsource content"):
-                body = self.loop.run_until_complete(
-                    handle_request(
-                        MessageContext(chat_id=1, text="Roadmap"),
-                        self.settings,
-                        self.store,
-                        self.agents,
-                    )
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="這是一段要整理成專案的原始內容"),
+                    self.settings,
+                    self.store,
+                    self.agents,
                 )
-        self.assertIn("已整理成 Project 筆記", body)
-        self.assertIn("Roadmap.md", body)
+            )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
+        self.assertIsNone(self.store.get_ui_flow(1))
 
     def test_brain_batch_returns_recent_note_buttons(self) -> None:
         with patch("robot.routing.list_recent_notes", side_effect=[["00 Inbox/a.md"], ["01 Daily Notes/2026-04-10.md"]]):
@@ -741,39 +794,17 @@ class RoutingTests(unittest.TestCase):
                 self.agents,
             )
         )
-        title_step = self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="Weekly sync"),
-                self.settings,
-                self.store,
-                self.agents,
-            )
-        )
-        self.assertIn("請輸入日期", title_step)
-
-        date_step = self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="2026-04-11"),
-                self.settings,
-                self.store,
-                self.agents,
-            )
-        )
-        self.assertIn("請輸入時間", date_step)
-
-        with patch("robot.routing.create_schedule_note", return_value="06 Schedule/Weekly sync.md") as mock_create:
-            with patch("robot.routing.read_note", return_value="# Schedule\n\ncontent"):
-                body = self.loop.run_until_complete(
-                    handle_request(
-                        MessageContext(chat_id=1, text="14:30"),
-                        self.settings,
-                        self.store,
-                        self.agents,
-                    )
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="Weekly sync"),
+                    self.settings,
+                    self.store,
+                    self.agents,
                 )
-        mock_create.assert_called_once_with(self.settings, "Weekly sync", date_text="2026-04-11", time_text="14:30")
-        self.assertIn("Schedule", body)
-        self.assertIn("Weekly sync.md", body)
+            )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
         self.assertIsNone(self.store.get_ui_flow(1))
 
 
@@ -786,123 +817,88 @@ class RoutingTests(unittest.TestCase):
                 self.agents,
             )
         )
-        confirm = self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="今天下午6點半要吃藥"),
-                self.settings,
-                self.store,
-                self.agents,
-            )
-        )
-        self.assertIsInstance(confirm, ButtonResponse)
-        self.assertIn("看起來像一筆行程，要怎麼處理？", confirm.text)
-        self.assertIn("標題: 吃藥", confirm.text)
-        self.assertIn(f"日期: {datetime.now().strftime('%Y-%m-%d')}", confirm.text)
-        self.assertIn("時間: 18:30", confirm.text)
-        self.assertEqual(
-            [button.data for button in confirm.buttons or []],
-            ["brain:schedule_confirm", "brain:schedule_send_agent", "brain:cancel"],
-        )
-
-        today = datetime.now().strftime("%Y-%m-%d")
-        with patch("robot.routing.create_schedule_note", return_value="06 Schedule/吃藥.md") as mock_create:
-            with patch("robot.routing.read_note", return_value="# Schedule\n\ncontent"):
-                body = self.loop.run_until_complete(
-                    handle_request(
-                        MessageContext(chat_id=1, text="", command="brain:schedule_confirm"),
-                        self.settings,
-                        self.store,
-                        self.agents,
-                    )
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="今天下午6點半要吃藥"),
+                    self.settings,
+                    self.store,
+                    self.agents,
                 )
-        mock_create.assert_called_once_with(
-            self.settings,
-            "吃藥",
-            date_text=today,
-            time_text="18:30",
-            recurrence_type="",
-            recurrence_value="",
-        )
-        self.assertIn("已建立 Schedule 筆記", body)
-        self.assertIn("06 Schedule/吃藥.md", body)
+            )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
         self.assertIsNone(self.store.get_ui_flow(1))
 
-    def test_plain_natural_language_schedule_message_offers_confirmation(self) -> None:
+    def test_plain_natural_language_schedule_message_routes_to_agent(self) -> None:
         self.store.clear_ui_flow(1)
-        body = self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="提醒我今天下午6點半吃藥"),
-                self.settings,
-                self.store,
-                self.agents,
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="提醒我今天下午6點半吃藥"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
             )
-        )
-        self.assertIsInstance(body, ButtonResponse)
-        self.assertIn("看起來像一筆行程，要怎麼處理？", body.text)
-        self.assertIn("標題: 吃藥", body.text)
-        self.assertEqual(
-            [button.data for button in body.buttons or []],
-            ["brain:schedule_confirm", "brain:schedule_send_agent", "brain:cancel"],
-        )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
-    def test_plain_natural_language_schedule_with_point_minutes_offers_confirmation(self) -> None:
+    def test_plain_natural_language_schedule_with_point_minutes_routes_to_agent(self) -> None:
         self.store.clear_ui_flow(1)
-        body = self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="幫我加入行程 今天晚上23點40分要睡覺"),
-                self.settings,
-                self.store,
-                self.agents,
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="幫我加入行程 今天晚上23點40分要睡覺"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
             )
-        )
-        self.assertIsInstance(body, ButtonResponse)
-        self.assertIn("看起來像一筆行程，要怎麼處理？", body.text)
-        self.assertIn("標題: 睡覺", body.text)
-        self.assertIn("時間: 23:40", body.text)
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
-    def test_plain_relative_schedule_message_offers_confirmation(self) -> None:
+    def test_plain_relative_schedule_message_routes_to_agent(self) -> None:
         self.store.clear_ui_flow(1)
-        body = self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="30分鐘後要休息"),
-                self.settings,
-                self.store,
-                self.agents,
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="30分鐘後要休息"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
             )
-        )
-        self.assertIsInstance(body, ButtonResponse)
-        self.assertIn("看起來像一筆行程，要怎麼處理？", body.text)
-        self.assertIn("標題: 休息", body.text)
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
-    def test_plain_next_weekday_schedule_message_offers_confirmation(self) -> None:
+    def test_plain_next_weekday_schedule_message_routes_to_agent(self) -> None:
         self.store.clear_ui_flow(1)
-        body = self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="安排下週二下午3點交報告"),
-                self.settings,
-                self.store,
-                self.agents,
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="安排下週二下午3點交報告"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
             )
-        )
-        self.assertIsInstance(body, ButtonResponse)
-        self.assertIn("看起來像一筆行程，要怎麼處理？", body.text)
-        self.assertIn("標題: 交報告", body.text)
-        self.assertIn("時間: 15:00", body.text)
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
-    def test_plain_weekly_recurring_schedule_message_offers_confirmation(self) -> None:
+    def test_plain_weekly_recurring_schedule_message_routes_to_agent(self) -> None:
         self.store.clear_ui_flow(1)
-        body = self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="每週三晚上8點吃火鍋"),
-                self.settings,
-                self.store,
-                self.agents,
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="每週三晚上8點吃火鍋"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
             )
-        )
-        self.assertIsInstance(body, ButtonResponse)
-        self.assertIn("看起來像一筆行程，要怎麼處理？", body.text)
-        self.assertIn("標題: 吃火鍋", body.text)
-        self.assertIn("時間: 20:00", body.text)
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
     def test_schedule_send_agent_routes_original_text_to_codex(self) -> None:
         self.store.set_ui_flow(
@@ -954,20 +950,8 @@ class RoutingTests(unittest.TestCase):
         self.assertIsNone(self.store.get_ui_flow(1))
         self.assertIsNone(self.store.get_last_schedule_candidate(1))
 
-    def test_delete_schedule_phrase_offers_delete_confirmation(self) -> None:
-        with patch(
-            "robot.routing.find_schedule_notes",
-            return_value=[
-                {
-                    "title": "吃藥",
-                    "date": "2026-04-13",
-                    "time": "07:30",
-                    "path": "06 Schedule/吃藥.md",
-                    "recurrence_type": "daily",
-                    "recurrence_value": "daily",
-                }
-            ],
-        ):
+    def test_delete_schedule_phrase_routes_to_agent(self) -> None:
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
             body = self.loop.run_until_complete(
                 handle_request(
                     MessageContext(chat_id=1, text="去除吃藥行程"),
@@ -976,14 +960,8 @@ class RoutingTests(unittest.TestCase):
                     self.agents,
                 )
             )
-        self.assertIsInstance(body, ButtonResponse)
-        self.assertIn("看起來你是要刪除一筆行程", body.text)
-        self.assertIn("06 Schedule/吃藥.md", body.text)
-        self.assertIn("這是一筆週期性行程。刪除後會停止未來所有重複提醒。", body.text)
-        self.assertEqual(
-            [button.data for button in body.buttons or []],
-            ["brain:schedule_delete_confirm", "brain:schedule_send_agent", "brain:cancel"],
-        )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
     def test_schedule_delete_confirm_archives_note(self) -> None:
         self.store.set_ui_flow(
@@ -1030,20 +1008,8 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(body, "agent delegated")
         mock_handle_agent.assert_awaited_once()
 
-    def test_update_schedule_phrase_offers_update_confirmation(self) -> None:
-        with patch(
-            "robot.routing.find_schedule_notes",
-            return_value=[
-                {
-                    "title": "升學輔導會議在第一會議室",
-                    "date": "2026-04-20",
-                    "time": "12:00",
-                    "path": "06 Schedule/升學輔導會議在第一會議室.md",
-                    "recurrence_type": "",
-                    "recurrence_value": "",
-                }
-            ],
-        ):
+    def test_update_schedule_phrase_routes_to_agent(self) -> None:
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
             body = self.loop.run_until_complete(
                 handle_request(
                     MessageContext(chat_id=1, text="把升學輔導會議在第一會議室改到下午1點"),
@@ -1052,14 +1018,8 @@ class RoutingTests(unittest.TestCase):
                     self.agents,
                 )
             )
-        self.assertIsInstance(body, ButtonResponse)
-        self.assertIn("看起來你是要修改一筆行程", body.text)
-        self.assertIn("目前: 2026-04-20 12:00", body.text)
-        self.assertIn("更新後: 13:00", body.text)
-        self.assertEqual(
-            [button.data for button in body.buttons or []],
-            ["brain:schedule_update_confirm", "brain:schedule_send_agent", "brain:cancel"],
-        )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
     def test_schedule_update_confirm_updates_note(self) -> None:
         self.store.set_ui_flow(
@@ -1262,7 +1222,7 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("下週行程", body)
         self.assertEqual(self.store.get_last_schedule_results(1)[0]["title"], "會議")
 
-    def test_last_schedule_reference_answers_time_without_agent(self) -> None:
+    def test_last_schedule_reference_routes_to_agent(self) -> None:
         self.store.set_last_schedule_results(
             1,
             [
@@ -1284,14 +1244,11 @@ class RoutingTests(unittest.TestCase):
                     self.agents,
                 )
             )
-        self.assertEqual(body, "升學輔導會議在第一會議室 是 2026-04-20 13:00。")
-        mock_handle_agent.assert_not_awaited()
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
     def test_flat_week_schedule_phrase_returns_week_schedule(self) -> None:
-        with patch(
-            "robot.routing.list_schedule_occurrences",
-            return_value=("本週行程", [{"title": "吃藥", "date": "2026-04-13", "time": "07:30", "path": "06 Schedule/吃藥.md", "recurrence": "每天"}]),
-        ) as mock_brief:
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
             body = self.loop.run_until_complete(
                 handle_request(
                     MessageContext(chat_id=1, text="這一週行程"),
@@ -1300,8 +1257,8 @@ class RoutingTests(unittest.TestCase):
                     self.agents,
                 )
             )
-        mock_brief.assert_called_once_with(self.settings, period="week", limit=80)
-        self.assertIn("本週行程", body)
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
     def test_semantic_week_schedule_phrase_over_ten_chars_routes_to_agent(self) -> None:
         with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
@@ -1317,10 +1274,7 @@ class RoutingTests(unittest.TestCase):
         mock_handle_agent.assert_awaited_once()
 
     def test_semantic_shortcut_within_five_chars_runs_directly(self) -> None:
-        with patch(
-            "robot.routing.list_schedule_occurrences",
-            return_value=("本週行程", [{"title": "吃藥", "date": "2026-04-13", "time": "07:30", "path": "06 Schedule/吃藥.md", "recurrence": "每天"}]),
-        ) as mock_brief:
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
             body = self.loop.run_until_complete(
                 handle_request(
                     MessageContext(chat_id=1, text="看本週行程"),
@@ -1329,63 +1283,14 @@ class RoutingTests(unittest.TestCase):
                     self.agents,
                 )
             )
-        mock_brief.assert_called_once_with(self.settings, period="week", limit=80)
-        self.assertIn("本週行程", body)
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
     def test_semantic_shortcut_six_to_ten_chars_requires_confirmation(self) -> None:
-        body = self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="請看本週行程"),
-                self.settings,
-                self.store,
-                self.agents,
-            )
-        )
-        self.assertIsInstance(body, ButtonResponse)
-        assert isinstance(body, ButtonResponse)
-        self.assertIn("偵測到可能的捷徑意圖", body.text)
-        self.assertEqual([button.data for button in body.buttons or []], ["shortcut:confirm", "shortcut:send_agent", "shortcut:cancel"])
-        flow = self.store.get_ui_flow(1)
-        self.assertIsInstance(flow, dict)
-        self.assertEqual(flow.get("kind"), "await_shortcut_confirm")
-
-    def test_shortcut_confirm_executes_detected_action(self) -> None:
-        self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="請看本週行程"),
-                self.settings,
-                self.store,
-                self.agents,
-            )
-        )
-        with patch(
-            "robot.routing.list_schedule_occurrences",
-            return_value=("本週行程", [{"title": "吃藥", "date": "2026-04-13", "time": "07:30", "path": "06 Schedule/吃藥.md", "recurrence": "每天"}]),
-        ) as mock_brief:
-            body = self.loop.run_until_complete(
-                handle_request(
-                    MessageContext(chat_id=1, text="", command="shortcut:confirm"),
-                    self.settings,
-                    self.store,
-                    self.agents,
-                )
-            )
-        mock_brief.assert_called_once_with(self.settings, period="week", limit=80)
-        self.assertIn("本週行程", body)
-
-    def test_shortcut_send_agent_routes_original_text_to_agent(self) -> None:
-        self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="請看本週行程"),
-                self.settings,
-                self.store,
-                self.agents,
-            )
-        )
         with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
             body = self.loop.run_until_complete(
                 handle_request(
-                    MessageContext(chat_id=1, text="", command="shortcut:send_agent"),
+                    MessageContext(chat_id=1, text="請看本週行程"),
                     self.settings,
                     self.store,
                     self.agents,
@@ -1394,11 +1299,30 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(body, "agent delegated")
         mock_handle_agent.assert_awaited_once()
 
+    def test_shortcut_confirm_executes_detected_action(self) -> None:
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="shortcut:confirm"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIn("Unknown command: /shortcut:confirm", body)
+
+    def test_shortcut_send_agent_routes_original_text_to_agent(self) -> None:
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="shortcut:send_agent"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIn("Unknown command: /shortcut:send_agent", body)
+
     def test_semantic_next_week_schedule_phrase_returns_next_week_schedule(self) -> None:
-        with patch(
-            "robot.routing.list_schedule_occurrences",
-            return_value=("下週行程", [{"title": "會議", "date": "2026-04-20", "time": "12:00", "path": "06 Schedule/會議.md", "recurrence": ""}]),
-        ) as mock_brief:
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
             body = self.loop.run_until_complete(
                 handle_request(
                     MessageContext(chat_id=1, text="下週行程"),
@@ -1407,14 +1331,11 @@ class RoutingTests(unittest.TestCase):
                     self.agents,
                 )
             )
-        mock_brief.assert_called_once_with(self.settings, period="next_week", limit=80)
-        self.assertIn("下週行程", body)
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
     def test_flat_month_schedule_phrase_returns_month_schedule(self) -> None:
-        with patch(
-            "robot.routing.list_schedule_occurrences",
-            return_value=("本月行程", [{"title": "吃藥", "date": "2026-04-13", "time": "07:30", "path": "06 Schedule/吃藥.md", "recurrence": "每天"}]),
-        ) as mock_brief:
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
             body = self.loop.run_until_complete(
                 handle_request(
                     MessageContext(chat_id=1, text="這個月行程"),
@@ -1423,22 +1344,38 @@ class RoutingTests(unittest.TestCase):
                     self.agents,
                 )
             )
-        mock_brief.assert_called_once_with(self.settings, period="month", limit=120)
-        self.assertIn("本月行程", body)
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
-    def test_schedule_create_phrase_does_not_get_misrouted_to_range_view(self) -> None:
+    def test_schedule_create_phrase_routes_to_agent(self) -> None:
         with patch("robot.routing.build_schedule_range_brief") as mock_brief:
-            body = self.loop.run_until_complete(
-                handle_request(
-                    MessageContext(chat_id=1, text="幫我加入行程 今天晚上23點40分要睡覺"),
-                    self.settings,
-                    self.store,
-                    self.agents,
+            with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+                body = self.loop.run_until_complete(
+                    handle_request(
+                        MessageContext(chat_id=1, text="幫我加入行程 今天晚上23點40分要睡覺"),
+                        self.settings,
+                        self.store,
+                        self.agents,
+                    )
                 )
-            )
+        mock_handle_agent.assert_awaited_once()
+        self.assertEqual(body, "agent delegated")
         mock_brief.assert_not_called()
-        self.assertIsInstance(body, ButtonResponse)
-        self.assertIn("看起來像一筆行程", body.text)
+
+    def test_semantic_archive_past_schedule_phrase_routes_to_agent(self) -> None:
+        with patch("robot.routing.archive_past_due_schedule_notes", return_value=[]) as mock_archive:
+            with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+                body = self.loop.run_until_complete(
+                    handle_request(
+                        MessageContext(chat_id=1, text="將已經超過時間的行程封存"),
+                        self.settings,
+                        self.store,
+                        self.agents,
+                    )
+                )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
+        mock_archive.assert_not_called()
 
     def test_brain_schedule_list_returns_brief(self) -> None:
         with patch("robot.routing.build_schedule_brief", return_value="行程列表\n\n- 2026-04-13 10:00 | Review") as mock_brief:
@@ -1477,19 +1414,6 @@ class RoutingTests(unittest.TestCase):
         mock_archive.assert_called_once_with(self.settings, limit=200)
         self.assertIn("已封存過期行程", body)
         self.assertIn("06 Schedule/休息.md", body)
-
-    def test_semantic_archive_past_schedule_phrase_executes_action(self) -> None:
-        with patch("robot.routing.archive_past_due_schedule_notes", return_value=[]) as mock_archive:
-            body = self.loop.run_until_complete(
-                handle_request(
-                    MessageContext(chat_id=1, text="將已經超過時間的行程封存"),
-                    self.settings,
-                    self.store,
-                    self.agents,
-                )
-            )
-        mock_archive.assert_called_once_with(self.settings, limit=200)
-        self.assertIn("目前沒有已過期且可封存的單次行程", body)
 
     def test_menu_model_flow_updates_model_from_button_callback(self) -> None:
         open_menu = self.loop.run_until_complete(
@@ -1554,35 +1478,20 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(flow.get("kind"), "await_model")
 
     def test_menu_text_action_status_works_without_buttons(self) -> None:
-        self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="menu"),
-                self.settings,
-                self.store,
-                self.agents,
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="status"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
             )
-        )
-        body = self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="status"),
-                self.settings,
-                self.store,
-                self.agents,
-            )
-        )
-        self.assertIsInstance(body, ButtonResponse)
-        assert isinstance(body, ButtonResponse)
-        self.assertIn("偵測到可能的捷徑意圖", body.text)
+        self.assertIsInstance(body, str)
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
 
     def test_menu_flow_allows_natural_language_to_reach_agent(self) -> None:
-        self.loop.run_until_complete(
-            handle_request(
-                MessageContext(chat_id=1, text="menu"),
-                self.settings,
-                self.store,
-                self.agents,
-            )
-        )
         with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
             body = self.loop.run_until_complete(
                 handle_request(
@@ -1593,6 +1502,32 @@ class RoutingTests(unittest.TestCase):
                 )
             )
         self.assertIsInstance(body, str)
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
+
+    def test_plain_text_menu_routes_to_agent(self) -> None:
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="menu"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertEqual(body, "agent delegated")
+        mock_handle_agent.assert_awaited_once()
+
+    def test_plain_text_brain_routes_to_agent(self) -> None:
+        with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="brain"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
         self.assertEqual(body, "agent delegated")
         mock_handle_agent.assert_awaited_once()
 
@@ -1721,7 +1656,7 @@ class RoutingTests(unittest.TestCase):
         run_request = classify_request(MessageContext(chat_id=1, text="/run long task", command="run"))
         self.loop.run_until_complete(handle_control(1, run_request, self.store, self.agents))
         self.loop.run_until_complete(asyncio.sleep(0.5))
-        stop_request = classify_request(MessageContext(chat_id=1, text="stop"))
+        stop_request = classify_request(MessageContext(chat_id=1, text="/stop", command="stop"))
         body = self.loop.run_until_complete(handle_control(1, stop_request, self.store, self.agents))
         self.assertIn("Stop signal sent", body)
         self.loop.run_until_complete(asyncio.sleep(0.8))

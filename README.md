@@ -132,7 +132,9 @@ Linux/macOS:
 
 ## Documentation
 
-- Semantic shortcut policy: `SEMANTIC_SHORTCUTS.md`
+- One-page quick reference: `QUICK_REFERENCE.md`
+- Full feature and usage guide (with scenarios/examples): `FEATURES_GUIDE.md`
+- Shortcut policy: no semantic shortcut routing; use explicit slash commands or Telegram buttons.
 - Dependency strategy and compatibility: `DEPENDENCY_STRATEGY.md`
 - Core flow coverage map: `CORE_FLOW_COVERAGE.md`
 - Quality gate before new features: `QUALITY_GATE_90.md`

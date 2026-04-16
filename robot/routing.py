@@ -1,7 +1,6 @@
 ﻿from __future__ import annotations
 
 import argparse
-import re
 import shlex
 import subprocess
 from dataclasses import dataclass
@@ -24,6 +23,7 @@ from robot.brain import (
     build_schedule_range_brief,
     build_weekly_brief,
     collect_brain_reminders,
+    capture_web_to_daily,
     create_decision_note,
     create_decision_note_from_brief,
     create_inbox_note,
@@ -35,11 +35,9 @@ from robot.brain import (
     create_resource_note_from_text,
     create_schedule_note,
     ensure_weekly_summary_note,
-    find_schedule_notes,
     import_markitdown_resource,
     list_recent_notes,
     list_schedule_occurrences,
-    parse_schedule_update_details,
     parse_natural_language_schedule,
     read_daily,
     read_note,
@@ -58,6 +56,8 @@ AGENT_REQUEST = "agent"
 COMMAND_NAMES = {
     "start",
     "help",
+    "quick",
+    "guide",
     "about",
     "status",
     "doctor",
@@ -74,6 +74,7 @@ COMMAND_NAMES = {
     "brain",
     "brainread",
     "braininbox",
+    "brainweb",
     "brainsearch",
     "braindecide",
     "brainsummary",
@@ -105,31 +106,6 @@ CONTROL_NAMES = {
     "schedule",
 }
 
-COMMON_CONTROL_PHRASES = {
-    "continue": "continue",
-    "continue?": "continue",
-    "go on": "continue",
-    "next": "next",
-    "next step": "next",
-    "stop": "stop",
-    "restart": "restart_hint",
-    "start over": "restart_hint",
-    "繼續": "continue",
-    "繼續嗎": "continue",
-    "??": "continue",
-    "???": "continue",
-    "下一步": "next",
-    "停止": "stop",
-    "停": "stop",
-    "重來": "restart_hint",
-    "重?": "restart_hint",
-    "重新開始": "restart_hint",
-    "重新?始": "restart_hint",
-}
-
-MENU_TRIGGERS = {"menu", "選單"}
-MODEL_TRIGGERS = {"model", "模型"}
-BRAIN_TRIGGERS = {"brain", "第二大腦", "筆記"}
 MENU_COMMAND_PREFIX = "menu:"
 BRAIN_COMMAND_PREFIX = "brain:"
 UI_BUILD_TAG = "ui-build:2026-04-10-b"
@@ -155,7 +131,6 @@ FLOW_AWAIT_BRAIN_ORGANIZE_TARGET = "await_brain_organize_target"
 FLOW_AWAIT_BRAIN_ORGANIZE_TITLE = "await_brain_organize_title"
 FLOW_BRAIN_SEARCH_RESULTS = "brain_search_results"
 FLOW_BRAIN_BATCH_RESULTS = "brain_batch_results"
-FLOW_AWAIT_SHORTCUT_CONFIRM = "await_shortcut_confirm"
 
 
 def _runtime_git_commit() -> str:
@@ -281,62 +256,6 @@ def _schedule_update_confirm_response(match: dict[str, str], updates: dict[str, 
     )
 
 
-def _should_offer_schedule_confirmation(text: str) -> bool:
-    normalized = (text or "").strip()
-    if not normalized:
-        return False
-    strong_schedule_cues = (
-        "提醒我",
-        "提醒 ",
-        "幫我提醒",
-        "加入行程",
-        "加進行程",
-        "安排",
-        "排進",
-        "新增行程",
-        "建立行程",
-        "加入日曆",
-        "加入行事曆",
-    )
-    recurring_cues = ("每天", "每週", "每月")
-    relative_cues = ("分鐘後要", "分鐘後提醒", "分鐘後記得")
-    return (
-        any(marker in normalized for marker in strong_schedule_cues)
-        or any(marker in normalized for marker in recurring_cues)
-        or any(marker in normalized for marker in relative_cues)
-    )
-
-
-def _parse_schedule_delete_intent(text: str) -> str | None:
-    normalized = (text or "").strip()
-    if not normalized:
-        return None
-    delete_markers = ("刪除", "刪掉", "移除", "去除", "取消")
-    if not any(marker in normalized for marker in delete_markers):
-        return None
-    if "行程" not in normalized and "日程" not in normalized and "schedule" not in normalized.lower():
-        return None
-    query = normalized
-    for marker in (*delete_markers, "行程", "日程", "schedule", "請", "幫我", "把", "這筆", "這個", "一下"):
-        query = query.replace(marker, " ")
-    query = re.sub(r"\s+", " ", query).strip(" ，,。.;；：:")
-    return query or None
-
-
-def _parse_schedule_update_intent(text: str) -> tuple[str, str] | None:
-    normalized = (text or "").strip()
-    if not normalized:
-        return None
-    match = re.search(r"^(?:把|將)?(?P<query>.+?)(?:改到|改成|改為)(?P<details>.+)$", normalized)
-    if not match:
-        return None
-    query = match.group("query").strip(" ，,。.;；：:")
-    details = match.group("details").strip(" ，,。.;；：:")
-    if not query or not details:
-        return None
-    return query, details
-
-
 def _schedule_occurrences_response(
     chat_id: int,
     store: ChatStateStore,
@@ -356,39 +275,6 @@ def _schedule_occurrences_response(
         lines.append(f"- {item.get('date')} {item.get('time')} | {item.get('title')}{recurrence_note}")
         lines.append(f"  {item.get('path')}")
     return "\n".join(lines)
-
-
-def _answer_last_schedule_reference(text: str, store: ChatStateStore, chat_id: int) -> str | None:
-    normalized = (text or "").strip().lower()
-    if not normalized:
-        return None
-    if any(marker in normalized for marker in ("這個月", "這月", "本月", "下週", "本週", "這週", "今天", "今日")):
-        return None
-    reference_markers = ("這個行程", "這筆行程", "這個", "這筆", "那個行程", "那筆行程")
-    if not any(marker in normalized for marker in reference_markers):
-        return None
-    detail_markers = ("幾點", "時間", "什麼時候", "when", "哪天", "日期", "幾號", "day", "date", "在哪", "哪裡", "地點", "位置", "where")
-    if any(marker in normalized for marker in ("這個", "這筆")) and not any(marker in normalized for marker in detail_markers):
-        return None
-    results = store.get_last_schedule_results(chat_id)
-    if not results:
-        return "目前沒有上一筆行程查詢結果。你可以先輸入「今日行程」或「下週行程」。"
-    if len(results) > 1:
-        lines = ["上一輪有多筆行程，請指定第幾筆：", ""]
-        for index, item in enumerate(results[:10], start=1):
-            lines.append(f"{index}. {item.get('date')} {item.get('time')} | {item.get('title')}")
-        return "\n".join(lines)
-    item = results[0]
-    if any(marker in normalized for marker in ("幾點", "時間", "什麼時候", "when")):
-        return f"{item.get('title')} 是 {item.get('date')} {item.get('time')}。"
-    if any(marker in normalized for marker in ("哪天", "日期", "幾號", "day", "date")):
-        return f"{item.get('title')} 的日期是 {item.get('date')}。"
-    if any(marker in normalized for marker in ("在哪", "哪裡", "地點", "位置", "where")):
-        title = item.get("title") or ""
-        if "在" in title:
-            return f"{title}"
-        return f"我目前只看到標題：{title}。沒有獨立地點欄位。"
-    return f"{item.get('date')} {item.get('time')} | {item.get('title')}\n{item.get('path')}"
 
 
 def _set_schedule_confirm_flow(chat_id: int, store: ChatStateStore, parsed: dict[str, str]) -> None:
@@ -626,10 +512,6 @@ def classify_request(ctx: MessageContext) -> ClassifiedRequest:
     if command == "brain" or (command and command.startswith(BRAIN_COMMAND_PREFIX)):
         return ClassifiedRequest(COMMAND_REQUEST, command, "")
 
-    lowered = text.lower()
-    phrase_control = COMMON_CONTROL_PHRASES.get(lowered) or COMMON_CONTROL_PHRASES.get(text)
-    if phrase_control is not None and phrase_control not in {"continue", "next"}:
-        return ClassifiedRequest(CONTROL_REQUEST, phrase_control, text)
     if command in COMMAND_NAMES:
         return ClassifiedRequest(COMMAND_REQUEST, command, _resolved_payload(text, command))
     if command in CONTROL_NAMES:
@@ -693,6 +575,8 @@ def _help_text() -> str:
             "robot",
             "",
             "deterministic commands:",
+            "/quick",
+            "/guide",
             "/provider [codex|gemini|copilot]",
             "/model [name]",
             "/models",
@@ -708,6 +592,7 @@ def _help_text() -> str:
             "/brain",
             "/brainread",
             "/braininbox <text>",
+            "/brainweb <url>",
             "/brainsearch <query>",
             "/brainorganize",
             "/brainbatch",
@@ -743,6 +628,58 @@ def _help_text() -> str:
             "common low-token control phrases:",
             "- continue / next / stop / restart",
             "- 繼續 / 下一步 / 停止 / 重來",
+        ]
+    )
+
+
+def _quick_text() -> str:
+    return "\n".join(
+        [
+            "quick reference",
+            "",
+            "system menu/model:",
+            "- /menu",
+            "- /provider [codex|gemini|copilot]",
+            "- /model [name]",
+            "- /models",
+            "- /projects",
+            "- /project [key-or-label]",
+            "",
+            "top commands:",
+            "- /status",
+            "- /braininbox <text>",
+            "- /brainsearch <query>",
+            "- /brainbatchauto [limit]",
+            "- /brainweb <url>",
+            "- /brainschedule <title-or-natural-language>",
+            "",
+            "short daily flow:",
+            "1. /braininbox <today idea>",
+            "2. /brainbatchauto 5",
+            "3. /braindaily",
+            "",
+            "more: /guide",
+        ]
+    )
+
+
+def _guide_text() -> str:
+    return "\n".join(
+        [
+            "features guide",
+            "",
+            "See these docs in repository root:",
+            "- FEATURES_GUIDE.md (full guide: features, scenarios, examples)",
+            "- QUICK_REFERENCE.md (one-page quick reference)",
+            "",
+            "most useful commands:",
+            "- /quick",
+            "- /help",
+            "- /menu",
+            "- /provider /model /projects /project",
+            "- /brain",
+            "- /brainweb <url>",
+            "- /brainbatchauto [limit]",
         ]
     )
 
@@ -1162,159 +1099,6 @@ def _provider_menu_response(chat_id: int, store: ChatStateStore) -> str:
     return "\n".join(lines)
 
 
-def _semantic_text_length(text: str) -> int:
-    return len("".join(ch for ch in text if not ch.isspace()))
-
-
-def _contains_any(normalized: str, keywords: tuple[str, ...]) -> bool:
-    return any(keyword and keyword in normalized for keyword in keywords)
-
-
-def _resolve_flat_menu_action(text: str, *, contains_match: bool) -> str | None:
-    normalized = text.strip().lower()
-    status_keywords = ("status", "狀態")
-    provider_keywords = ("provider", "供應商")
-    model_keywords = ("model", "模型")
-    projects_keywords = ("projects", "project", "專案")
-    menu_keywords = ("menu", "選單")
-    if (contains_match and _contains_any(normalized, status_keywords)) or normalized in status_keywords:
-        return "menu:status"
-    if (contains_match and _contains_any(normalized, provider_keywords)) or normalized in provider_keywords:
-        return "menu:provider"
-    if (contains_match and _contains_any(normalized, model_keywords)) or normalized in model_keywords:
-        return "menu:model"
-    if (contains_match and _contains_any(normalized, projects_keywords)) or normalized in projects_keywords:
-        return "menu:projects"
-    if (contains_match and _contains_any(normalized, menu_keywords)) or normalized in menu_keywords:
-        return "menu:open"
-    return None
-
-
-def _resolve_flat_brain_action(text: str, *, contains_match: bool) -> str | None:
-    normalized = text.strip().lower()
-    schedule_query_markers = ("行程", "日程", "calendar", "schedule")
-    has_schedule_query_marker = any(marker in normalized for marker in schedule_query_markers)
-    schedule_create_markers = ("提醒", "加入", "新增", "建立", "排進", "加進")
-    if has_schedule_query_marker and not any(marker in normalized for marker in schedule_create_markers):
-        if any(marker in normalized for marker in ("今天", "今日", "每日", "現在", "day", "daily")):
-            return "brain:schedule_today"
-        if any(marker in normalized for marker in ("下週", "下个星期", "下個星期", "next week")):
-            return "brain:schedule_next_week"
-        if any(marker in normalized for marker in ("本週", "這週", "這一週", "一週", "這禮拜", "本禮拜", "week", "weekly")):
-            return "brain:schedule_week"
-        if any(marker in normalized for marker in ("本月", "這月", "這個月", "這月份", "month", "monthly")):
-            return "brain:schedule_month"
-    if (contains_match and _contains_any(normalized, ("寫入今日", "capture"))) or normalized in {"寫入今日", "capture"}:
-        return "brain:capture"
-    if (contains_match and _contains_any(normalized, ("inbox",))) or normalized in {"inbox"}:
-        return "brain:inbox"
-    if (contains_match and _contains_any(normalized, ("讀今日", "read"))) or normalized in {"讀今日", "read"}:
-        return "brain:read"
-    if (contains_match and _contains_any(normalized, ("搜尋", "search"))) or normalized in {"搜尋", "search"}:
-        return "brain:search"
-    if (contains_match and _contains_any(normalized, ("自動批次整理", "自動整理", "batch auto", "auto organize"))) or normalized in {"自動批次整理", "自動整理", "batch auto", "auto organize"}:
-        return "brain:batch_auto"
-    if (contains_match and _contains_any(normalized, ("整理", "organize"))) or normalized in {"整理", "organize"}:
-        return "brain:organize"
-    if (contains_match and _contains_any(normalized, ("批次整理", "batch"))) or normalized in {"批次整理", "batch"}:
-        return "brain:batch"
-    if (contains_match and _contains_any(normalized, ("專案", "project"))) or normalized in {"專案", "project"}:
-        return "brain:project"
-    if (contains_match and _contains_any(normalized, ("知識卡", "knowledge"))) or normalized in {"知識卡", "knowledge"}:
-        return "brain:knowledge"
-    if (contains_match and _contains_any(normalized, ("resource",))) or normalized in {"resource"}:
-        return "brain:resource"
-    if (contains_match and _contains_any(normalized, ("行程", "schedule"))) or normalized in {"行程", "schedule"}:
-        return "brain:schedule"
-    if (
-        contains_match
-        and _contains_any(normalized, ("封存過期行程", "封存已過期行程", "清掉過期行程", "archive past schedule", "archive overdue schedules"))
-    ) or normalized in {"封存過期行程", "封存已過期行程", "清掉過期行程", "archive past schedule", "archive overdue schedules"}:
-        return "brain:schedule_archive_past"
-    if (
-        contains_match and _contains_any(normalized, ("今日行程", "今天行程", "每日行程", "day schedule", "daily schedule"))
-    ) or normalized in {"今日行程", "今天行程", "每日行程", "day schedule", "daily schedule"}:
-        return "brain:schedule_today"
-    if (
-        contains_match and _contains_any(normalized, ("下週行程", "下個星期行程", "下个星期行程", "next week schedule"))
-    ) or normalized in {"下週行程", "下個星期行程", "下个星期行程", "next week schedule"}:
-        return "brain:schedule_next_week"
-    if (
-        contains_match and _contains_any(normalized, ("本週行程", "這週行程", "這一週行程", "一週行程", "week schedule", "weekly schedule"))
-    ) or normalized in {"本週行程", "這週行程", "這一週行程", "一週行程", "week schedule", "weekly schedule"}:
-        return "brain:schedule_week"
-    if (
-        contains_match and _contains_any(normalized, ("本月行程", "這月行程", "這個月行程", "月行程", "month schedule", "monthly schedule"))
-    ) or normalized in {"本月行程", "這月行程", "這個月行程", "這個月行程", "月行程", "month schedule", "monthly schedule"}:
-        return "brain:schedule_month"
-    if (contains_match and _contains_any(normalized, ("每週摘要", "summary"))) or normalized in {"每週摘要", "summary"}:
-        return "brain:summary"
-    if (contains_match and _contains_any(normalized, ("決策支援", "decide"))) or normalized in {"決策支援", "decide"}:
-        return "brain:decide"
-    if (contains_match and _contains_any(normalized, ("提醒", "remind"))) or normalized in {"提醒", "remind"}:
-        return "brain:remind"
-    if (contains_match and _contains_any(normalized, ("每日摘要", "daily"))) or normalized in {"每日摘要", "daily"}:
-        return "brain:daily"
-    if (contains_match and _contains_any(normalized, ("週摘要", "weekly"))) or normalized in {"週摘要", "weekly"}:
-        return "brain:weekly"
-    if (contains_match and _contains_any(normalized, ("brain", "第二大腦", "筆記"))) or normalized in {"brain", "第二大腦", "筆記"}:
-        return "brain:open"
-    return None
-
-
-def _shortcut_action_label(action: str) -> str:
-    labels = {
-        "menu:status": "狀態",
-        "menu:provider": "供應商",
-        "menu:model": "模型",
-        "menu:projects": "專案",
-        "menu:open": "主選單",
-        "brain:capture": "寫入今日",
-        "brain:inbox": "Inbox",
-        "brain:read": "讀今日",
-        "brain:search": "搜尋",
-        "brain:batch_auto": "自動批次整理",
-        "brain:organize": "整理",
-        "brain:batch": "批次整理",
-        "brain:project": "專案",
-        "brain:knowledge": "知識卡",
-        "brain:resource": "Resource",
-        "brain:schedule": "行程選單",
-        "brain:schedule_archive_past": "封存過期行程",
-        "brain:schedule_today": "今日行程",
-        "brain:schedule_week": "本週行程",
-        "brain:schedule_next_week": "下週行程",
-        "brain:schedule_month": "本月行程",
-        "brain:summary": "每週摘要",
-        "brain:decide": "決策支援",
-        "brain:remind": "提醒",
-        "brain:daily": "每日摘要",
-        "brain:weekly": "週摘要",
-        "brain:open": "Brain 選單",
-    }
-    return labels.get(action, action)
-
-
-def _shortcut_confirm_response(action: str, source_text: str) -> ButtonResponse:
-    return ButtonResponse(
-        "\n".join(
-            [
-                "偵測到可能的捷徑意圖，是否要直接執行？",
-                f"捷徑: {_shortcut_action_label(action)}",
-                f"原文: {source_text}",
-                "",
-                "按「執行捷徑」會直接走捷徑。",
-                "按「送給 AI」會把這句當一般對話交給 AI。",
-            ]
-        ),
-        buttons=[
-            Button("執行捷徑", "shortcut:confirm"),
-            Button("送給 AI", "shortcut:send_agent"),
-            Button("取消", "shortcut:cancel"),
-        ],
-    )
-
-
 def _model_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
     state = store.get_chat_state(chat_id)
     provider = str(state["provider"])
@@ -1673,29 +1457,6 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
     if "@" in command:
         command = command.split("@", 1)[0].strip()
 
-    if command.startswith("shortcut:"):
-        flow = store.get_ui_flow(ctx.chat_id)
-        if not isinstance(flow, dict) or flow.get("kind") != FLOW_AWAIT_SHORTCUT_CONFIRM:
-            return "目前沒有待確認的捷徑。"
-        action = str(flow.get("action") or "").strip()
-        source_text = str(flow.get("source_text") or "").strip()
-        store.clear_ui_flow(ctx.chat_id)
-        if command == "shortcut:cancel":
-            return "已取消捷徑。"
-        if command == "shortcut:send_agent":
-            if not source_text:
-                return "原始訊息遺失，請重新輸入。"
-            return await handle_agent(ctx.chat_id, ClassifiedRequest(AGENT_REQUEST, None, source_text), agents)
-        if command == "shortcut:confirm":
-            if action.startswith("menu:"):
-                return await _handle_menu_action(ctx.chat_id, action, settings, store, agents)
-            if action.startswith("brain:"):
-                if action == "brain:open":
-                    store.clear_ui_flow(ctx.chat_id)
-                return await _handle_brain_action(ctx.chat_id, action, settings, store, agents)
-            return f"Unknown shortcut action: {action}"
-        return f"Unknown shortcut command: {command}"
-
     if ctx.document is not None and not command:
         local_path = str(ctx.document.local_path or "").strip()
         if not local_path:
@@ -1719,139 +1480,33 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
             f"{preview or '(No extracted text)'}"
         )
 
-    if command in MENU_TRIGGERS or command == "menu":
+    if command == "menu":
         store.clear_ui_flow(ctx.chat_id)
         return _main_menu_response(ctx.chat_id, store)
-    if command in MODEL_TRIGGERS or command == "model":
+    if command == "model":
         return _model_menu_response(ctx.chat_id, store)
-    if command in BRAIN_TRIGGERS or command == "brain":
+    if command == "brain":
         store.clear_ui_flow(ctx.chat_id)
         return _brain_menu_response(ctx.chat_id, store)
 
-    if text in MENU_TRIGGERS or text.lower() in MENU_TRIGGERS:
-        store.clear_ui_flow(ctx.chat_id)
-        return _main_menu_response(ctx.chat_id, store)
-    if text in MODEL_TRIGGERS or text.lower() in MODEL_TRIGGERS:
-        return _model_menu_response(ctx.chat_id, store)
-    if text in BRAIN_TRIGGERS or text.lower() in BRAIN_TRIGGERS:
-        store.clear_ui_flow(ctx.chat_id)
-        return _brain_menu_response(ctx.chat_id, store)
-
-    last_schedule_answer = _answer_last_schedule_reference(text, store, ctx.chat_id)
-    if last_schedule_answer is not None:
-        return last_schedule_answer
-
-    lowered = text.lower()
-    phrase_control = COMMON_CONTROL_PHRASES.get(lowered) or COMMON_CONTROL_PHRASES.get(text)
-    if phrase_control in {"continue", "next"}:
-        current = store.get_chat_state(ctx.chat_id).get("agent_current_run")
-        queue = store.get_agent_queue(ctx.chat_id)
-        if isinstance(current, dict) or queue:
-            request = ClassifiedRequest(CONTROL_REQUEST, phrase_control, text)
-            return await handle_control(ctx.chat_id, request, store, agents)
+    # Non-blocking rule: plain text should always reach Codex for content flows.
+    # Keep numeric/text selection for settings flows (model/provider/project).
+    active_flow = store.get_ui_flow(ctx.chat_id)
+    if text and not command and isinstance(active_flow, dict):
+        flow_kind = str(active_flow.get("kind") or "").strip()
+        allowed_flow_kinds = {FLOW_AWAIT_MODEL, FLOW_AWAIT_PROVIDER, FLOW_AWAIT_PROJECT}
+        if flow_kind not in allowed_flow_kinds:
+            store.clear_ui_flow(ctx.chat_id)
 
     flow_response = await _handle_flow_input(ctx.chat_id, ctx, settings, store, agents)
     if flow_response is not None:
         return flow_response
-
-    delete_like = _parse_schedule_delete_intent(text) is not None
-    update_like = _parse_schedule_update_intent(text) is not None
-    semantic_len = _semantic_text_length(text)
-    contains_shortcut_match = semantic_len <= 10 and not delete_like and not update_like
-    if contains_shortcut_match:
-        flat_menu_action = _resolve_flat_menu_action(text, contains_match=True)
-        flat_brain_action = _resolve_flat_brain_action(text, contains_match=True)
-        matched_action = flat_menu_action or flat_brain_action
-        if matched_action is not None:
-            if semantic_len <= 5:
-                if matched_action.startswith("menu:"):
-                    return await _handle_menu_action(ctx.chat_id, matched_action, settings, store, agents)
-                if matched_action == "brain:open":
-                    store.clear_ui_flow(ctx.chat_id)
-                return await _handle_brain_action(ctx.chat_id, matched_action, settings, store, agents)
-            store.set_ui_flow(
-                ctx.chat_id,
-                {
-                    "kind": FLOW_AWAIT_SHORTCUT_CONFIRM,
-                    "action": matched_action,
-                    "source_text": text,
-                },
-            )
-            return _shortcut_confirm_response(matched_action, text)
 
     request = classify_request(ctx)
     if request.kind == COMMAND_REQUEST:
         return await handle_command(ctx.chat_id, request, settings, store, agents)
     if request.kind == CONTROL_REQUEST:
         return await handle_control(ctx.chat_id, request, store, agents)
-    if _should_offer_schedule_confirmation(text):
-        parsed = parse_natural_language_schedule(text)
-        if parsed is not None:
-            store.clear_ui_flow(ctx.chat_id)
-            _set_schedule_confirm_flow(ctx.chat_id, store, parsed)
-            return _schedule_confirm_response(parsed)
-    delete_query = _parse_schedule_delete_intent(text)
-    if delete_query:
-        matches = find_schedule_notes(settings, delete_query, limit=5)
-        if len(matches) == 1:
-            match = dict(matches[0])
-            if not match.get("recurrence"):
-                recurrence_type = str(match.get("recurrence_type") or "").strip()
-                recurrence_value = str(match.get("recurrence_value") or "").strip()
-                if recurrence_type == "daily":
-                    match["recurrence"] = "每天"
-                elif recurrence_type == "weekly":
-                    weekday_labels = ["每週一", "每週二", "每週三", "每週四", "每週五", "每週六", "每週日"]
-                    try:
-                        weekday = int(recurrence_value)
-                    except ValueError:
-                        weekday = -1
-                    match["recurrence"] = weekday_labels[weekday] if 0 <= weekday < len(weekday_labels) else "每週"
-                elif recurrence_type == "monthly":
-                    match["recurrence"] = f"每月{recurrence_value}號" if recurrence_value else "每月"
-                else:
-                    match["recurrence"] = ""
-            flow = {"kind": FLOW_AWAIT_BRAIN_SCHEDULE_DELETE_CONFIRM, "path": match.get("path") or "", "source_text": text}
-            flow.update(match)
-            store.set_ui_flow(ctx.chat_id, flow)
-            store.set_last_schedule_candidate(ctx.chat_id, flow)
-            return _schedule_delete_confirm_response(match, text)
-        if len(matches) > 1:
-            lines = ["找到多筆可能要刪除的行程，請講得更精準：", ""]
-            for item in matches:
-                recurrence = (item.get("recurrence_type") or "").strip()
-                when = " ".join(part for part in [item.get("date") or "", item.get("time") or ""] if part).strip() or recurrence or "未排時間"
-                lines.append(f"- {when} | {item.get('title')}")
-                lines.append(f"  {item.get('path')}")
-            return "\n".join(lines)
-        return f"找不到符合「{delete_query}」的行程。你可以先輸入「今日行程」或「本週行程」確認名稱。"
-    update_intent = _parse_schedule_update_intent(text)
-    if update_intent:
-        query, details = update_intent
-        matches = find_schedule_notes(settings, query, limit=5)
-        if len(matches) == 1:
-            match = dict(matches[0])
-            updates = parse_schedule_update_details(details, current_title=str(match.get("title") or ""))
-            if updates is None:
-                return f"我找到行程「{match.get('title') or ''}」，但還看不懂你要改成什麼。請再說清楚日期或時間。"
-            flow = {"kind": FLOW_AWAIT_BRAIN_SCHEDULE_UPDATE_CONFIRM, "path": match.get("path") or "", "source_text": text}
-            flow.update(match)
-            for key, value in updates.items():
-                if value != "":
-                    flow[key] = value
-            store.set_ui_flow(ctx.chat_id, flow)
-            store.set_last_schedule_candidate(ctx.chat_id, flow)
-            return _schedule_update_confirm_response(match, updates, text)
-        if len(matches) > 1:
-            lines = ["找到多筆可能要修改的行程，請講得更精準：", ""]
-            for item in matches:
-                when = " ".join(part for part in [item.get("date") or "", item.get("time") or ""] if part).strip() or "未排時間"
-                lines.append(f"- {when} | {item.get('title')}")
-                lines.append(f"  {item.get('path')}")
-            return "\n".join(lines)
-        return f"找不到符合「{query}」的行程。你可以先輸入「查看行程」確認名稱。"
-    if all(marker in text for marker in ("行程", "封存")) and any(marker in text for marker in ("已過期", "超過時間", "過期")):
-        return await _handle_brain_action(ctx.chat_id, "brain:schedule_archive_past", settings, store, agents)
     return await handle_agent(ctx.chat_id, request, agents)
 
 
@@ -1865,6 +1520,10 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
 
     if request.command in {"start", "help"}:
         return _help_text()
+    if request.command == "quick":
+        return _quick_text()
+    if request.command == "guide":
+        return _guide_text()
 
     if request.command == "about":
         return "robot\nteleapp-based Telegram task router\nOnly agent requests are sent to providers."
@@ -1997,6 +1656,31 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
             return "Usage: /braininbox <text>"
         path = create_inbox_note(settings, payload)
         return f"已建立 Inbox 筆記。\npath: {path}"
+
+    if request.command == "brainweb":
+        payload = request.payload.strip()
+        if not payload:
+            return "Usage: /brainweb <url>"
+        try:
+            path, title, excerpt, summary_points, tags = capture_web_to_daily(settings, payload, max_chars=2500)
+        except ValueError as exc:
+            return f"網址格式錯誤：{exc}"
+        except OSError as exc:
+            return f"抓取網頁失敗：{exc}"
+        summary_lines = "\n".join(f"- {item}" for item in summary_points[:3]) if summary_points else "- (none)"
+        tags_line = ", ".join(tags) if tags else "(none)"
+        preview = excerpt[:300].rstrip()
+        if len(excerpt) > 300:
+            preview += "..."
+        return (
+            "已寫入今日筆記（網頁收錄）。\n"
+            f"path: {path}\n"
+            f"title: {title}\n"
+            f"tags: {tags_line}\n\n"
+            "摘要重點：\n"
+            f"{summary_lines}\n\n"
+            f"{preview}"
+        )
 
     if request.command == "brainsearch":
         payload = request.payload.strip()

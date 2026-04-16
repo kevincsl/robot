@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from argparse import Namespace
+from datetime import datetime
 from types import SimpleNamespace
 
 from teleapp.config import load_config
@@ -97,6 +98,9 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         state.active_chat_id = 7
         state.active_request_id = "7-1"
         state.total_queued_requests = 2
+        state.last_exit_code = 2
+        state.restart_count = 3
+        state.last_restart_at = datetime(2026, 4, 16, 17, 35, 33)
         state.last_restart_reason = "queued: file changed"
         state.last_error = "none"
         state.chat_sessions[7] = ChatSessionState(chat_id=7, queued_requests=1, active_request_id="7-1")
@@ -115,6 +119,9 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("running: yes", body)
         self.assertIn("active_chat_id: 7", body)
         self.assertIn("queued_requests: 2", body)
+        self.assertIn("last_exit_code: 2", body)
+        self.assertIn("restart_count: 3", body)
+        self.assertIn("last_restart_at: 2026-04-16T17:35:33", body)
         self.assertIn("chat 7: queued=1 active=7-1", body)
         self.assertIn("chat 8: queued=1 active=-", body)
 

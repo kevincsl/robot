@@ -170,6 +170,9 @@ class TelegramGateway:
             f"active_chat_id: {state.active_chat_id or '-'}",
             f"active_request_id: {state.active_request_id or '-'}",
             f"queued_requests: {state.total_queued_requests}",
+            f"last_exit_code: {state.last_exit_code if state.last_exit_code is not None else '-'}",
+            f"restart_count: {state.restart_count}",
+            f"last_restart_at: {state.last_restart_at.isoformat(timespec='seconds') if state.last_restart_at else '-'}",
             f"last_restart_reason: {state.last_restart_reason or '-'}",
             f"last_error: {state.last_error or '-'}",
         ]

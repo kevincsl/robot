@@ -1,38 +1,20 @@
-# Semantic Shortcut Rules
+# Shortcut Routing Policy
 
-This file documents the current semantic shortcut routing policy.
+Semantic shortcut routing is disabled.
 
-## Current Rule (Length-Based)
+## Current Behavior
 
-Use text length after removing spaces:
-
-- `0-5` chars: allow shortcut keyword **contains-match** and execute shortcut directly.
-- `6-10` chars: if shortcut keyword matches, show **ambiguity confirmation**:
-  - `Execute Shortcut`
-  - `Send To AI`
-  - `Cancel`
-- `11+` chars: do not run shortcut auto-routing; treat as normal conversation and send to AI.
-
-## Scope
-
-This rule is applied to semantic shortcut path in request routing:
-
-- flat menu shortcuts
-- flat brain shortcuts
+- Plain text is treated as normal conversation and sent to AI.
+- Deterministic behavior only happens with explicit slash commands (for example `/menu`, `/brain`, `/model`) or Telegram button callbacks.
+- Control actions also require explicit command form (for example `/stop`, `/reset`, `/run ...`).
 
 ## If You Want To Change The Rule
 
-1. Edit this document first (as product behavior spec).
+1. Update this document first (as behavior spec).
 2. Update implementation in:
    - `robot/routing.py`
 3. Run tests:
-   - `pytest -q`
-
-## Current Default Thresholds
-
-- direct contains-match max length: `5`
-- ambiguity confirmation range: `6-10`
-- send-to-AI min length: `11`
+   - `pytest -q tests/test_routing.py`
 
 ## Related Docs
 

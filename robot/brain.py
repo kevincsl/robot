@@ -6,7 +6,10 @@ import subprocess
 import time
 from collections import Counter
 from datetime import datetime, timedelta
+from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from markitdown import MarkItDown
 
@@ -1161,6 +1164,172 @@ def create_resource_note_from_text(settings: Settings, title: str, source_text: 
     path = create_resource_note(settings, title)
     append_note_content(settings, path, f"\n\n## 原始資料\n\n{source_text.strip()}\n")
     return path
+
+
+class _HTMLContentExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self._in_script = False
+        self._in_style = False
+        self._in_title = False
+        self.title_parts: list[str] = []
+        self.text_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs) -> None:  # type: ignore[override]
+        lowered = tag.lower()
+        if lowered == "script":
+            self._in_script = True
+        elif lowered == "style":
+            self._in_style = True
+        elif lowered == "title":
+            self._in_title = True
+
+    def handle_endtag(self, tag: str) -> None:  # type: ignore[override]
+        lowered = tag.lower()
+        if lowered == "script":
+            self._in_script = False
+        elif lowered == "style":
+            self._in_style = False
+        elif lowered == "title":
+            self._in_title = False
+
+    def handle_data(self, data: str) -> None:  # type: ignore[override]
+        if self._in_script or self._in_style:
+            return
+        text = (data or "").strip()
+        if not text:
+            return
+        if self._in_title:
+            self.title_parts.append(text)
+            return
+        self.text_parts.append(text)
+
+
+def _is_valid_web_url(url: str) -> bool:
+    parsed = urlparse((url or "").strip())
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def fetch_webpage_text(url: str, *, timeout_seconds: float = 8.0, max_chars: int = 12000) -> tuple[str, str]:
+    if not _is_valid_web_url(url):
+        raise ValueError("Invalid URL. Only http/https URLs are supported.")
+
+    req = Request(
+        url.strip(),
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; robot/0.1.1; +https://github.com/kevincsl/robot)",
+            "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+        },
+    )
+    max_bytes = 2_000_000
+    with urlopen(req, timeout=timeout_seconds) as resp:
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = resp.read(65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total >= max_bytes:
+                break
+        raw = b"".join(chunks)
+        content_type = resp.headers.get_content_charset() or "utf-8"
+    html = raw.decode(content_type, errors="replace")
+
+    parser = _HTMLContentExtractor()
+    parser.feed(html)
+    title = re.sub(r"\s+", " ", " ".join(parser.title_parts)).strip()
+    merged = "\n".join(parser.text_parts)
+    merged = re.sub(r"[ \t]+", " ", merged)
+    merged = re.sub(r"\n{3,}", "\n\n", merged).strip()
+    if len(merged) > max_chars:
+        merged = merged[:max_chars].rstrip() + "..."
+    return title, merged
+
+
+def _dedupe_keep_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in values:
+        key = item.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        ordered.append(item.strip())
+    return ordered
+
+
+def _build_web_summary_points(title: str, text: str, *, max_points: int = 3) -> list[str]:
+    candidates: list[str] = []
+    if title.strip():
+        candidates.append(title.strip())
+
+    normalized = re.sub(r"\s+", " ", (text or "").replace("\n", " ")).strip()
+    parts = re.split(r"[。！？!?；;]\s*|(?<=\.)\s+", normalized)
+    for part in parts:
+        sentence = part.strip(" -\t\r\n")
+        if 18 <= len(sentence) <= 140:
+            candidates.append(sentence)
+
+    unique = _dedupe_keep_order(candidates)
+    if not unique:
+        fallback = normalized[:120].strip()
+        return [fallback] if fallback else []
+    return unique[: max(1, max_points)]
+
+
+def _build_web_tags(url: str, title: str, text: str, *, max_tags: int = 6) -> list[str]:
+    parsed = urlparse(url.strip())
+    host = parsed.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+
+    haystack = f"{title}\n{text}".lower()
+    tags: list[str] = []
+    if host:
+        tags.append(host)
+
+    keyword_tags = [
+        ("ai", "ai"),
+        ("nvidia", "nvidia"),
+        ("openclaw", "openclaw"),
+        ("minimax", "minimax"),
+        ("api", "api"),
+        ("教學", "tutorial"),
+        ("教程", "tutorial"),
+        ("新聞", "news"),
+        ("評測", "review"),
+        ("github", "github"),
+    ]
+    for keyword, tag in keyword_tags:
+        if keyword in haystack:
+            tags.append(tag)
+
+    unique = _dedupe_keep_order(tags)
+    return unique[: max(1, max_tags)]
+
+
+def capture_web_to_daily(settings: Settings, url: str, *, max_chars: int = 2500) -> tuple[str, str, str, list[str], list[str]]:
+    title, text = fetch_webpage_text(url, max_chars=max_chars)
+    safe_title = title or url.strip()
+    summary_points = _build_web_summary_points(safe_title, text, max_points=3)
+    tags = _build_web_tags(url, safe_title, text, max_tags=6)
+
+    summary_block = "\n".join(f"- {point}" for point in summary_points) if summary_points else "- (none)"
+    tags_line = ", ".join(tags) if tags else "(none)"
+    body = (
+        "網頁收錄\n"
+        f"- url: {url.strip()}\n"
+        f"- title: {safe_title}\n"
+        f"- tags: {tags_line}\n\n"
+        "摘要重點\n"
+        f"{summary_block}\n\n"
+        "原始內容\n"
+        f"{text}"
+    )
+    path = append_to_daily(settings, body)
+    return path, safe_title, text, summary_points, tags
 
 
 def _normalize_for_auto_organize(text: str) -> str:

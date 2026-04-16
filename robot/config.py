@@ -7,7 +7,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(override=True)
+# Use utf-8-sig so `.env` files saved with BOM still parse first key correctly.
+load_dotenv(override=True, encoding="utf-8-sig")
 
 VERSION = "0.1.1"
 
