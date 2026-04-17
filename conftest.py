@@ -13,6 +13,8 @@ def _clear_teleapp_runtime_env() -> None:
         "TELEAPP_RELOAD_QUIET_SECONDS",
         "TELEAPP_RELOAD_POLL_SECONDS",
         "TELEAPP_RESTART_BACKOFF_SECONDS",
+        "ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX",
+        "ROBOT_CODEX_SKIP_GIT_REPO_CHECK",
     ):
         os.environ.pop(key, None)
 
