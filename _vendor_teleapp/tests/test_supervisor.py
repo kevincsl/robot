@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 from argparse import Namespace
+from datetime import datetime
 from pathlib import Path
 
 from teleapp import StatusResponse, TeleApp
@@ -193,12 +194,34 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         event = await asyncio.wait_for(supervisor.next_event(), timeout=5)
-        self.assertEqual(event.text, "Hosted app exited with code 2.")
+        self.assertEqual(event.text, "Hosted app crashed with code 2.")
+        self.assertEqual((event.raw or {}).get("exit_kind"), "unexpected_exit")
         self.assertTrue(supervisor.state.running)
         self.assertIsNotNone(supervisor.state.pid)
         self.assertNotEqual(supervisor.state.pid, current_pid)
         self.assertEqual(supervisor.state.last_exit_code, 2)
         self.assertEqual(supervisor.state.last_restart_reason, "crash auto-restart (code 2)")
+        await supervisor.stop()
+
+    async def test_exit_after_recent_restart_is_marked_restart_failed(self) -> None:
+        supervisor = AppSupervisor(self.config)
+        await supervisor.start()
+        assert supervisor._runner is not None
+        current_pid = supervisor._runner.process.pid
+        supervisor.state.last_restart_at = datetime.now()
+        supervisor.state.last_restart_reason = "file changed: app.py"
+        supervisor._runner.queue.put_nowait(
+            AppEvent(
+                type="status",
+                text="Hosted app exited with code 1.",
+                process_pid=current_pid,
+                stream="system",
+                raw={"return_code": 1},
+            )
+        )
+        event = await asyncio.wait_for(supervisor.next_event(), timeout=5)
+        self.assertIn("restart failed", event.text)
+        self.assertEqual((event.raw or {}).get("exit_kind"), "restart_failed")
         await supervisor.stop()
 
     async def test_reload_is_deferred_until_active_request_completes(self) -> None:

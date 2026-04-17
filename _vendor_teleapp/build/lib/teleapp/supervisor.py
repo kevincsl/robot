@@ -192,10 +192,12 @@ class AppSupervisor:
                     raw_code = event.raw.get("return_code")
                     if isinstance(raw_code, int):
                         return_code = raw_code
+                expected_exit = event.process_pid in self._expected_exit_pids
+                self._annotate_exit_event(event, return_code=return_code, expected_exit=expected_exit)
                 self._state.last_exit_code = return_code
                 self._state.running = False
                 self._state.pid = None
-                if event.process_pid in self._expected_exit_pids:
+                if expected_exit:
                     self._expected_exit_pids.discard(event.process_pid)
                 elif return_code not in (None, 0) and self._config.auto_restart_on_crash:
                     await self._restart_after_crash(return_code)
@@ -316,6 +318,41 @@ class AppSupervisor:
         if self._config.restart_backoff_seconds > 0:
             await asyncio.sleep(self._config.restart_backoff_seconds)
         await self.restart(f"crash auto-restart (code {return_code})")
+
+    def _annotate_exit_event(self, event: AppEvent, *, return_code: int | None, expected_exit: bool) -> None:
+        raw = event.raw if isinstance(event.raw, dict) else {}
+        raw["return_code"] = return_code
+
+        now = datetime.now()
+        last_restart_at = self._state.last_restart_at
+        restart_reason = (self._state.last_restart_reason or "").strip()
+        recently_restarted = bool(last_restart_at) and (now - last_restart_at).total_seconds() <= 20
+
+        if expected_exit:
+            raw["exit_kind"] = "expected_restart"
+            reason = restart_reason or "restart"
+            event.text = (
+                f"Hosted app restart in progress ({reason}); "
+                f"previous process exited with code {return_code if return_code is not None else '-'}."
+            )
+            event.raw = raw
+            return
+
+        if return_code not in (None, 0):
+            if recently_restarted and restart_reason:
+                raw["exit_kind"] = "restart_failed"
+                event.text = (
+                    f"Hosted app restart failed ({restart_reason}); "
+                    f"process exited with code {return_code}."
+                )
+            else:
+                raw["exit_kind"] = "unexpected_exit"
+                event.text = f"Hosted app crashed with code {return_code}."
+        else:
+            raw["exit_kind"] = "clean_exit"
+            event.text = "Hosted app exited cleanly (code 0)."
+
+        event.raw = raw
 
     def _clear_active_request(self) -> None:
         self._active_request = None
