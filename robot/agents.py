@@ -18,6 +18,7 @@ from robot.brain import (
     get_active_or_next_schedule,
 )
 from robot.config import Settings
+from robot.projects import format_project_with_branch
 from robot.providers import (
     RunningInvocation,
     list_auto_dev_profiles,
@@ -33,6 +34,7 @@ class AgentJob:
     kind: str
     goal: str
     project_name: str
+    project_display: str
     project_path: str
     provider: str
     model: str
@@ -54,6 +56,7 @@ class AgentJob:
             "kind": self.kind,
             "goal": self.goal,
             "project_name": self.project_name,
+            "project_display": self.project_display,
             "project_path": self.project_path,
             "provider": self.provider,
             "model": self.model,
@@ -97,7 +100,7 @@ class AgentCoordinator:
                                 "Recovered interrupted run after restart.",
                                 f"kind: {recovered.get('kind') or 'provider'}",
                                 f"doing: {recovered.get('goal') or '<resume>'}",
-                                f"project: {recovered.get('project_name') or '-'}",
+                                f"project: {recovered.get('project_display') or recovered.get('project_name') or '-'}",
                                 f"path: {recovered.get('project_path') or '-'}",
                             ]
                         ),
@@ -132,11 +135,16 @@ class AgentCoordinator:
 
     def enqueue(self, chat_id: int, goal: str, *, source: str = "manual") -> tuple[str, int, bool]:
         state = self._store.get_chat_state(chat_id)
+        project_display = format_project_with_branch(
+            str(state["project_name"]),
+            str(state["project_path"]),
+        )
         job = AgentJob(
             job_id=str(uuid4()),
             kind="provider",
             goal=goal,
             project_name=str(state["project_name"]),
+            project_display=project_display,
             project_path=str(state["project_path"]),
             provider=str(state["provider"]),
             model=str(state["model"]),
@@ -162,12 +170,17 @@ class AgentCoordinator:
         disable_post_run: bool = False,
     ) -> tuple[str, str, int, bool]:
         state = self._store.get_chat_state(chat_id)
+        project_display = format_project_with_branch(
+            str(state["project_name"]),
+            str(state["project_path"]),
+        )
         run_id = str(uuid4())
         job = AgentJob(
             job_id=str(uuid4()),
             kind="auto_dev",
             goal=goal,
             project_name=str(state["project_name"]),
+            project_display=project_display,
             project_path=str(state["project_path"]),
             provider="auto-dev",
             model=profile or "default",
@@ -200,12 +213,17 @@ class AgentCoordinator:
         disable_post_run: bool = False,
     ) -> tuple[str, str, int, bool]:
         state = self._store.get_chat_state(chat_id)
+        project_display = format_project_with_branch(
+            str(state["project_name"]),
+            str(state["project_path"]),
+        )
         run_id = str(uuid4())
         job = AgentJob(
             job_id=str(uuid4()),
             kind="auto_dev",
             goal="",
             project_name=str(state["project_name"]),
+            project_display=project_display,
             project_path=str(state["project_path"]),
             provider="auto-dev",
             model=profile or "default",
@@ -240,12 +258,17 @@ class AgentCoordinator:
         disable_post_run: bool = False,
     ) -> tuple[str, str, int]:
         state = self._store.get_chat_state(chat_id)
+        project_display = format_project_with_branch(
+            str(state["project_name"]),
+            str(state["project_path"]),
+        )
         run_id = str(uuid4())
         job = AgentJob(
             job_id=str(uuid4()),
             kind="auto_dev",
             goal=goal,
             project_name=str(state["project_name"]),
+            project_display=project_display,
             project_path=str(state["project_path"]),
             provider="auto-dev",
             model=profile or "default",
@@ -290,7 +313,7 @@ class AgentCoordinator:
                     f"kind: {current.get('kind')}",
                     f"goal: {current.get('goal') or '-'}",
                     f"run_id: {current.get('run_id') or '-'}",
-                    f"project: {current.get('project_name') or '-'}",
+                    f"project: {current.get('project_display') or current.get('project_name') or '-'}",
                     f"path: {current.get('project_path') or '-'}",
                 ]
             )
@@ -300,11 +323,11 @@ class AgentCoordinator:
                 kind = str(job.get("kind") or "provider")
                 if kind == "auto_dev":
                     lines.append(
-                        f"{index}. [auto-dev] {job.get('goal') or '<resume>'} | {job.get('project_name')} | profile={job.get('profile') or 'default'}"
+                        f"{index}. [auto-dev] {job.get('goal') or '<resume>'} | {job.get('project_display') or job.get('project_name')} | profile={job.get('profile') or 'default'}"
                     )
                 else:
                     lines.append(
-                        f"{index}. [provider] {job.get('goal')} | {job.get('project_name')} | {job.get('provider')}/{job.get('model')}"
+                        f"{index}. [provider] {job.get('goal')} | {job.get('project_display') or job.get('project_name')} | {job.get('provider')}/{job.get('model')}"
                     )
         elif not current:
             lines.extend(["", "queue is empty"])
@@ -320,7 +343,7 @@ class AgentCoordinator:
         for index, job in enumerate(schedules, start=1):
             kind = str(job.get("kind") or "provider")
             lines.append(
-                f"{index}. {job.get('run_at')} | {kind} | {job.get('goal') or '<resume>'} | {job.get('project_name')}"
+                f"{index}. {job.get('run_at')} | {kind} | {job.get('goal') or '<resume>'} | {job.get('project_display') or job.get('project_name')}"
             )
         return "\n".join(lines)
 
@@ -457,7 +480,7 @@ class AgentCoordinator:
                         "Agent run started.",
                         f"kind: {job.get('kind') or 'provider'}",
                         f"goal: {job.get('goal') or '<resume>'}",
-                        f"project: {job.get('project_name')}",
+                        f"project: {job.get('project_display') or job.get('project_name')}",
                         f"path: {job.get('project_path')}",
                         f"provider: {job.get('provider')}",
                         f"model/profile: {job.get('model')}",
@@ -486,7 +509,11 @@ class AgentCoordinator:
                         self._settings,
                         prompt=str(job.get("goal") or "").strip() or None,
                         workdir=Path(str(job.get("project_path") or self._settings.project_root)),
-                        project_label=str(job.get("project_name") or self._settings.project_root.name),
+                        project_label=str(
+                            job.get("project_display")
+                            or job.get("project_name")
+                            or self._settings.project_root.name
+                        ),
                         run_id=str(job.get("run_id") or "-"),
                         profile_name=str(job.get("profile") or "").strip() or None,
                         config_path=str(job.get("config_path") or "").strip() or None,
@@ -505,7 +532,11 @@ class AgentCoordinator:
                         prompt=str(job.get("goal") or ""),
                         thread_id=job.get("thread_id") if isinstance(job.get("thread_id"), str) else None,
                         workdir=Path(str(job.get("project_path") or self._settings.project_root)),
-                        project_label=str(job.get("project_name") or self._settings.project_root.name),
+                        project_label=str(
+                            job.get("project_display")
+                            or job.get("project_name")
+                            or self._settings.project_root.name
+                        ),
                         invocation=invocation,
                     )
             except asyncio.CancelledError:
@@ -588,7 +619,7 @@ class AgentCoordinator:
                         "Agent run finished.",
                         f"kind: {job.get('kind') or 'provider'}",
                         f"goal: {job.get('goal') or '<resume>'}",
-                        f"project: {job.get('project_name')}",
+                        f"project: {job.get('project_display') or job.get('project_name')}",
                         f"path: {job.get('project_path')}",
                         f"queue_pending: {len(self._store.get_agent_queue(chat_id))}",
                         f"status: {status_label}",
@@ -606,7 +637,7 @@ class AgentCoordinator:
             await asyncio.sleep(1)
             elapsed = int((datetime.now() - started).total_seconds())
             current_goal = str(job.get("goal") or "").strip() or "<resume>"
-            current_project = str(job.get("project_name") or "-")
+            current_project = str(job.get("project_display") or job.get("project_name") or "-")
             await self._emit(
                 chat_id,
                 "\n".join(

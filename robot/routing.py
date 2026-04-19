@@ -47,7 +47,7 @@ from robot.brain import (
 )
 from robot.config import MODEL_CHOICES, MODEL_DESCRIPTIONS, PROVIDER_LABELS, SUPPORTED_MODELS, Settings, VERSION
 from robot.diagnostics import build_doctor_report
-from robot.projects import discover_project_workspaces, find_workspace
+from robot.projects import discover_project_workspaces, find_workspace, format_project_with_branch
 from robot.state import ChatStateStore
 
 COMMAND_REQUEST = "command"
@@ -147,6 +147,13 @@ def _runtime_git_commit() -> str:
     except (FileNotFoundError, OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return "-"
     return (completed.stdout or "").strip() or "-"
+
+
+def _project_display(project_name: object, project_path: object) -> str:
+    return format_project_with_branch(
+        str(project_name or "-"),
+        str(project_path or ""),
+    )
 
 
 def _schedule_confirm_response(parsed: dict[str, str]) -> ButtonResponse:
@@ -554,7 +561,7 @@ def _status_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str
             f"version: {VERSION}",
             f"provider: {state['provider']}",
             f"model: {state['model']}",
-            f"project: {state['project_name']}",
+            f"project: {_project_display(state['project_name'], state['project_path'])}",
             f"path: {state['project_path']}",
             f"thread_id: {state['thread_id'] or '-'}",
             f"queued_jobs: {queued_jobs}",
@@ -688,7 +695,7 @@ def _menu_text(chat_id: int, store: ChatStateStore) -> str:
             UI_BUILD_TAG,
             f"provider: {state['provider']}",
             f"model: {state['model']}",
-            f"project: {state['project_name']}",
+            f"project: {_project_display(state['project_name'], state['project_path'])}",
             "",
             "menu actions:",
             "- status",
@@ -1182,7 +1189,7 @@ def _projects_menu_response(chat_id: int, settings: Settings, store: ChatStateSt
 
     store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_PROJECT})
     lines = [
-        f"Current project: {state['project_name']}",
+        f"Current project: {_project_display(state['project_name'], state['project_path'])}",
         f"Available projects: {len(workspaces)}",
     ]
     buttons: list[Button] = []
@@ -1277,7 +1284,7 @@ async def _handle_menu_action(
         next_state = store.set_project(chat_id, workspace.key, workspace.label, str(workspace.path))
         store.clear_ui_flow(chat_id)
         return (
-            f"Project updated.\nproject: {next_state['project_name']}\npath: {next_state['project_path']}\n\n"
+            f"Project updated.\nproject: {_project_display(next_state['project_name'], next_state['project_path'])}\npath: {next_state['project_path']}\n\n"
             "輸入 /menu 可回到主選單，或直接輸入自然語言交給 AI。"
         )
 
@@ -1323,7 +1330,7 @@ async def _handle_flow_input(
             next_state = store.set_project(chat_id, workspace.key, workspace.label, str(workspace.path))
             store.clear_ui_flow(chat_id)
             return (
-                f"Project updated.\nproject: {next_state['project_name']}\npath: {next_state['project_path']}\n\n"
+                f"Project updated.\nproject: {_project_display(next_state['project_name'], next_state['project_path'])}\npath: {next_state['project_path']}\n\n"
                 "輸入 /menu 可回到主選單，或直接輸入自然語言交給 AI。"
             )
         return None
@@ -1532,7 +1539,7 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
             next_state = store.set_project(chat_id, workspace.key, workspace.label, str(workspace.path))
             store.clear_ui_flow(chat_id)
             return (
-                f"Project updated.\nproject: {next_state['project_name']}\npath: {next_state['project_path']}\n\n"
+                f"Project updated.\nproject: {_project_display(next_state['project_name'], next_state['project_path'])}\npath: {next_state['project_path']}\n\n"
                 "輸入 /menu 可回到主選單，或直接輸入自然語言交給 AI。"
             )
 
@@ -1602,7 +1609,7 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
                 "Use /project to open the project chooser, or /projects to list available workspaces."
             )
         next_state = store.set_project(chat_id, workspace.key, workspace.label, str(workspace.path))
-        return f"Project updated.\nproject: {next_state['project_name']}\npath: {next_state['project_path']}"
+        return f"Project updated.\nproject: {_project_display(next_state['project_name'], next_state['project_path'])}\npath: {next_state['project_path']}"
 
     if request.command == "queue":
         return agents.queue_overview(chat_id)
@@ -1620,7 +1627,7 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
                     f"kind: {current.get('kind')}",
                     f"goal: {current.get('goal') or '<resume>'}",
                     f"run_id: {current.get('run_id') or '-'}",
-                    f"project: {current.get('project_name') or '-'}",
+                    f"project: {_project_display(current.get('project_name'), current.get('project_path'))}",
                     f"path: {current.get('project_path') or '-'}",
                     f"queue_pending: {len(store.get_agent_queue(chat_id))}",
                 ]
@@ -1635,7 +1642,7 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
                     f"kind: {next_job.get('kind')}",
                     f"goal: {next_job.get('goal') or '<resume>'}",
                     f"run_id: {next_job.get('run_id') or '-'}",
-                    f"project: {next_job.get('project_name') or '-'}",
+                    f"project: {_project_display(next_job.get('project_name'), next_job.get('project_path'))}",
                     f"path: {next_job.get('project_path') or '-'}",
                     f"queue_pending: {len(queue)}",
                 ]
@@ -1649,7 +1656,7 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
                     f"last_status: {last.get('status')}",
                     f"last_kind: {last.get('kind')}",
                     f"last_run_id: {last.get('run_id') or '-'}",
-                    f"project: {last.get('project_name') or '-'}",
+                    f"project: {_project_display(last.get('project_name'), last.get('project_path'))}",
                     f"path: {last.get('project_path') or '-'}",
                     f"elapsed_seconds: {last.get('elapsed_seconds')}",
                 ]
@@ -1930,7 +1937,7 @@ async def handle_control(
             return (
                 "An agent run is already active.\n"
                 f"goal: {current.get('goal') or '<resume>'}\n"
-                f"project: {current.get('project_name') or '-'}\n"
+                f"project: {_project_display(current.get('project_name'), current.get('project_path'))}\n"
                 f"path: {current.get('project_path') or '-'}"
             )
         queue = store.get_agent_queue(chat_id)
@@ -1939,7 +1946,7 @@ async def handle_control(
             return (
                 "Next queued job:\n"
                 f"goal: {next_job.get('goal') or '<resume>'}\n"
-                f"project: {next_job.get('project_name')}\n"
+                f"project: {_project_display(next_job.get('project_name'), next_job.get('project_path'))}\n"
                 f"path: {next_job.get('project_path') or '-'}"
             )
         return "No active or queued agent job.\nUse /run <goal> or /agent <goal>."
@@ -1963,7 +1970,7 @@ async def handle_control(
                 chat_id,
                 "Provider run started.\n"
                 f"goal: {goal}\n"
-                f"project: {state['project_name']}\n"
+                f"project: {_project_display(state['project_name'], state['project_path'])}\n"
                 f"path: {state['project_path']}\n"
                 f"queue_waiting: {queue_waiting}\n"
                 "elapsed: 00:00\n"
@@ -1972,7 +1979,7 @@ async def handle_control(
         return (
             "Provider run queued.\n"
             f"goal: {goal}\n"
-            f"project: {state['project_name']}\n"
+            f"project: {_project_display(state['project_name'], state['project_path'])}\n"
             f"path: {state['project_path']}\n"
             f"queue_position: {position}\n"
             "elapsed: 00:00\n"
@@ -2001,7 +2008,7 @@ async def handle_control(
                 chat_id,
                 "Auto-dev run started.\n"
                 f"goal: {options.goal}\n"
-                f"project: {state['project_name']}\n"
+                f"project: {_project_display(state['project_name'], state['project_path'])}\n"
                 f"path: {state['project_path']}\n"
                 f"queue_waiting: {queue_waiting}\n"
                 f"run_id: {run_id}\n"
@@ -2011,7 +2018,7 @@ async def handle_control(
         return (
             "Auto-dev run queued.\n"
             f"goal: {options.goal}\n"
-            f"project: {state['project_name']}\n"
+            f"project: {_project_display(state['project_name'], state['project_path'])}\n"
             f"path: {state['project_path']}\n"
             f"queue_position: {position}\n"
             f"run_id: {run_id}\n"
@@ -2050,7 +2057,7 @@ async def handle_control(
                 chat_id,
                 "Auto-dev resume started.\n"
                 f"goal: <resume>\n"
-                f"project: {state['project_name']}\n"
+                f"project: {_project_display(state['project_name'], state['project_path'])}\n"
                 f"path: {state['project_path']}\n"
                 f"queue_waiting: {queue_waiting}\n"
                 f"run_id: {run_id}\n"
@@ -2061,7 +2068,7 @@ async def handle_control(
         return (
             "Auto-dev resume queued.\n"
             f"goal: <resume>\n"
-            f"project: {state['project_name']}\n"
+            f"project: {_project_display(state['project_name'], state['project_path'])}\n"
             f"path: {state['project_path']}\n"
             f"queue_position: {position}\n"
             f"run_id: {run_id}\n"
@@ -2093,7 +2100,7 @@ async def handle_control(
         return (
             "Scheduled auto-dev run.\n"
             f"goal: {options.goal}\n"
-            f"project: {state['project_name']}\n"
+            f"project: {_project_display(state['project_name'], state['project_path'])}\n"
             f"path: {state['project_path']}\n"
             f"run_id: {run_id}\n"
             f"run_at: {run_at}\n"
@@ -2114,7 +2121,7 @@ async def handle_agent(chat_id: int, request: ClassifiedRequest, store: ChatStat
             chat_id,
             "Provider run started.\n"
             f"goal: {prompt}\n"
-            f"project: {state['project_name']}\n"
+            f"project: {_project_display(state['project_name'], state['project_path'])}\n"
             f"path: {state['project_path']}\n"
             f"queue_waiting: {queue_waiting}\n"
             "elapsed: 00:00\n"
@@ -2123,10 +2130,11 @@ async def handle_agent(chat_id: int, request: ClassifiedRequest, store: ChatStat
     return (
         "Provider run queued.\n"
         f"goal: {prompt}\n"
-        f"project: {state['project_name']}\n"
+        f"project: {_project_display(state['project_name'], state['project_path'])}\n"
         f"path: {state['project_path']}\n"
         f"queue_position: {position}\n"
         "elapsed: 00:00\n"
         "hint: use /queue to check waiting jobs"
     )
+
 

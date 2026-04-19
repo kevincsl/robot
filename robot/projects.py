@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -115,3 +116,63 @@ def find_workspace(settings: Settings, value: str) -> ProjectWorkspace | None:
         return partial[0]
     return None
 
+
+def _compact_branch_name(branch_name: str) -> str:
+    text = (branch_name or "").strip()
+    if not text:
+        return text
+    if "/" not in text:
+        return text
+    return text.split("/", 1)[0]
+
+
+def _git_branch_name(path: Path) -> str | None:
+    try:
+        current = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=1.2,
+            cwd=path,
+        )
+    except (FileNotFoundError, OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+
+    branch = (current.stdout or "").strip()
+    if not branch:
+        return None
+    if branch != "HEAD":
+        return _compact_branch_name(branch)
+
+    try:
+        detached = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=1.2,
+            cwd=path,
+        )
+    except (FileNotFoundError, OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return "detached"
+
+    revision = (detached.stdout or "").strip()
+    if not revision:
+        return "detached"
+    return f"detached:{revision}"
+
+
+def format_project_with_branch(project_name: str, project_path: str | Path | None) -> str:
+    label = (project_name or "").strip() or "-"
+    if project_path is None:
+        return label
+    try:
+        path = Path(project_path).expanduser()
+    except TypeError:
+        return label
+
+    branch = _git_branch_name(path)
+    if not branch:
+        return label
+    return f"{label} [{branch}]"
