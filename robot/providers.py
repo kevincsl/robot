@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 import threading
+from typing import Any
 
 from robot.config import Settings, normalize_provider
 from robot.text import normalize_text
@@ -66,6 +67,187 @@ def _clip(text: str, limit: int = 3900) -> str:
 
 def _safe_text(text: str | None) -> str:
     return normalize_text(text)
+
+
+def _extract_text_candidates(payload: Any) -> list[str]:
+    texts: list[str] = []
+    if isinstance(payload, str):
+        if payload.strip():
+            texts.append(payload)
+        return texts
+    if isinstance(payload, list):
+        for item in payload:
+            texts.extend(_extract_text_candidates(item))
+        return texts
+    if not isinstance(payload, dict):
+        return texts
+
+    for key in ("text", "delta"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            texts.append(value)
+
+    for key in ("content", "output", "items", "message", "response"):
+        value = payload.get(key)
+        if value is not None:
+            texts.extend(_extract_text_candidates(value))
+
+    return texts
+
+
+def _merge_assistant_text(delta_text: str, snapshot_text: str) -> str:
+    delta_clean = _safe_text(delta_text).strip()
+    snapshot_clean = _safe_text(snapshot_text).strip()
+    if delta_clean and snapshot_clean:
+        if delta_clean in snapshot_clean:
+            return snapshot_clean
+        if snapshot_clean in delta_clean:
+            return delta_clean
+        if len(snapshot_clean) >= len(delta_clean):
+            return snapshot_clean
+    return delta_clean or snapshot_clean
+
+
+def _parse_json_event_line(line: str) -> dict[str, Any] | None:
+    candidate = line.strip()
+    if not candidate:
+        return None
+    if candidate.startswith("data:"):
+        candidate = candidate[5:].strip()
+    if not candidate:
+        return None
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        brace = candidate.find("{")
+        if brace < 0:
+            return None
+        try:
+            parsed = json.loads(candidate[brace:])
+        except json.JSONDecodeError:
+            return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _parse_codex_stream(
+    *,
+    stdout: str,
+    stderr: str,
+    base_thread_id: str | None,
+) -> tuple[str | None, str, str]:
+    next_thread_id = base_thread_id
+    assistant_snapshot = ""
+    assistant_delta_chunks: list[str] = []
+    latest_detail = ""
+    stdout_lines = [line.strip() for line in (stdout or "").splitlines() if line.strip()]
+    stderr_text = (stderr or "").strip()
+
+    for line in stdout_lines:
+        event = _parse_json_event_line(line)
+        if event is None:
+            latest_detail = line
+            continue
+
+        event_type = event.get("type")
+        if event_type == "thread.started":
+            candidate = str(event.get("thread_id") or "").strip()
+            if candidate:
+                next_thread_id = candidate
+            continue
+        if event_type == "response.output_text.delta":
+            delta = str(event.get("delta") or "")
+            if delta:
+                assistant_delta_chunks.append(delta)
+            continue
+        if event_type in {"response.output_text.done", "response.completed"}:
+            candidates = _extract_text_candidates(event)
+            if candidates:
+                assistant_snapshot = max(candidates, key=len)
+            continue
+        if event_type in {"item.completed", "item.started"}:
+            item = event.get("item")
+            if isinstance(item, dict):
+                item_type = str(item.get("type") or "")
+                if item_type == "command_execution":
+                    latest_detail = str(item.get("aggregated_output") or item.get("command") or "").strip() or latest_detail
+                else:
+                    candidates = _extract_text_candidates(item)
+                    if candidates:
+                        assistant_snapshot = max(candidates, key=len)
+            continue
+        if event_type == "item.delta":
+            delta = str(event.get("delta") or "")
+            if delta:
+                assistant_delta_chunks.append(delta)
+                continue
+            item = event.get("item")
+            if isinstance(item, dict):
+                inner_delta = str(item.get("delta") or "")
+                if inner_delta:
+                    assistant_delta_chunks.append(inner_delta)
+            continue
+        if event_type == "error":
+            latest_detail = str(event.get("message") or "").strip() or latest_detail
+
+    assistant_text = _merge_assistant_text("".join(assistant_delta_chunks), assistant_snapshot)
+    detail = latest_detail or stderr_text
+    return next_thread_id, assistant_text, detail
+
+
+def _is_stream_disconnect(detail: str) -> bool:
+    text = (detail or "").strip().lower()
+    if not text:
+        return False
+    return "stream disconnected before completion" in text or "stream closed before response.completed" in text
+
+
+def _is_context_window_exhausted(detail: str) -> bool:
+    text = (detail or "").strip().lower()
+    if not text:
+        return False
+    return (
+        "ran out of room in the model's context window" in text
+        or "clear earlier history before retrying" in text
+    )
+
+
+def _build_codex_command(
+    *,
+    settings: Settings,
+    model: str,
+    thread_id: str | None,
+) -> list[str]:
+    command = list(settings.provider_commands["codex"])
+    shared_flags: list[str] = []
+    if settings.codex_bypass_approvals_and_sandbox:
+        shared_flags.append("--dangerously-bypass-approvals-and-sandbox")
+    if settings.codex_skip_git_repo_check:
+        shared_flags.append("--skip-git-repo-check")
+    if thread_id:
+        command.extend(
+            [
+                "exec",
+                "resume",
+                *shared_flags,
+                "--json",
+                "-m",
+                model,
+                thread_id,
+                "-",
+            ]
+        )
+    else:
+        command.extend(
+            [
+                "exec",
+                *shared_flags,
+                "--json",
+                "-m",
+                model,
+                "-",
+            ]
+        )
+    return command
 
 
 async def run_agent_request(
@@ -270,70 +452,55 @@ async def _run_codex(
     project_label: str,
     invocation: RunningInvocation | None,
 ) -> AgentRunResult:
-    command = list(settings.provider_commands["codex"])
-    shared_flags: list[str] = []
-    if settings.codex_bypass_approvals_and_sandbox:
-        shared_flags.append("--dangerously-bypass-approvals-and-sandbox")
-    if settings.codex_skip_git_repo_check:
-        shared_flags.append("--skip-git-repo-check")
-    if thread_id:
-        command.extend(
-            [
-                "exec",
-                "resume",
-                *shared_flags,
-                "--json",
-                "-m",
-                model,
-                thread_id,
-                "-",
-            ]
-        )
-    else:
-        command.extend(
-            [
-                "exec",
-                *shared_flags,
-                "--json",
-                "-m",
-                model,
-                "-",
-            ]
-        )
+    command = _build_codex_command(settings=settings, model=model, thread_id=thread_id)
 
     started = time.monotonic()
 
     completed = await _run_process(command, prompt=prompt, workdir=workdir, invocation=invocation)
-    next_thread_id = thread_id
-    assistant_text = ""
-    latest_detail = ""
-    stdout_lines = [line.strip() for line in (completed.stdout or "").splitlines() if line.strip()]
-    stderr_text = (completed.stderr or "").strip()
     cancelled = bool(invocation and invocation.cancelled)
+    next_thread_id, assistant_text, latest_detail = _parse_codex_stream(
+        stdout=completed.stdout or "",
+        stderr=completed.stderr or "",
+        base_thread_id=thread_id,
+    )
 
-    for line in stdout_lines:
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            latest_detail = line
-            continue
-        if not isinstance(event, dict):
-            continue
-        event_type = event.get("type")
-        if event_type == "thread.started":
-            candidate = str(event.get("thread_id") or "").strip()
-            if candidate:
-                next_thread_id = candidate
-        elif event_type in {"item.completed", "item.started"}:
-            item = event.get("item")
-            if isinstance(item, dict) and item.get("type") == "agent_message":
-                assistant_text = str(item.get("text") or "").strip() or assistant_text
-            elif isinstance(item, dict) and item.get("type") == "command_execution":
-                latest_detail = str(item.get("aggregated_output") or item.get("command") or "").strip() or latest_detail
-        elif event_type == "error":
-            latest_detail = str(event.get("message") or "").strip() or latest_detail
+    if (
+        completed.returncode != 0
+        and not cancelled
+        and not assistant_text
+        and _is_stream_disconnect(latest_detail)
+    ):
+        retry_completed = await _run_process(command, prompt=prompt, workdir=workdir, invocation=invocation)
+        retry_thread_id, retry_assistant_text, retry_detail = _parse_codex_stream(
+            stdout=retry_completed.stdout or "",
+            stderr=retry_completed.stderr or "",
+            base_thread_id=next_thread_id,
+        )
+        completed = retry_completed
+        if retry_thread_id:
+            next_thread_id = retry_thread_id
+        assistant_text = retry_assistant_text
+        latest_detail = retry_detail
 
-    body = assistant_text or latest_detail or stderr_text or "Codex finished without an assistant reply."
+    if (
+        completed.returncode != 0
+        and not cancelled
+        and thread_id is not None
+        and _is_context_window_exhausted(latest_detail)
+    ):
+        fresh_command = _build_codex_command(settings=settings, model=model, thread_id=None)
+        retry_completed = await _run_process(fresh_command, prompt=prompt, workdir=workdir, invocation=invocation)
+        retry_thread_id, retry_assistant_text, retry_detail = _parse_codex_stream(
+            stdout=retry_completed.stdout or "",
+            stderr=retry_completed.stderr or "",
+            base_thread_id=None,
+        )
+        completed = retry_completed
+        next_thread_id = retry_thread_id
+        assistant_text = retry_assistant_text
+        latest_detail = retry_detail
+
+    body = assistant_text or latest_detail or "Codex finished without an assistant reply."
     if cancelled:
         body = f"Codex run stopped.\n\n{body}".strip()
     if completed.returncode != 0:

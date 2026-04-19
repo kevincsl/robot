@@ -250,6 +250,26 @@ class ChatStateStore:
             bucket["agent_schedules"] = []
             self._save()
 
+    def panic_clear_agent_runtime(self, chat_id: int) -> dict[str, int | bool]:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            queue = bucket.get("agent_queue")
+            schedules = bucket.get("agent_schedules")
+            queued_jobs = len([item for item in queue if isinstance(item, dict)]) if isinstance(queue, list) else 0
+            scheduled_jobs = len([item for item in schedules if isinstance(item, dict)]) if isinstance(schedules, list) else 0
+            current = bucket.get("agent_current_run")
+            had_current_run = isinstance(current, dict)
+
+            bucket["agent_current_run"] = None
+            bucket["agent_queue"] = []
+            bucket["agent_schedules"] = []
+            self._save()
+            return {
+                "had_current_run": had_current_run,
+                "queued_jobs": queued_jobs,
+                "scheduled_jobs": scheduled_jobs,
+            }
+
     def set_agent_current_run(self, chat_id: int, run: dict[str, Any] | None) -> None:
         with self._lock:
             bucket = self._bucket(chat_id)

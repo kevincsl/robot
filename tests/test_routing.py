@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 from markitdown._exceptions import FileConversionException
 from teleapp import ButtonResponse
 from teleapp.context import DocumentInput, MessageContext
+from teleapp.protocol import AppEvent
 
 from robot.agents import AgentCoordinator
 from robot.config import load_settings
@@ -77,6 +78,11 @@ class RoutingTests(unittest.TestCase):
 
     def test_classify_control_request(self) -> None:
         ctx = MessageContext(chat_id=1, text="/reset", command="reset")
+        request = classify_request(ctx)
+        self.assertEqual(request.kind, CONTROL_REQUEST)
+
+    def test_classify_panic_as_control_request(self) -> None:
+        ctx = MessageContext(chat_id=1, text="/panic", command="panic")
         request = classify_request(ctx)
         self.assertEqual(request.kind, CONTROL_REQUEST)
 
@@ -1462,7 +1468,7 @@ class RoutingTests(unittest.TestCase):
                 self.agents,
             )
         )
-        self.assertEqual(applied, "請直接按 model 按鈕切換，或用 /model <name>。輸入 cancel 可離開。")
+        self.assertEqual(applied, "請直接按 model 按鈕切換，或用 /model <name>。輸入 /menu 返回主選單。")
         flow = self.store.get_ui_flow(1)
         self.assertIsInstance(flow, dict)
         self.assertEqual(flow.get("kind"), "await_model")
@@ -1571,8 +1577,10 @@ class RoutingTests(unittest.TestCase):
     def test_project_command_without_payload_opens_chooser(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/project", command="project"))
         body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
-        self.assertIn("Available projects:", body)
-        self.assertIn("1.", body)
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("Available projects:", body.text)
+        self.assertTrue(any(button.data.startswith("proj-") for button in (body.buttons or [])))
+        self.assertTrue(any(" | proj-" in button.text for button in (body.buttons or [])))
         flow = self.store.get_ui_flow(1)
         self.assertIsInstance(flow, dict)
         self.assertEqual(flow.get("kind"), "await_project")
@@ -1586,7 +1594,8 @@ class RoutingTests(unittest.TestCase):
                 self.agents,
             )
         )
-        self.assertIn("1.", open_menu)
+        self.assertIsInstance(open_menu, ButtonResponse)
+        self.assertIn("Available projects:", open_menu.text)
 
         applied = self.loop.run_until_complete(
             handle_request(
@@ -1597,6 +1606,32 @@ class RoutingTests(unittest.TestCase):
             )
         )
         self.assertIn("Project updated.", applied)
+        self.assertIsNone(self.store.get_ui_flow(1))
+
+    def test_project_flow_updates_state_from_inline_button_choice(self) -> None:
+        open_menu = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="menu:projects"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(open_menu, ButtonResponse)
+        project_button = next(
+            button for button in (open_menu.buttons or []) if button.data.startswith("proj-")
+        )
+
+        applied = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command=project_button.data),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIn("Project updated.", applied)
+        self.assertEqual(self.store.get_chat_state(1)["project_key"], project_button.data)
         self.assertIsNone(self.store.get_ui_flow(1))
 
     def test_doctor_command_returns_report(self) -> None:
@@ -1617,17 +1652,66 @@ class RoutingTests(unittest.TestCase):
         body = self.loop.run_until_complete(handle_control(1, request, self.store, self.agents))
         self.assertIn("managed by teleapp supervisor", body)
 
+    def test_panic_clears_current_run_queue_and_schedules(self) -> None:
+        self.store.set_agent_current_run(
+            1,
+            {
+                "job_id": "job-current",
+                "kind": "provider",
+                "goal": "stuck hello",
+            },
+        )
+        self.store.enqueue_agent_job(
+            1,
+            {
+                "job_id": "job-queued",
+                "kind": "provider",
+                "goal": "queued work",
+            },
+        )
+        self.store.add_agent_schedule(
+            1,
+            {
+                "job_id": "job-scheduled",
+                "kind": "auto_dev",
+                "goal": "scheduled work",
+                "run_at": "2026-05-01T10:00",
+            },
+        )
+        request = classify_request(MessageContext(chat_id=1, text="/panic", command="panic"))
+        with patch.object(self.agents, "stop", return_value=True) as mock_stop:
+            body = self.loop.run_until_complete(handle_control(1, request, self.store, self.agents))
+        mock_stop.assert_called_once_with(1)
+        self.assertIn("Panic cleanup applied.", body)
+        self.assertIn("stop_signal_sent: True", body)
+        self.assertIn("cleared_current_run: True", body)
+        self.assertIn("cleared_queue_jobs: 1", body)
+        self.assertIn("cleared_scheduled_jobs: 1", body)
+        self.assertIsNone(self.store.get_chat_state(1)["agent_current_run"])
+        self.assertEqual(self.store.get_agent_queue(1), [])
+        self.assertEqual(self.store.get_agent_schedules(1), [])
+
     def test_run_command_enqueues_job(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/run inspect repo", command="run"))
         body = self.loop.run_until_complete(handle_control(1, request, self.store, self.agents))
-        self.assertIn("Provider run started.", body)
+        self.assertIsInstance(body, AppEvent)
+        assert isinstance(body, AppEvent)
+        self.assertEqual(body.type, "status")
+        self.assertIn("Provider run started.", body.text)
+        self.assertEqual(body.raw["status_key"], "heartbeat")
+        self.assertFalse(body.raw["replace"])
         self.assertTrue(self.agents.is_running(1))
 
     def test_agent_command_enqueues_auto_dev_job(self) -> None:
         object.__setattr__(self.settings, "auto_dev_command", ["python", "-c", "import time; time.sleep(30)"])
         request = classify_request(MessageContext(chat_id=1, text="/agent implement /queue", command="agent"))
         body = self.loop.run_until_complete(handle_control(1, request, self.store, self.agents))
-        self.assertIn("Auto-dev run started.", body)
+        self.assertIsInstance(body, AppEvent)
+        assert isinstance(body, AppEvent)
+        self.assertEqual(body.type, "status")
+        self.assertIn("Auto-dev run started.", body.text)
+        self.assertEqual(body.raw["status_key"], "heartbeat")
+        self.assertFalse(body.raw["replace"])
         queue = self.store.get_agent_queue(1)
         self.assertEqual(len(queue), 0)
         current = self.store.get_chat_state(1)["agent_current_run"]

@@ -1,141 +1,211 @@
-# robot
+# OpenAI Forward
 
-`robot` is a Telegram app built on top of `teleapp`.
+[繁體中文](./README.md) | [English](./README_EN.md)
 
-It keeps Telegram transport and runtime behavior inside `teleapp`, while `robot` handles:
+OpenAI API 轉發服務，適合部署在可連線到 OpenAI API 的主機上，讓其他環境透過這個服務間接存取 OpenAI。
 
-- deterministic bot commands
-- per-chat provider/model/project state
-- agent request routing
-- subprocess execution for Codex/Gemini/Copilot style CLIs
+## 專案出處
 
-## Request Classes
+本專案修改自原始專案：
 
-Each incoming request is classified before any model is called:
+- 原作者 GitHub：`beidongjiedeguang`
+- 原始專案網址：`https://github.com/beidongjiedeguang/openai-forward`
+- 目前版本說明：依原始專案 fork / clone 後持續修改
 
-- `command request`
-  deterministic commands such as `/provider`, `/model`, `/project`, `/projects`, `/status`
-- `control request`
-  state-changing commands such as `/reset`, `/newthread`, `/restart`
-- `agent request`
-  natural-language messages and explicit `/agent ...` calls
+此 README 已改寫為繁體中文，後續內容以目前這個修改版本為準。
 
-Only `agent request` goes to a provider runner.
+## 功能
 
-## Quick Start
+- 支援轉發 OpenAI API 請求
+- 支援串流回應
+- 支援自訂路由前綴
+- 支援 Docker 部署
+- 支援 pip 安裝執行
+- 支援使用預設 OpenAI API Key
+- 支援以自訂 `FORWARD_KEY` 取代直接暴露 OpenAI API Key
+- 支援記錄聊天內容日誌
+- 支援 Cloudflare、Railway、Render 等部署方式
 
-1. Bootstrap the environment.
+## 使用情境
 
-Windows:
+這個專案主要用來解決某些環境無法直接連到 OpenAI API 的問題。
 
-```powershell
-bootstrap_robot.bat
+原本客戶端會呼叫：
+
+```text
+https://api.openai.com/v1/chat/completions
 ```
 
-Linux/macOS:
+部署本服務後，可改為呼叫：
+
+```text
+http://{your-host}:{port}/v1/chat/completions
+```
+
+也就是由本服務接收請求，再轉發到真正的 OpenAI API。
+
+## 快速開始
+
+### 用 pip 安裝
 
 ```bash
-./bootstrap_robot.sh
+pip install openai-forward
 ```
 
-`bootstrap_robot` will create/update `.env` and prompt for:
-
-- `TELEAPP_TOKEN`
-- `TELEAPP_ALLOWED_USER_ID`
-
-2. Start the app.
-
-Windows:
-
-```powershell
-start_robot.bat
-```
-
-Linux/macOS:
+啟動服務：
 
 ```bash
-./start_robot.sh
+openai-forward run --port=8000 --workers=1
 ```
 
-## Commands
+若要同時指定預設 API Key：
 
-- `/start`
-- `/help`
-- `/status`
-- `/doctor`
-- `/provider [codex|gemini|copilot]`
-- `/model [name]`
-- `/models`
-- `/projects`
-- `/project [workspace-key-or-label]`
-- `/queue`
-- `/schedules`
-- `/agentstatus`
-- `/agentprofiles [--config PATH]`
-- `/reset`
-- `/newthread`
-- `/restart`
-- `/run <goal>`
-- `/agent [--profile NAME] [--config PATH] [--commit] [--push] [--pr] [--no-post-run] <goal>`
-- `/agentresume [run_id_or_path] [--profile NAME] [--config PATH] [--commit] [--push] [--pr] [--no-post-run]`
-- `/schedule YYYY-MM-DD HH:MM [--profile NAME] [--config PATH] [--commit] [--push] [--pr] [--no-post-run] <goal>`
+```bash
+openai-forward run --port=8000 --workers=1 --api_key "sk-xxxx"
+```
 
-## Brain Features
+### 用 Docker 執行
 
-- `menu`, `model`, and `brain` support Telegram button menus in addition to slash commands.
-- `brain` supports second-brain capture, inbox, search, summaries, decision support, and schedule workflows.
-- Use `/brainbatchauto [limit]` for one-click auto organize from recent `00 Inbox` and `01 Daily Notes` into Project/Knowledge/Resource notes.
-- Natural-language schedule creation examples:
-  - `提醒我今天 6 點開會`
-  - `30 分鐘後叫我休息`
-  - `明天早上 8 點提醒我交報告`
-  - `4/20 下午 2 點提醒我和客戶確認需求`
-- Schedule view phrases:
-  - `今天行程`
-  - `本週行程`
-  - `下週行程`
-  - `今天提醒`
-  - `未來提醒`
-- Schedule follow-up references:
-  - `第一個行程改到 3 點`
-- Schedule update/delete flows require confirmation before changing notes.
-- Past-due archive only applies to one-time schedules and skips recurring reminders.
+```bash
+docker run --name="openai-forward" -d -p 9999:8000 beidongjiedeguang/openai-forward:latest
+```
 
-## Automation
+如果要提供預設 API Key，可在啟動時加入環境變數：
 
-- `/brainauto [on|off|status]`
-- `/brainautodaily HH:MM`
-- `/brainautoweekly <weekday 0-6> HH:MM`
-- Daily briefs, weekly briefs, and schedule alerts can be pushed automatically.
-- Long-running jobs emit heartbeat status updates while running.
-- If the app restarts while a job is active, the job is recovered and resumed automatically on startup.
+```bash
+docker run --name="openai-forward" -d ^
+  -p 9999:8000 ^
+  -e OPENAI_API_KEY="sk-xxxx" ^
+  beidongjiedeguang/openai-forward:latest
+```
 
-## Notes
+## 使用方式
 
-- `Codex` is the best-supported provider because it keeps a resumable `thread_id`.
-- `Gemini` and `Copilot` are executed as plain subprocess commands and currently do not preserve thread state.
-- Auto-dev commands (`/agent`, `/agentresume`, `/agentprofiles`, `/schedule`) call `ROBOT_AUTO_DEV_CMD` in the selected project workspace.
-- `teleapp` handles Telegram polling, filtering, per-chat request queues, `/restart`, and hot reload.
-- Start scripts run `teleapp robot.py`.
-- `teleapp` hot reload is enabled by default, but this project currently runs with hot reload disabled in `.env` until restart path is fully stabilized.
-- To disable hot reload, use `teleapp robot.py --no-hot-reload`.
-- Codex execution flags can be controlled with:
-  - `ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX` (`1` or `0`)
-  - `ROBOT_CODEX_SKIP_GIT_REPO_CHECK` (`1` or `0`)
-  - default is `0` (disabled); enable only when you explicitly accept the risk.
-  - when enabled, startup status emits `SECURITY WARNING` and `/status` shows `security_risk_mode: on`.
-- You can tune reload behavior with:
-  - `TELEAPP_RELOAD_QUIET_SECONDS`
-  - `TELEAPP_RELOAD_POLL_SECONDS`
-  - `TELEAPP_WATCH_MODE` (`app-dir` or `app-file-only`)
-  - `--watch <path>` for explicit watch paths
+### Python
 
-## Documentation
+```python
+import openai
 
-- One-page quick reference: `QUICK_REFERENCE.md`
-- Full feature and usage guide (with scenarios/examples): `FEATURES_GUIDE.md`
-- Shortcut policy: no semantic shortcut routing; use explicit slash commands or Telegram buttons.
-- Dependency strategy and compatibility: `DEPENDENCY_STRATEGY.md`
-- Core flow coverage map: `CORE_FLOW_COVERAGE.md`
-- Quality gate before new features: `QUALITY_GATE_90.md`
-- Operations runbook and troubleshooting: `RUNBOOK.md`
+openai.api_base = "http://{your-host}:{port}/v1"
+openai.api_key = "sk-xxxx"
+```
+
+### JavaScript / TypeScript
+
+```ts
+import { Configuration } from "openai";
+
+const configuration = new Configuration({
+  basePath: "http://{your-host}:{port}/v1",
+  apiKey: "sk-xxxx",
+});
+```
+
+### curl
+
+```bash
+curl http://{your-host}:{port}/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-xxxx" \
+  -d '{
+    "model": "gpt-3.5-turbo",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+### 圖片生成
+
+```bash
+curl http://{your-host}:{port}/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-xxxx" \
+  -d '{
+    "prompt": "A photo of a cat",
+    "n": 1,
+    "size": "512x512"
+  }'
+```
+
+## 部署選項
+
+可參考 [deploy.md](./deploy.md)。
+
+支援方式包括：
+
+- pip 部署
+- Docker 部署
+- Cloudflare 部署
+- Railway 部署
+- Render 部署
+
+## 設定
+
+### `openai-forward run` 參數
+
+| 參數 | 說明 | 預設值 |
+| --- | --- | --- |
+| `--port` | 服務埠號 | `8000` |
+| `--workers` | worker 數量 | `1` |
+| `--base_url` | 目標 OpenAI API 位址 | `https://api.openai.com` |
+| `--api_key` | 預設 OpenAI API Key | `None` |
+| `--forward_key` | 自訂轉發驗證 Key | `None` |
+| `--route_prefix` | 路由前綴 | `None` |
+| `--log_chat` | 是否記錄聊天內容 | `False` |
+
+### 環境變數
+
+可透過 `.env` 設定：
+
+| 變數 | 說明 | 預設值 |
+| --- | --- | --- |
+| `OPENAI_BASE_URL` | 上游 OpenAI API 位址 | `https://api.openai.com` |
+| `OPENAI_API_KEY` | 預設 OpenAI API Key，可放多組，以空白分隔 | 空 |
+| `FORWARD_KEY` | 對外暴露的轉發驗證 Key，可放多組，以空白分隔 | 空 |
+| `ROUTE_PREFIX` | 路由前綴 | 空 |
+| `LOG_CHAT` | 是否記錄聊天內容 | `false` |
+| `IP_WHITELIST` | IP 白名單，以空白分隔 | 空 |
+| `IP_BLACKLIST` | IP 黑名單，以空白分隔 | 空 |
+
+## 驗證邏輯說明
+
+- 若請求直接帶 OpenAI API Key，服務會沿用該 Key 轉發。
+- 若啟用 `FORWARD_KEY`，外部可傳送 `FORWARD_KEY`，再由服務替換成真正的 OpenAI API Key。
+- 若設定了預設 `OPENAI_API_KEY` 且未設定 `FORWARD_KEY`，服務可進入免驗證轉發模式。
+- 若設定多組 `OPENAI_API_KEY`，目前程式會以輪詢方式使用。
+
+## 聊天記錄
+
+若啟用 `LOG_CHAT=true`，服務會將聊天內容記錄到 `./Log/chat.log`。
+
+這個功能適合除錯與追查，但上線前應評估：
+
+- 是否會記錄敏感資料
+- 是否符合你的隱私與合規要求
+- 是否需要搭配檔案輪替與保存政策
+
+## 已知限制
+
+- 專案目前仍偏向舊版 OpenAI 相容介面
+- 部分檔案與註解仍有舊編碼殘留
+- 測試與現代 Python / Windows 開發流程仍需整理
+- 某些功能路徑尚未完整實作
+
+## 開發
+
+安裝依賴：
+
+```bash
+pip install -r requirements.txt
+```
+
+若要使用完整打包資訊與額外設定，請參考 [pyproject.toml](./pyproject.toml)。
+
+執行測試：
+
+```bash
+pytest -q
+```
+
+## 授權
+
+本專案沿用原始專案授權，詳見 [LICENSE](./LICENSE)。

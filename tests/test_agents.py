@@ -136,6 +136,38 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
         ensure_worker.assert_called_once_with(chat_id)
         self.assertTrue(any("Recovered interrupted run after restart." in text for _, _, text in self.events))
 
+    async def test_shutdown_clears_current_run_without_recovery_loop(self) -> None:
+        chat_id = 4
+        self.store.enqueue_agent_job(
+            chat_id,
+            {
+                "job_id": "job-shutdown-1",
+                "kind": "provider",
+                "goal": "long running hello",
+                "project_name": "robot",
+                "project_path": str(self.settings.project_root),
+                "provider": "codex",
+                "model": "gpt-5.4",
+                "thread_id": None,
+                "source": "manual",
+            },
+        )
+
+        async def fake_run_agent_request(*args, **kwargs):
+            await asyncio.sleep(30)
+            raise AssertionError("should be cancelled before completion")
+
+        with patch("robot.agents.run_agent_request", side_effect=fake_run_agent_request):
+            self.coordinator.ensure_worker(chat_id)
+            await asyncio.sleep(0.05)
+            current = self.store.get_chat_state(chat_id).get("agent_current_run")
+            self.assertIsInstance(current, dict)
+
+            await self.coordinator.shutdown()
+
+        self.assertIsNone(self.store.get_chat_state(chat_id).get("agent_current_run"))
+        self.assertIsNone(self.store.recover_agent_current_run(chat_id))
+
 
 if __name__ == "__main__":
     unittest.main()

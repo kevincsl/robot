@@ -22,6 +22,7 @@ Stop local process:
 
 - Use your terminal stop signal, or platform process tools.
 - Telegram-side restart command: `/restart` (managed by `teleapp` supervisor).
+- Avoid direct `python -m robot`/`robot` unless `--standalone` is explicitly intended for local debug.
 
 ## 2) Basic Health Check
 

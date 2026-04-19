@@ -96,9 +96,9 @@ class AgentCoordinator:
                             [
                                 "Recovered interrupted run after restart.",
                                 f"kind: {recovered.get('kind') or 'provider'}",
-                                f"job: {recovered.get('job_id') or '-'}",
                                 f"doing: {recovered.get('goal') or '<resume>'}",
                                 f"project: {recovered.get('project_name') or '-'}",
+                                f"path: {recovered.get('project_path') or '-'}",
                             ]
                         ),
                         event_type="status",
@@ -286,10 +286,12 @@ class AgentCoordinator:
             lines.extend(
                 [
                     "",
-                    f"running: {current.get('job_id')}",
+                    "running: yes",
                     f"kind: {current.get('kind')}",
                     f"goal: {current.get('goal') or '-'}",
                     f"run_id: {current.get('run_id') or '-'}",
+                    f"project: {current.get('project_name') or '-'}",
+                    f"path: {current.get('project_path') or '-'}",
                 ]
             )
         if queue:
@@ -456,8 +458,13 @@ class AgentCoordinator:
                         f"kind: {job.get('kind') or 'provider'}",
                         f"goal: {job.get('goal') or '<resume>'}",
                         f"project: {job.get('project_name')}",
+                        f"path: {job.get('project_path')}",
                         f"provider: {job.get('provider')}",
                         f"model/profile: {job.get('model')}",
+                        f"queue_pending: {len(self._store.get_agent_queue(chat_id))}",
+                        f"progress: {self._build_heartbeat_progress(0)}",
+                        f"elapsed: {self._format_elapsed(0)}",
+                        "status updates: every 1 second",
                     ]
                 ),
                 event_type="status",
@@ -467,6 +474,8 @@ class AgentCoordinator:
             invocation = RunningInvocation()
             self._active_invocations[chat_id] = invocation
             heartbeat_task = asyncio.create_task(self._heartbeat_loop(chat_id, job))
+            started = datetime.now()
+            cancelled_by_shutdown = False
             try:
                 if str(job.get("kind") or "provider") == "auto_dev":
                     enable_commit = str(job.get("enable_commit") or "").lower() in {"1", "true", "yes", "on"}
@@ -499,12 +508,55 @@ class AgentCoordinator:
                         project_label=str(job.get("project_name") or self._settings.project_root.name),
                         invocation=invocation,
                     )
+            except asyncio.CancelledError:
+                cancelled_by_shutdown = True
+                invocation.cancel()
+                result = None
             finally:
                 heartbeat_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await heartbeat_task
                 self._active_invocations.pop(chat_id, None)
 
+            elapsed_seconds = int((datetime.now() - started).total_seconds())
+            if cancelled_by_shutdown:
+                self._store.set_agent_current_run(chat_id, None)
+                self._store.set_agent_last_run(
+                    chat_id,
+                    {
+                        **job,
+                        "status": "stopped",
+                        "elapsed_seconds": elapsed_seconds,
+                    },
+                )
+                self._store.set_last_provider_timing(
+                    chat_id,
+                    {
+                        "job_id": str(job.get("job_id") or ""),
+                        "kind": str(job.get("kind") or "provider"),
+                        "provider": str(job.get("provider") or ""),
+                        "model": str(job.get("model") or ""),
+                        "elapsed_seconds": elapsed_seconds,
+                        "cancelled": True,
+                        "return_code": 130,
+                    },
+                )
+                await self._emit(
+                    chat_id,
+                    "\n".join(
+                        [
+                            "Agent run stopped during shutdown.",
+                            f"kind: {job.get('kind') or 'provider'}",
+                            f"goal: {job.get('goal') or '<resume>'}",
+                        ]
+                    ),
+                    event_type="status",
+                    raw={"status_key": "heartbeat", "replace": True},
+                )
+                self._worker_tasks.pop(chat_id, None)
+                return
+
+            assert result is not None
             if result.thread_id is not None:
                 self._store.set_thread_id(chat_id, str(job.get("provider") or "codex"), result.thread_id)
             self._store.set_agent_current_run(chat_id, None)
@@ -528,12 +580,30 @@ class AgentCoordinator:
                     "return_code": int(result.return_code),
                 },
             )
+            status_label = "stopped" if result.cancelled else ("ok" if result.return_code == 0 else "failed")
+            await self._emit(
+                chat_id,
+                "\n".join(
+                    [
+                        "Agent run finished.",
+                        f"kind: {job.get('kind') or 'provider'}",
+                        f"goal: {job.get('goal') or '<resume>'}",
+                        f"project: {job.get('project_name')}",
+                        f"path: {job.get('project_path')}",
+                        f"queue_pending: {len(self._store.get_agent_queue(chat_id))}",
+                        f"status: {status_label}",
+                        f"elapsed: {self._format_elapsed(int(result.elapsed_seconds))}",
+                    ]
+                ),
+                event_type="status",
+                raw={"status_key": "heartbeat", "replace": True},
+            )
             await self._emit(chat_id, result.final_text, event_type="output")
 
     async def _heartbeat_loop(self, chat_id: int, job: dict[str, Any]) -> None:
         started = datetime.now()
         while True:
-            await asyncio.sleep(5)
+            await asyncio.sleep(1)
             elapsed = int((datetime.now() - started).total_seconds())
             current_goal = str(job.get("goal") or "").strip() or "<resume>"
             current_project = str(job.get("project_name") or "-")
@@ -541,17 +611,45 @@ class AgentCoordinator:
                 chat_id,
                 "\n".join(
                     [
-                        "Task is still running...",
+                        "執行中 ...",
                         f"kind: {job.get('kind') or 'provider'}",
-                        f"job: {job.get('job_id') or '-'}",
                         f"doing: {current_goal}",
                         f"project: {current_project}",
-                        f"elapsed_seconds: {elapsed}",
+                        f"path: {job.get('project_path') or '-'}",
+                        f"queue_pending: {len(self._store.get_agent_queue(chat_id))}",
+                        f"progress: {self._build_heartbeat_progress(elapsed)}",
+                        f"elapsed: {self._format_elapsed(elapsed)}",
                     ]
                 ),
                 event_type="status",
                 raw={"status_key": "heartbeat", "replace": True},
             )
+
+    @staticmethod
+    def _format_elapsed(seconds: int) -> str:
+        safe = max(0, int(seconds))
+        minute, second = divmod(safe, 60)
+        hour, minute = divmod(minute, 60)
+        if hour:
+            return f"{hour:02d}:{minute:02d}:{second:02d}"
+        return f"{minute:02d}:{second:02d}"
+
+    @staticmethod
+    def _build_heartbeat_progress(
+        elapsed_seconds: int,
+        *,
+        cycle_seconds: int = 60,
+        slots: int = 20,
+    ) -> str:
+        safe_elapsed = max(0, int(elapsed_seconds))
+        safe_cycle = max(1, int(cycle_seconds))
+        safe_slots = max(1, int(slots))
+        in_cycle = safe_elapsed % safe_cycle
+        ratio = in_cycle / safe_cycle
+        filled = min(safe_slots, int(ratio * safe_slots))
+        bar = ("█" * filled) + ("░" * (safe_slots - filled))
+        percent = int(ratio * 100)
+        return f"[{bar}] {percent}% (rolling)"
 
     async def _emit(self, chat_id: int, text: str, event_type: str = "output", raw: dict[str, Any] | None = None) -> None:
         if self._supervisor is None:

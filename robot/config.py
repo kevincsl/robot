@@ -170,8 +170,11 @@ def load_settings(project_root: Path | None = None) -> Settings:
             if text:
                 roots.append(Path(text).expanduser())
     else:
-        roots.append(root.parent)
-        roots.append(root)
+        default_codex_root = (Path.home() / "codex").expanduser()
+        roots.append(default_codex_root)
+        # Keep explicit project_root discoverable for local/dev/test runs.
+        if project_root is not None:
+            roots.append(root)
 
     unique_roots: list[Path] = []
     seen: set[str] = set()

@@ -10,6 +10,7 @@ from pathlib import Path
 from markitdown._exceptions import FileConversionException, MarkItDownException
 from teleapp import Button, ButtonResponse
 from teleapp.context import MessageContext
+from teleapp.protocol import AppEvent
 
 from robot.agents import AgentCoordinator
 from robot.brain import (
@@ -98,6 +99,7 @@ CONTROL_NAMES = {
     "reset",
     "newthread",
     "restart",
+    "panic",
     "clearqueue",
     "clearschedules",
     "run",
@@ -300,7 +302,7 @@ async def _send_schedule_confirm_source_to_agent(
     store.clear_last_schedule_candidate(chat_id)
     if not source_text:
         return "原始訊息遺失，無法送到 Codex。"
-    return await handle_agent(chat_id, ClassifiedRequest(AGENT_REQUEST, None, source_text), agents)
+    return await handle_agent(chat_id, ClassifiedRequest(AGENT_REQUEST, None, source_text), store, agents)
 
 
 def _document_import_error_message(source_name: str, exc: Exception) -> str:
@@ -327,6 +329,17 @@ class ClassifiedRequest:
     kind: str
     command: str | None
     payload: str
+
+
+def _status_event(chat_id: int, text: str, *, status_key: str = "heartbeat", replace: bool = False) -> AppEvent:
+    return AppEvent(
+        type="status",
+        text=text,
+        chat_id=chat_id,
+        request_id=None,
+        stream="inprocess",
+        raw={"status_key": status_key, "replace": replace},
+    )
 
 
 @dataclass(slots=True)
@@ -529,8 +542,8 @@ def _status_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str
     scheduled_jobs = len(store.get_agent_schedules(chat_id))
     flow = store.get_ui_flow(chat_id)
     flow_kind = flow.get("kind") if isinstance(flow, dict) else None
-    current_run = state["agent_current_run"] if isinstance(state["agent_current_run"], dict) else {}
-    last_run = state["agent_last_run"] if isinstance(state["agent_last_run"], dict) else {}
+    current_run = state["agent_current_run"] if isinstance(state["agent_current_run"], dict) else None
+    last_run = state["agent_last_run"] if isinstance(state["agent_last_run"], dict) else None
     provider_timing = state.get("last_provider_timing") if isinstance(state.get("last_provider_timing"), dict) else {}
     teleapp_status_edit = "enabled"
     teleapp_raw_status = "enabled"
@@ -547,8 +560,8 @@ def _status_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str
             f"queued_jobs: {queued_jobs}",
             f"scheduled_jobs: {scheduled_jobs}",
             f"ui_flow: {flow_kind or '-'}",
-            f"current_run: {current_run.get('job_id', '-')}",
-            f"last_run: {last_run.get('job_id', '-')}",
+            f"current_run: {current_run.get('kind') if current_run else '-'}",
+            f"last_run_status: {last_run.get('status') if last_run else '-'}",
             f"provider_elapsed_seconds: {provider_timing.get('elapsed_seconds', '-')}",
             f"provider_return_code: {provider_timing.get('return_code', '-')}",
             f"provider_cancelled: {provider_timing.get('cancelled', '-')}",
@@ -563,7 +576,7 @@ def _status_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str
             "",
             "request classes:",
             "- command request: /provider /model /project /status /doctor /queue /schedules /agentstatus /agentprofiles",
-            "- control request: /reset /newthread /restart /run /agent /agentresume /schedule",
+            "- control request: /reset /newthread /restart /panic /run /agent /agentresume /schedule",
             "- agent request: plain text (provider runner)",
         ]
     )
@@ -575,37 +588,22 @@ def _help_text() -> str:
             "robot",
             "",
             "deterministic commands:",
-            "/quick",
-            "/guide",
+            "general:",
+            "/quick  /guide  /menu  /help",
+            "/status  /doctor  /queue  /schedules",
+            "/agentstatus  /agentprofiles [--config PATH]",
+            "",
+            "workspace:",
             "/provider [codex|gemini|copilot]",
-            "/model [name]",
-            "/models",
-            "/projects",
-            "/project [key-or-label]",
-            "/status",
-            "/doctor",
-            "/queue",
-            "/schedules",
-            "/agentstatus",
-            "/agentprofiles [--config PATH]",
-            "/menu",
-            "/brain",
-            "/brainread",
-            "/braininbox <text>",
-            "/brainweb <url>",
-            "/brainsearch <query>",
-            "/brainorganize",
-            "/brainbatch",
-            "/brainbatchauto [limit]",
-            "/brainproject <title>",
-            "/brainknowledge <title>",
-            "/brainresource <title>",
-            "/brainschedule <title>",
-            "/braindecide <question>",
-            "/brainsummary",
-            "/brainremind",
-            "/braindaily",
-            "/brainweekly",
+            "/model [name]  /models",
+            "/projects  /project [key-or-label]",
+            "",
+            "second brain:",
+            "/brain  /brainread  /braininbox <text>  /brainweb <url>",
+            "/brainsearch <query>  /brainorganize  /brainbatch  /brainbatchauto [limit]",
+            "/brainproject <title>  /brainknowledge <title>  /brainresource <title>",
+            "/brainschedule <title>  /braindecide <question>  /brainsummary",
+            "/brainremind  /braindaily  /brainweekly",
             "/brainauto [on|off|status]",
             "/brainautodaily HH:MM",
             "/brainautoweekly <weekday 0-6> HH:MM",
@@ -615,6 +613,7 @@ def _help_text() -> str:
             "/reset",
             "/newthread",
             "/restart",
+            "/panic",
             "/clearqueue",
             "/clearschedules",
             "/run <goal>",
@@ -625,9 +624,8 @@ def _help_text() -> str:
             "agent requests:",
             "- normal text message (provider runner)",
             "",
-            "common low-token control phrases:",
-            "- continue / next / stop / restart",
-            "- 繼續 / 下一步 / 停止 / 重來",
+            "note:",
+            "- semantic shortcuts are disabled; use slash commands or Telegram buttons.",
         ]
     )
 
@@ -637,15 +635,13 @@ def _quick_text() -> str:
         [
             "quick reference",
             "",
-            "system menu/model:",
-            "- /menu",
+            "system setup:",
+            "- /menu (主選單)",
             "- /provider [codex|gemini|copilot]",
-            "- /model [name]",
-            "- /models",
-            "- /projects",
-            "- /project [key-or-label]",
+            "- /model [name] /models",
+            "- /projects /project [key-or-label]",
             "",
-            "top commands:",
+            "daily commands:",
             "- /status",
             "- /braininbox <text>",
             "- /brainsearch <query>",
@@ -694,14 +690,14 @@ def _menu_text(chat_id: int, store: ChatStateStore) -> str:
             f"model: {state['model']}",
             f"project: {state['project_name']}",
             "",
-            "文字操作:",
+            "menu actions:",
             "- status",
             "- provider",
             "- model",
             "- projects",
             "- cancel",
             "",
-            "也可直接用斜線指令:",
+            "slash commands:",
             "- /status",
             "- /provider codex",
             "- /model gpt-5.4",
@@ -719,7 +715,7 @@ def _brain_text() -> str:
             UI_BUILD_TAG,
             "使用 TG 操作 secondbrain",
             "",
-            "可用功能：",
+            "brain actions:",
             "- 寫入今日",
             "- Inbox",
             "- 讀今日",
@@ -729,9 +725,9 @@ def _brain_text() -> str:
             "- 自動批次整理",
             "- 專案",
             "- 知識卡",
-            "- Resource",
+            "- 資源",
             "- 行程",
-            "- 每週摘要",
+            "- 摘要",
             "- 決策支援",
             "- 提醒",
             "- 每日摘要",
@@ -753,14 +749,14 @@ def _brain_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
             Button("自動批次整理", "brain:batch_auto"),
             Button("專案", "brain:project"),
             Button("知識卡", "brain:knowledge"),
-            Button("Resource", "brain:resource"),
+            Button("資源", "brain:resource"),
             Button("行程", "brain:schedule"),
-            Button("每週摘要", "brain:summary"),
+            Button("摘要", "brain:summary"),
             Button("決策支援", "brain:decide"),
             Button("提醒", "brain:remind"),
             Button("每日摘要", "brain:daily"),
             Button("週摘要", "brain:weekly"),
-            Button("Cancel", "brain:cancel"),
+            Button("取消", "brain:cancel"),
         ],
     )
 
@@ -784,11 +780,11 @@ async def _handle_brain_action(
 
     if command == "brain:capture":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_CAPTURE})
-        return "請輸入要寫入今日 daily note 的內容。輸入 cancel 可離開。"
+        return "請輸入要寫入今日 daily note 的內容。輸入 /menu 可離開流程。"
 
     if command == "brain:inbox":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_INBOX})
-        return "請輸入要存進 Inbox 的內容。輸入 cancel 可離開。"
+        return "請輸入要存進 Inbox 的內容。輸入 /menu 可離開流程。"
 
     if command == "brain:read":
         body = read_daily(settings).strip()
@@ -796,11 +792,11 @@ async def _handle_brain_action(
 
     if command == "brain:search":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_SEARCH})
-        return "請輸入要搜尋 secondbrain 的關鍵字。輸入 cancel 可離開。"
+        return "請輸入要搜尋 secondbrain 的關鍵字。輸入 /menu 可離開流程。"
 
     if command == "brain:organize":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_ORGANIZE_TEXT})
-        return "請先貼上你要整理的原始內容。輸入 cancel 可離開。"
+        return "請先貼上你要整理的原始內容。輸入 /menu 可離開流程。"
 
     if command == "brain:batch":
         items = list_recent_notes(settings, "00 Inbox", limit=5) + list_recent_notes(settings, "01 Daily Notes", limit=5)
@@ -852,15 +848,15 @@ async def _handle_brain_action(
 
     if command == "brain:project":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_PROJECT})
-        return "請輸入專案名稱，我會建立 project note。輸入 cancel 可離開。"
+        return "請輸入專案名稱，我會建立 project note。輸入 /menu 可離開流程。"
 
     if command == "brain:knowledge":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_KNOWLEDGE})
-        return "請輸入知識卡標題，我會建立 knowledge note。輸入 cancel 可離開。"
+        return "請輸入知識卡標題，我會建立 knowledge note。輸入 /menu 可離開流程。"
 
     if command == "brain:resource":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_RESOURCE})
-        return "請輸入 resource 標題，我會建立 resource note。輸入 cancel 可離開。"
+        return "請輸入 resource 標題，我會建立 resource note。輸入 /menu 可離開流程。"
 
     if command == "brain:schedule":
         return ButtonResponse(
@@ -872,13 +868,13 @@ async def _handle_brain_action(
                 Button("下週", "brain:schedule_next_week"),
                 Button("本月", "brain:schedule_month"),
                 Button("列表", "brain:schedule_list"),
-                Button("Cancel", "brain:cancel"),
+                Button("取消", "brain:cancel"),
             ],
         )
 
     if command == "brain:schedule_new":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_SCHEDULE_TITLE})
-        return "請輸入行程標題，或直接輸入自然語言，例如：今天下午6點半要吃藥。輸入 cancel 可離開。"
+        return "請輸入行程標題，或直接輸入自然語言，例如：今天下午6點半要吃藥。輸入 /menu 可離開流程。"
 
     if command == "brain:schedule_today":
         return _schedule_occurrences_response(chat_id, store, settings, period="day", limit=50)
@@ -978,7 +974,7 @@ async def _handle_brain_action(
 
     if command == "brain:decide":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_DECIDE})
-        return "請輸入你要整理的判斷問題。輸入 cancel 可離開。"
+        return "請輸入你要整理的判斷問題。輸入 /menu 可離開流程。"
 
     if command == "brain:remind":
         reminders = collect_brain_reminders(settings, limit=5)
@@ -1062,9 +1058,9 @@ async def _handle_brain_action(
         labels = {
             "project": "專案",
             "knowledge": "知識卡",
-            "resource": "Resource",
+            "resource": "資源",
         }
-        return f"請輸入整理後的{labels[target]}標題。輸入 cancel 可離開。"
+        return f"請輸入整理後的{labels[target]}標題。輸入 /menu 可離開流程。"
 
     return f"Unknown brain action: {command}"
 
@@ -1073,11 +1069,11 @@ def _main_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
     return ButtonResponse(
         _menu_text(chat_id, store),
         buttons=[
-            Button("Status", "menu:status"),
+            Button("狀態", "menu:status"),
             Button("Provider", "menu:provider"),
             Button("Model", "menu:model"),
             Button("Projects", "menu:projects"),
-            Button("Cancel", "menu:cancel"),
+            Button("取消", "menu:cancel"),
         ],
     )
 
@@ -1091,8 +1087,8 @@ def _provider_menu_response(chat_id: int, store: ChatStateStore) -> str:
     lines.extend(
         [
             "",
-            "可直接輸入編號或 provider 名稱，或用 /provider <name>。",
-            "輸入 menu 返回主選單，輸入 cancel 離開。",
+            "可直接輸入編號或 provider 名稱，也可用 /provider <name>。",
+            "輸入 /menu 返回主選單。",
             "其他自然語言會直接送進 AI。",
         ]
     )
@@ -1133,7 +1129,7 @@ def _model_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
         [
             "",
             "也可直接用 /model <name>",
-            "輸入 cancel 離開。",
+            "輸入 /menu 返回主選單。",
         ]
     )
     return ButtonResponse("\n".join(lines), buttons=buttons)
@@ -1177,22 +1173,31 @@ def _resolve_provider_selection(text: str) -> str | None:
     return None
 
 
-def _projects_menu_response(chat_id: int, settings: Settings, store: ChatStateStore) -> str:
+def _projects_menu_response(chat_id: int, settings: Settings, store: ChatStateStore) -> ButtonResponse | str:
     state = store.get_chat_state(chat_id)
     workspaces = discover_project_workspaces(settings)
+    if not workspaces:
+        store.clear_ui_flow(chat_id)
+        return "No projects discovered."
+
     store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_PROJECT})
-    lines = [f"Current project: {state['project_name']}", "", "Available projects:"]
-    for index, workspace in enumerate(workspaces, start=1):
-        lines.append(f"{index}. {workspace.label} | {workspace.key}")
+    lines = [
+        f"Current project: {state['project_name']}",
+        f"Available projects: {len(workspaces)}",
+    ]
+    buttons: list[Button] = []
+    for workspace in workspaces:
+        buttons.append(Button(f"{workspace.label} | {workspace.key}", workspace.key))
     lines.extend(
         [
             "",
+            "可直接點藍色 project key 按鈕切換。",
             "可直接輸入編號、project key 或 label，或用 /project <key-or-label>。",
-            "輸入 menu 返回主選單，輸入 cancel 離開。",
+            "輸入 /menu 返回主選單。",
             "其他自然語言會直接送進 AI。",
         ]
     )
-    return "\n".join(lines) if workspaces else "No projects discovered."
+    return ButtonResponse("\n".join(lines), buttons=buttons)
 
 
 def _resolve_project_selection(settings: Settings, text: str):
@@ -1242,7 +1247,7 @@ async def _handle_menu_action(
         store.clear_ui_flow(chat_id)
         return (
             f"Provider updated.\nprovider: {next_state['provider']}\nmodel: {next_state['model']}\n\n"
-            "輸入 menu 可回到主選單，或直接輸入自然語言交給 AI。"
+            "輸入 /menu 可回到主選單，或直接輸入自然語言交給 AI。"
         )
 
     if command == "menu:model":
@@ -1256,7 +1261,24 @@ async def _handle_menu_action(
         store.clear_ui_flow(chat_id)
         return (
             f"Model updated.\nprovider: {next_state['provider']}\nmodel: {next_state['model']}\n\n"
-            "輸入 menu 可回到主選單，或直接輸入自然語言交給 AI。"
+            "輸入 /menu 可回到主選單，或直接輸入自然語言交給 AI。"
+        )
+
+    if command.startswith("menu:set_project:"):
+        project_ref = command.removeprefix("menu:set_project:").strip()
+        if not project_ref:
+            return "Empty project selection."
+        workspace = _resolve_project_selection(settings, project_ref)
+        if workspace is None:
+            return (
+                f"Project not found: {project_ref}\n"
+                "Use /project to open the project chooser, or /projects to list available workspaces."
+            )
+        next_state = store.set_project(chat_id, workspace.key, workspace.label, str(workspace.path))
+        store.clear_ui_flow(chat_id)
+        return (
+            f"Project updated.\nproject: {next_state['project_name']}\npath: {next_state['project_path']}\n\n"
+            "輸入 /menu 可回到主選單，或直接輸入自然語言交給 AI。"
         )
 
     if command == "menu:projects":
@@ -1285,22 +1307,10 @@ async def _handle_flow_input(
     if text.startswith("/"):
         return None
 
-    if text.lower() in {"cancel", "取消"}:
-        if kind == FLOW_AWAIT_BRAIN_SCHEDULE_CONFIRM:
-            return await _send_schedule_confirm_source_to_agent(chat_id, store, agents)
-        store.clear_ui_flow(chat_id)
-        return "Menu input canceled."
-
     if kind == FLOW_AWAIT_MODEL:
-        normalized = text.strip()
-        if normalized.lower() in {"menu", "選單", "back", "返回"}:
-            return await _handle_menu_action(chat_id, "menu:open", settings, store, agents)
-        return "請直接按 model 按鈕切換，或用 /model <name>。輸入 cancel 可離開。"
+        return "請直接按 model 按鈕切換，或用 /model <name>。輸入 /menu 返回主選單。"
 
     if kind == FLOW_AWAIT_PROVIDER:
-        normalized = text.strip().lower()
-        if normalized in {"menu", "選單", "back", "返回"}:
-            return await _handle_menu_action(chat_id, "menu:open", settings, store, agents)
         selected_provider = _resolve_provider_selection(text)
         if selected_provider is not None:
             return await _handle_menu_action(chat_id, f"menu:set_provider:{selected_provider}", settings, store, agents)
@@ -1308,16 +1318,13 @@ async def _handle_flow_input(
 
     if kind == FLOW_AWAIT_PROJECT:
         normalized = text.strip()
-        lowered = normalized.lower()
-        if lowered in {"menu", "選單", "back", "返回"}:
-            return await _handle_menu_action(chat_id, "menu:open", settings, store, agents)
         workspace = _resolve_project_selection(settings, normalized)
         if workspace is not None:
             next_state = store.set_project(chat_id, workspace.key, workspace.label, str(workspace.path))
             store.clear_ui_flow(chat_id)
             return (
                 f"Project updated.\nproject: {next_state['project_name']}\npath: {next_state['project_path']}\n\n"
-                "輸入 menu 可回到主選單，或直接輸入自然語言交給 AI。"
+                "輸入 /menu 可回到主選單，或直接輸入自然語言交給 AI。"
             )
         return None
 
@@ -1507,7 +1514,7 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
         return await handle_command(ctx.chat_id, request, settings, store, agents)
     if request.kind == CONTROL_REQUEST:
         return await handle_control(ctx.chat_id, request, store, agents)
-    return await handle_agent(ctx.chat_id, request, agents)
+    return await handle_agent(ctx.chat_id, request, store, agents)
 
 
 async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Settings, store: ChatStateStore, agents: AgentCoordinator) -> str:
@@ -1517,6 +1524,17 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         return await _handle_brain_action(chat_id, request.command, settings, store, agents)
 
     state = store.get_chat_state(chat_id)
+
+    # Support inline project key callbacks (data is just "proj-xxxxxxxxxxxx").
+    if request.command and request.command.startswith("proj-"):
+        workspace = _resolve_project_selection(settings, request.command)
+        if workspace is not None:
+            next_state = store.set_project(chat_id, workspace.key, workspace.label, str(workspace.path))
+            store.clear_ui_flow(chat_id)
+            return (
+                f"Project updated.\nproject: {next_state['project_name']}\npath: {next_state['project_path']}\n\n"
+                "輸入 /menu 可回到主選單，或直接輸入自然語言交給 AI。"
+            )
 
     if request.command in {"start", "help"}:
         return _help_text()
@@ -1599,10 +1617,12 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
                 [
                     "agent status",
                     f"state: running",
-                    f"job: {current.get('job_id')}",
                     f"kind: {current.get('kind')}",
                     f"goal: {current.get('goal') or '<resume>'}",
                     f"run_id: {current.get('run_id') or '-'}",
+                    f"project: {current.get('project_name') or '-'}",
+                    f"path: {current.get('project_path') or '-'}",
+                    f"queue_pending: {len(store.get_agent_queue(chat_id))}",
                 ]
             )
         queue = store.get_agent_queue(chat_id)
@@ -1612,10 +1632,12 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
                 [
                     "agent status",
                     "state: queued",
-                    f"next_job: {next_job.get('job_id')}",
                     f"kind: {next_job.get('kind')}",
                     f"goal: {next_job.get('goal') or '<resume>'}",
                     f"run_id: {next_job.get('run_id') or '-'}",
+                    f"project: {next_job.get('project_name') or '-'}",
+                    f"path: {next_job.get('project_path') or '-'}",
+                    f"queue_pending: {len(queue)}",
                 ]
             )
         last = state.get("agent_last_run") if isinstance(state.get("agent_last_run"), dict) else None
@@ -1625,9 +1647,10 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
                     "agent status",
                     "state: idle",
                     f"last_status: {last.get('status')}",
-                    f"last_job: {last.get('job_id')}",
                     f"last_kind: {last.get('kind')}",
                     f"last_run_id: {last.get('run_id') or '-'}",
+                    f"project: {last.get('project_name') or '-'}",
+                    f"path: {last.get('project_path') or '-'}",
                     f"elapsed_seconds: {last.get('elapsed_seconds')}",
                 ]
             )
@@ -1697,7 +1720,7 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
 
     if request.command == "brainorganize":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_ORGANIZE_TEXT})
-        return "請先貼上你要整理的原始內容。輸入 cancel 可離開。"
+        return "請先貼上你要整理的原始內容。輸入 /menu 可離開流程。"
 
     if request.command == "brainbatch":
         return await _handle_brain_action(chat_id, "brain:batch", settings, store, agents)
@@ -1772,7 +1795,7 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         payload = request.payload.strip()
         if not payload:
             store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_SCHEDULE_TITLE})
-            return "請輸入行程標題，或直接輸入自然語言，例如：今天下午6點半要吃藥。輸入 cancel 可離開。"
+            return "請輸入行程標題，或直接輸入自然語言，例如：今天下午6點半要吃藥。輸入 /menu 可離開流程。"
         parsed = parse_natural_language_schedule(payload)
         if parsed is not None:
             _set_schedule_confirm_flow(chat_id, store, parsed)
@@ -1872,12 +1895,29 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
     return f"Unknown command: /{request.command}\nUse /help."
 
 
-async def handle_control(chat_id: int, request: ClassifiedRequest, store: ChatStateStore, agents: AgentCoordinator) -> str:
+async def handle_control(
+    chat_id: int,
+    request: ClassifiedRequest,
+    store: ChatStateStore,
+    agents: AgentCoordinator,
+) -> str | AppEvent:
     if request.command in {"reset", "newthread"}:
         store.clear_thread_id(chat_id)
         return "Thread state cleared for the current provider."
     if request.command == "restart":
         return "Restart is managed by teleapp supervisor. Use Telegram command /restart."
+    if request.command == "panic":
+        stop_sent = agents.stop(chat_id)
+        summary = store.panic_clear_agent_runtime(chat_id)
+        return "\n".join(
+            [
+                "Panic cleanup applied.",
+                f"stop_signal_sent: {stop_sent}",
+                f"cleared_current_run: {summary['had_current_run']}",
+                f"cleared_queue_jobs: {summary['queued_jobs']}",
+                f"cleared_scheduled_jobs: {summary['scheduled_jobs']}",
+            ]
+        )
     if request.command == "clearqueue":
         agents.clear_queue(chat_id)
         return "Queued agent jobs cleared."
@@ -1887,11 +1927,21 @@ async def handle_control(chat_id: int, request: ClassifiedRequest, store: ChatSt
     if request.command in {"continue", "next"}:
         current = store.get_chat_state(chat_id).get("agent_current_run")
         if isinstance(current, dict):
-            return f"An agent run is already active.\njob: {current.get('job_id')}\ngoal: {current.get('goal') or '<resume>'}"
+            return (
+                "An agent run is already active.\n"
+                f"goal: {current.get('goal') or '<resume>'}\n"
+                f"project: {current.get('project_name') or '-'}\n"
+                f"path: {current.get('project_path') or '-'}"
+            )
         queue = store.get_agent_queue(chat_id)
         if queue:
             next_job = queue[0]
-            return f"Next queued job:\n{next_job.get('goal') or '<resume>'}\nproject: {next_job.get('project_name')}"
+            return (
+                "Next queued job:\n"
+                f"goal: {next_job.get('goal') or '<resume>'}\n"
+                f"project: {next_job.get('project_name')}\n"
+                f"path: {next_job.get('project_path') or '-'}"
+            )
         return "No active or queued agent job.\nUse /run <goal> or /agent <goal>."
     if request.command == "stop":
         if agents.stop(chat_id):
@@ -1905,16 +1955,35 @@ async def handle_control(chat_id: int, request: ClassifiedRequest, store: ChatSt
         goal = request.payload.strip()
         if not goal:
             return "Usage: /run <goal>"
-        job_id, position, started = agents.enqueue(chat_id, goal, source=request.command)
+        _job_id, position, started = agents.enqueue(chat_id, goal, source=request.command)
+        state = store.get_chat_state(chat_id)
+        queue_waiting = max(0, int(position) - 1)
         if started:
-            return f"Provider run started.\njob: {job_id}\ngoal: {goal}"
-        return f"Provider run queued.\njob: {job_id}\nposition: {position}\ngoal: {goal}"
+            return _status_event(
+                chat_id,
+                "Provider run started.\n"
+                f"goal: {goal}\n"
+                f"project: {state['project_name']}\n"
+                f"path: {state['project_path']}\n"
+                f"queue_waiting: {queue_waiting}\n"
+                "elapsed: 00:00\n"
+                "progress: every 1 second (elapsed timer in [status])",
+            )
+        return (
+            "Provider run queued.\n"
+            f"goal: {goal}\n"
+            f"project: {state['project_name']}\n"
+            f"path: {state['project_path']}\n"
+            f"queue_position: {position}\n"
+            "elapsed: 00:00\n"
+            "hint: use /queue to check waiting jobs"
+        )
     if request.command == "agent":
         options, error = _parse_agent_options(request.payload)
         if options is None:
             return error or "Usage: /agent ..."
         assert options.goal is not None
-        job_id, run_id, position, started = agents.enqueue_auto_dev(
+        _job_id, run_id, position, started = agents.enqueue_auto_dev(
             chat_id,
             options.goal,
             source="agent",
@@ -1925,9 +1994,30 @@ async def handle_control(chat_id: int, request: ClassifiedRequest, store: ChatSt
             enable_pr=options.enable_pr,
             disable_post_run=options.disable_post_run,
         )
+        state = store.get_chat_state(chat_id)
+        queue_waiting = max(0, int(position) - 1)
         if started:
-            return f"Auto-dev run started.\njob: {job_id}\nrun_id: {run_id}\ngoal: {options.goal}"
-        return f"Auto-dev run queued.\njob: {job_id}\nrun_id: {run_id}\nposition: {position}\ngoal: {options.goal}"
+            return _status_event(
+                chat_id,
+                "Auto-dev run started.\n"
+                f"goal: {options.goal}\n"
+                f"project: {state['project_name']}\n"
+                f"path: {state['project_path']}\n"
+                f"queue_waiting: {queue_waiting}\n"
+                f"run_id: {run_id}\n"
+                "elapsed: 00:00\n"
+                "progress: every 1 second (elapsed timer in [status])",
+            )
+        return (
+            "Auto-dev run queued.\n"
+            f"goal: {options.goal}\n"
+            f"project: {state['project_name']}\n"
+            f"path: {state['project_path']}\n"
+            f"queue_position: {position}\n"
+            f"run_id: {run_id}\n"
+            "elapsed: 00:00\n"
+            "hint: use /queue to check waiting jobs"
+        )
     if request.command == "agentresume":
         parsed, error = _parse_resume_options(request.payload)
         if parsed is None:
@@ -1942,7 +2032,7 @@ async def handle_control(chat_id: int, request: ClassifiedRequest, store: ChatSt
         if not resume_target:
             return "No prior run_id found. Use /agentresume <run_id_or_path>."
 
-        job_id, run_id, position, started = agents.resume_auto_dev(
+        _job_id, run_id, position, started = agents.resume_auto_dev(
             chat_id,
             resume_target=resume_target,
             source="agentresume",
@@ -1953,9 +2043,32 @@ async def handle_control(chat_id: int, request: ClassifiedRequest, store: ChatSt
             enable_pr=options.enable_pr,
             disable_post_run=options.disable_post_run,
         )
+        state = store.get_chat_state(chat_id)
+        queue_waiting = max(0, int(position) - 1)
         if started:
-            return f"Auto-dev resume started.\njob: {job_id}\nrun_id: {run_id}\nresume: {resume_target}"
-        return f"Auto-dev resume queued.\njob: {job_id}\nrun_id: {run_id}\nposition: {position}\nresume: {resume_target}"
+            return _status_event(
+                chat_id,
+                "Auto-dev resume started.\n"
+                f"goal: <resume>\n"
+                f"project: {state['project_name']}\n"
+                f"path: {state['project_path']}\n"
+                f"queue_waiting: {queue_waiting}\n"
+                f"run_id: {run_id}\n"
+                f"resume: {resume_target}\n"
+                "elapsed: 00:00\n"
+                "progress: every 1 second (elapsed timer in [status])",
+            )
+        return (
+            "Auto-dev resume queued.\n"
+            f"goal: <resume>\n"
+            f"project: {state['project_name']}\n"
+            f"path: {state['project_path']}\n"
+            f"queue_position: {position}\n"
+            f"run_id: {run_id}\n"
+            f"resume: {resume_target}\n"
+            "elapsed: 00:00\n"
+            "hint: use /queue to check waiting jobs"
+        )
     if request.command == "schedule":
         parsed, error = _parse_schedule_options(request.payload)
         if parsed is None:
@@ -1964,7 +2077,7 @@ async def handle_control(chat_id: int, request: ClassifiedRequest, store: ChatSt
         assert isinstance(options, AutoDevOptions)
         run_at = str(parsed["run_at"])
         assert options.goal is not None
-        job_id, run_id, count = agents.schedule_auto_dev(
+        _job_id, run_id, count = agents.schedule_auto_dev(
             chat_id,
             options.goal,
             run_at,
@@ -1976,16 +2089,44 @@ async def handle_control(chat_id: int, request: ClassifiedRequest, store: ChatSt
             enable_pr=options.enable_pr,
             disable_post_run=options.disable_post_run,
         )
-        return f"Scheduled auto-dev run.\njob: {job_id}\nrun_id: {run_id}\nrun_at: {run_at}\ncount: {count}"
+        state = store.get_chat_state(chat_id)
+        return (
+            "Scheduled auto-dev run.\n"
+            f"goal: {options.goal}\n"
+            f"project: {state['project_name']}\n"
+            f"path: {state['project_path']}\n"
+            f"run_id: {run_id}\n"
+            f"run_at: {run_at}\n"
+            f"scheduled_count: {count}"
+        )
     return f"Unknown control command: /{request.command}"
 
 
-async def handle_agent(chat_id: int, request: ClassifiedRequest, agents: AgentCoordinator) -> str:
+async def handle_agent(chat_id: int, request: ClassifiedRequest, store: ChatStateStore, agents: AgentCoordinator) -> str:
     prompt = request.payload.strip()
     if not prompt:
         return "空白訊息，沒有可送給 AI 的內容。請輸入文字或使用 /help。"
-    job_id, position, started = agents.enqueue(chat_id, prompt, source="message")
+    _job_id, position, started = agents.enqueue(chat_id, prompt, source="message")
+    state = store.get_chat_state(chat_id)
+    queue_waiting = max(0, int(position) - 1)
     if started:
-        return f"Provider run started.\njob: {job_id}\ngoal: {prompt}"
-    return f"Provider run queued.\njob: {job_id}\nposition: {position}\ngoal: {prompt}"
+        return _status_event(
+            chat_id,
+            "Provider run started.\n"
+            f"goal: {prompt}\n"
+            f"project: {state['project_name']}\n"
+            f"path: {state['project_path']}\n"
+            f"queue_waiting: {queue_waiting}\n"
+            "elapsed: 00:00\n"
+            "progress: every 1 second (elapsed timer in [status])",
+        )
+    return (
+        "Provider run queued.\n"
+        f"goal: {prompt}\n"
+        f"project: {state['project_name']}\n"
+        f"path: {state['project_path']}\n"
+        f"queue_position: {position}\n"
+        "elapsed: 00:00\n"
+        "hint: use /queue to check waiting jobs"
+    )
 

@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-robot = "robot.app:main"
+robot = "robot.entry:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -14,7 +14,7 @@ from teleapp.protocol import AppEvent
 
 from robot.agents import AgentCoordinator
 from robot.config import load_settings
-from robot.routing import handle_request
+from robot.routing import AGENT_REQUEST, classify_request, handle_request
 from robot.state import ChatStateStore
 from robot.text import configure_stdio_utf8
 
@@ -68,6 +68,31 @@ async def on_shutdown():
 
 @app.message
 async def on_message(ctx):
+    request = classify_request(ctx)
+    if request.kind == AGENT_REQUEST and request.payload.strip():
+        queue = getattr(app.supervisor, "_event_queue", None)
+        if queue is not None:
+            state = STORE.get_chat_state(ctx.chat_id)
+            queue_pending = len(STORE.get_agent_queue(ctx.chat_id))
+            queue.put_nowait(
+                AppEvent(
+                    type="status",
+                    text="\n".join(
+                        [
+                            "Request received.",
+                            f"goal: {request.payload.strip()}",
+                            f"project: {state['project_name']}",
+                            f"path: {state['project_path']}",
+                            f"queue_pending: {queue_pending}",
+                            "elapsed: 00:00",
+                        ]
+                    ),
+                    chat_id=ctx.chat_id,
+                    request_id=ctx.request_id,
+                    stream="inprocess",
+                    raw={"status_key": "heartbeat", "replace": True},
+                )
+            )
     return await handle_request(ctx, SETTINGS, STORE, AGENTS)
 
 
@@ -134,6 +159,12 @@ async def _telegram_error_handler(update: object, context: ContextTypes.DEFAULT_
 
 
 def main() -> None:
+    if os.getenv("ROBOT_ALLOW_DIRECT_POLLING", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        raise RuntimeError(
+            "Direct polling mode is disabled by default. "
+            "Use `teleapp robot.py` (or start_robot.bat/start_robot.sh). "
+            "For explicit dev/debug direct polling, run `robot --standalone`."
+        )
     configure_stdio_utf8()
     application = app.build_application()
     application.add_error_handler(_telegram_error_handler)

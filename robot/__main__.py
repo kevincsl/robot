@@ -1,6 +1,5 @@
-from robot.app import main
+from robot.entry import main
 
 
 if __name__ == "__main__":
     main()
-
