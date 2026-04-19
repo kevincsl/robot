@@ -337,13 +337,29 @@ class ClassifiedRequest:
     command: str | None
     payload: str
 
+    request_id: str | None = None
 
-def _status_event(chat_id: int, text: str, *, status_key: str = "heartbeat", replace: bool = False) -> AppEvent:
+
+def heartbeat_status_key(request_id: str | None) -> str:
+    clean = str(request_id or "").strip()
+    if not clean:
+        return "heartbeat"
+    return f"heartbeat:{clean}"
+
+
+def _status_event(
+    chat_id: int,
+    text: str,
+    *,
+    status_key: str = "heartbeat",
+    replace: bool = False,
+    request_id: str | None = None,
+) -> AppEvent:
     return AppEvent(
         type="status",
         text=text,
         chat_id=chat_id,
-        request_id=None,
+        request_id=request_id,
         stream="inprocess",
         raw={"status_key": status_key, "replace": replace},
     )
@@ -528,19 +544,19 @@ def classify_request(ctx: MessageContext) -> ClassifiedRequest:
         command = _extract_command_from_text(text)
 
     if command == "menu" or (command and command.startswith(MENU_COMMAND_PREFIX)):
-        return ClassifiedRequest(COMMAND_REQUEST, command, "")
+        return ClassifiedRequest(COMMAND_REQUEST, command, "", ctx.request_id)
     if command == "brain" or (command and command.startswith(BRAIN_COMMAND_PREFIX)):
-        return ClassifiedRequest(COMMAND_REQUEST, command, "")
+        return ClassifiedRequest(COMMAND_REQUEST, command, "", ctx.request_id)
 
     if command in COMMAND_NAMES:
-        return ClassifiedRequest(COMMAND_REQUEST, command, _resolved_payload(text, command))
+        return ClassifiedRequest(COMMAND_REQUEST, command, _resolved_payload(text, command), ctx.request_id)
     if command in CONTROL_NAMES:
-        return ClassifiedRequest(CONTROL_REQUEST, command, _resolved_payload(text, command))
+        return ClassifiedRequest(CONTROL_REQUEST, command, _resolved_payload(text, command), ctx.request_id)
     if command is not None:
-        return ClassifiedRequest(COMMAND_REQUEST, command, _resolved_payload(text, command))
+        return ClassifiedRequest(COMMAND_REQUEST, command, _resolved_payload(text, command), ctx.request_id)
     if text.startswith("/"):
-        return ClassifiedRequest(COMMAND_REQUEST, command, _command_payload(text))
-    return ClassifiedRequest(AGENT_REQUEST, None, text)
+        return ClassifiedRequest(COMMAND_REQUEST, command, _command_payload(text), ctx.request_id)
+    return ClassifiedRequest(AGENT_REQUEST, None, text, ctx.request_id)
 
 
 def _status_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str:
@@ -1962,7 +1978,14 @@ async def handle_control(
         goal = request.payload.strip()
         if not goal:
             return "Usage: /run <goal>"
-        _job_id, position, started = agents.enqueue(chat_id, goal, source=request.command)
+        status_key = heartbeat_status_key(request.request_id)
+        _job_id, position, started = agents.enqueue(
+            chat_id,
+            goal,
+            source=request.command,
+            request_id=request.request_id,
+            status_key=status_key,
+        )
         state = store.get_chat_state(chat_id)
         queue_waiting = max(0, int(position) - 1)
         if started:
@@ -1975,6 +1998,8 @@ async def handle_control(
                 f"queue_waiting: {queue_waiting}\n"
                 "elapsed: 00:00\n"
                 "heartbeat: starting (first update within 1 second)",
+                status_key=status_key,
+                request_id=request.request_id,
             )
         return (
             "Provider run queued.\n"
@@ -1990,6 +2015,7 @@ async def handle_control(
         if options is None:
             return error or "Usage: /agent ..."
         assert options.goal is not None
+        status_key = heartbeat_status_key(request.request_id)
         _job_id, run_id, position, started = agents.enqueue_auto_dev(
             chat_id,
             options.goal,
@@ -2000,6 +2026,8 @@ async def handle_control(
             enable_push=options.enable_push,
             enable_pr=options.enable_pr,
             disable_post_run=options.disable_post_run,
+            request_id=request.request_id,
+            status_key=status_key,
         )
         state = store.get_chat_state(chat_id)
         queue_waiting = max(0, int(position) - 1)
@@ -2014,6 +2042,8 @@ async def handle_control(
                 f"run_id: {run_id}\n"
                 "elapsed: 00:00\n"
                 "heartbeat: starting (first update within 1 second)",
+                status_key=status_key,
+                request_id=request.request_id,
             )
         return (
             "Auto-dev run queued.\n"
@@ -2039,6 +2069,7 @@ async def handle_control(
         if not resume_target:
             return "No prior run_id found. Use /agentresume <run_id_or_path>."
 
+        status_key = heartbeat_status_key(request.request_id)
         _job_id, run_id, position, started = agents.resume_auto_dev(
             chat_id,
             resume_target=resume_target,
@@ -2049,6 +2080,8 @@ async def handle_control(
             enable_push=options.enable_push,
             enable_pr=options.enable_pr,
             disable_post_run=options.disable_post_run,
+            request_id=request.request_id,
+            status_key=status_key,
         )
         state = store.get_chat_state(chat_id)
         queue_waiting = max(0, int(position) - 1)
@@ -2064,6 +2097,8 @@ async def handle_control(
                 f"resume: {resume_target}\n"
                 "elapsed: 00:00\n"
                 "heartbeat: starting (first update within 1 second)",
+                status_key=status_key,
+                request_id=request.request_id,
             )
         return (
             "Auto-dev resume queued.\n"
@@ -2084,6 +2119,7 @@ async def handle_control(
         assert isinstance(options, AutoDevOptions)
         run_at = str(parsed["run_at"])
         assert options.goal is not None
+        status_key = heartbeat_status_key(request.request_id or run_at)
         _job_id, run_id, count = agents.schedule_auto_dev(
             chat_id,
             options.goal,
@@ -2095,6 +2131,8 @@ async def handle_control(
             enable_push=options.enable_push,
             enable_pr=options.enable_pr,
             disable_post_run=options.disable_post_run,
+            request_id=request.request_id,
+            status_key=status_key,
         )
         state = store.get_chat_state(chat_id)
         return (
@@ -2113,7 +2151,14 @@ async def handle_agent(chat_id: int, request: ClassifiedRequest, store: ChatStat
     prompt = request.payload.strip()
     if not prompt:
         return "空白訊息，沒有可送給 AI 的內容。請輸入文字或使用 /help。"
-    _job_id, position, started = agents.enqueue(chat_id, prompt, source="message")
+    status_key = heartbeat_status_key(request.request_id)
+    _job_id, position, started = agents.enqueue(
+        chat_id,
+        prompt,
+        source="message",
+        request_id=request.request_id,
+        status_key=status_key,
+    )
     state = store.get_chat_state(chat_id)
     queue_waiting = max(0, int(position) - 1)
     if started:
@@ -2126,6 +2171,8 @@ async def handle_agent(chat_id: int, request: ClassifiedRequest, store: ChatStat
             f"queue_waiting: {queue_waiting}\n"
             "elapsed: 00:00\n"
             "heartbeat: starting (first update within 1 second)",
+            status_key=status_key,
+            request_id=request.request_id,
         )
     return (
         "Provider run queued.\n"

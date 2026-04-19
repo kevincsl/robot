@@ -27,7 +27,7 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
         self.coordinator = AgentCoordinator(self.settings, self.store)
         self.events: list[tuple[int, str, str]] = []
 
-        async def capture(chat_id: int, text: str, event_type: str = "output", raw=None) -> None:
+        async def capture(chat_id: int, text: str, event_type: str = "output", raw=None, request_id=None) -> None:
             self.events.append((chat_id, event_type, text))
 
         self.coordinator._emit = capture  # type: ignore[method-assign]

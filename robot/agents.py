@@ -41,6 +41,8 @@ class AgentJob:
     model: str
     thread_id: str | None
     source: str
+    request_id: str | None = None
+    status_key: str | None = None
     run_id: str | None = None
     profile: str | None = None
     config_path: str | None = None
@@ -63,6 +65,8 @@ class AgentJob:
             "model": self.model,
             "thread_id": self.thread_id,
             "source": self.source,
+            "request_id": self.request_id,
+            "status_key": self.status_key,
             "run_id": self.run_id,
             "profile": self.profile,
             "config_path": self.config_path,
@@ -176,11 +180,20 @@ class AgentCoordinator:
                     ]
                 ),
                 event_type="status",
-                raw={"status_key": "heartbeat", "replace": True},
+                request_id=str(next_job.get("request_id") or "").strip() or None,
+                raw={"status_key": str(next_job.get("status_key") or "heartbeat"), "replace": True},
             )
             await asyncio.sleep(1)
 
-    def enqueue(self, chat_id: int, goal: str, *, source: str = "manual") -> tuple[str, int, bool]:
+    def enqueue(
+        self,
+        chat_id: int,
+        goal: str,
+        *,
+        source: str = "manual",
+        request_id: str | None = None,
+        status_key: str | None = None,
+    ) -> tuple[str, int, bool]:
         state = self._store.get_chat_state(chat_id)
         project_display = format_project_with_branch(
             str(state["project_name"]),
@@ -197,6 +210,8 @@ class AgentCoordinator:
             model=str(state["model"]),
             thread_id=state["thread_id"],
             source=source,
+            request_id=request_id,
+            status_key=status_key,
         )
         position = self._store.enqueue_agent_job(chat_id, job.to_dict())
         started = position == 1 and not self.is_running(chat_id)
@@ -215,6 +230,8 @@ class AgentCoordinator:
         enable_push: bool = False,
         enable_pr: bool = False,
         disable_post_run: bool = False,
+        request_id: str | None = None,
+        status_key: str | None = None,
     ) -> tuple[str, str, int, bool]:
         state = self._store.get_chat_state(chat_id)
         project_display = format_project_with_branch(
@@ -233,6 +250,8 @@ class AgentCoordinator:
             model=profile or "default",
             thread_id=None,
             source=source,
+            request_id=request_id,
+            status_key=status_key,
             run_id=run_id,
             profile=profile,
             config_path=config_path,
@@ -258,6 +277,8 @@ class AgentCoordinator:
         enable_push: bool = False,
         enable_pr: bool = False,
         disable_post_run: bool = False,
+        request_id: str | None = None,
+        status_key: str | None = None,
     ) -> tuple[str, str, int, bool]:
         state = self._store.get_chat_state(chat_id)
         project_display = format_project_with_branch(
@@ -276,6 +297,8 @@ class AgentCoordinator:
             model=profile or "default",
             thread_id=None,
             source=source,
+            request_id=request_id,
+            status_key=status_key,
             run_id=run_id,
             profile=profile,
             config_path=config_path,
@@ -303,6 +326,8 @@ class AgentCoordinator:
         enable_push: bool = False,
         enable_pr: bool = False,
         disable_post_run: bool = False,
+        request_id: str | None = None,
+        status_key: str | None = None,
     ) -> tuple[str, str, int]:
         state = self._store.get_chat_state(chat_id)
         project_display = format_project_with_branch(
@@ -321,6 +346,8 @@ class AgentCoordinator:
             model=profile or "default",
             thread_id=None,
             source=source,
+            request_id=request_id,
+            status_key=status_key,
             run_id=run_id,
             profile=profile,
             config_path=config_path,
@@ -542,7 +569,8 @@ class AgentCoordinator:
                     ]
                 ),
                 event_type="status",
-                raw={"status_key": "heartbeat", "replace": True},
+                request_id=str(job.get("request_id") or "").strip() or None,
+                raw={"status_key": str(job.get("status_key") or "heartbeat"), "replace": True},
             )
 
             heartbeat_task = asyncio.create_task(self._heartbeat_loop(chat_id, job, invocation))
@@ -631,7 +659,8 @@ class AgentCoordinator:
                         ]
                     ),
                     event_type="status",
-                    raw={"status_key": "heartbeat", "replace": True},
+                    request_id=str(job.get("request_id") or "").strip() or None,
+                    raw={"status_key": str(job.get("status_key") or "heartbeat"), "replace": True},
                 )
                 self._worker_tasks.pop(chat_id, None)
                 return
@@ -676,7 +705,8 @@ class AgentCoordinator:
                     ]
                 ),
                 event_type="status",
-                raw={"status_key": "heartbeat", "replace": True},
+                request_id=str(job.get("request_id") or "").strip() or None,
+                raw={"status_key": str(job.get("status_key") or "heartbeat"), "replace": True},
             )
             await self._emit(chat_id, result.final_text, event_type="output")
 
@@ -708,7 +738,8 @@ class AgentCoordinator:
                     ]
                 ),
                 event_type="status",
-                raw={"status_key": "heartbeat", "replace": True},
+                request_id=str(job.get("request_id") or "").strip() or None,
+                raw={"status_key": str(job.get("status_key") or "heartbeat"), "replace": True},
             )
             await asyncio.sleep(1)
 
@@ -738,7 +769,14 @@ class AgentCoordinator:
         percent = int(ratio * 100)
         return f"[{bar}] {percent}% (rolling)"
 
-    async def _emit(self, chat_id: int, text: str, event_type: str = "output", raw: dict[str, Any] | None = None) -> None:
+    async def _emit(
+        self,
+        chat_id: int,
+        text: str,
+        event_type: str = "output",
+        raw: dict[str, Any] | None = None,
+        request_id: str | None = None,
+    ) -> None:
         if self._supervisor is None:
             return
         queue = getattr(self._supervisor, "_event_queue", None)
@@ -749,7 +787,7 @@ class AgentCoordinator:
                 type=event_type,
                 text=text,
                 chat_id=chat_id,
-                request_id=None,
+                request_id=request_id,
                 stream="inprocess",
                 raw=raw,
             )

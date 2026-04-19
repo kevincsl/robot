@@ -15,7 +15,7 @@ from teleapp.protocol import AppEvent
 from robot.agents import AgentCoordinator
 from robot.config import load_settings
 from robot.projects import format_project_with_branch
-from robot.routing import AGENT_REQUEST, classify_request, handle_request
+from robot.routing import AGENT_REQUEST, classify_request, handle_request, heartbeat_status_key
 from robot.state import ChatStateStore
 from robot.text import configure_stdio_utf8
 
@@ -95,7 +95,7 @@ async def on_message(ctx):
                     chat_id=ctx.chat_id,
                     request_id=ctx.request_id,
                     stream="inprocess",
-                    raw={"status_key": "heartbeat", "replace": False},
+                    raw={"status_key": heartbeat_status_key(ctx.request_id), "replace": False},
                 )
             )
     return await handle_request(ctx, SETTINGS, STORE, AGENTS)
