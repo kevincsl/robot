@@ -151,10 +151,10 @@ class AgentCoordinator:
     async def _queue_watchdog_loop(self, chat_id: int) -> None:
         started = monotonic()
         while True:
-            await asyncio.sleep(1)
             current = self._store.get_chat_state(chat_id).get("agent_current_run")
             queue = self._store.get_agent_queue(chat_id)
             if isinstance(current, dict):
+                await asyncio.sleep(1)
                 continue
             if not queue:
                 self._queue_watchdogs.pop(chat_id, None)
@@ -178,6 +178,7 @@ class AgentCoordinator:
                 event_type="status",
                 raw={"status_key": "heartbeat", "replace": True},
             )
+            await asyncio.sleep(1)
 
     def enqueue(self, chat_id: int, goal: str, *, source: str = "manual") -> tuple[str, int, bool]:
         state = self._store.get_chat_state(chat_id)
@@ -537,7 +538,7 @@ class AgentCoordinator:
                         f"queue_pending: {len(self._store.get_agent_queue(chat_id))}",
                         f"progress: {self._build_heartbeat_progress(0)}",
                         f"elapsed: {self._format_elapsed(0)}",
-                        "status updates: every 1 second",
+                        "heartbeat: active",
                     ]
                 ),
                 event_type="status",
@@ -687,7 +688,6 @@ class AgentCoordinator:
     ) -> None:
         started = datetime.now()
         while True:
-            await asyncio.sleep(1)
             elapsed = int((datetime.now() - started).total_seconds())
             current_goal = str(job.get("goal") or "").strip() or "<resume>"
             current_project = str(job.get("project_display") or job.get("project_name") or "-")
@@ -710,6 +710,7 @@ class AgentCoordinator:
                 event_type="status",
                 raw={"status_key": "heartbeat", "replace": True},
             )
+            await asyncio.sleep(1)
 
     @staticmethod
     def _format_elapsed(seconds: int) -> str:

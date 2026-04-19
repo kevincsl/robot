@@ -1974,7 +1974,7 @@ async def handle_control(
                 f"path: {state['project_path']}\n"
                 f"queue_waiting: {queue_waiting}\n"
                 "elapsed: 00:00\n"
-                "progress: every 1 second (elapsed timer in [status])",
+                "heartbeat: starting (first update within 1 second)",
             )
         return (
             "Provider run queued.\n"
@@ -2013,7 +2013,7 @@ async def handle_control(
                 f"queue_waiting: {queue_waiting}\n"
                 f"run_id: {run_id}\n"
                 "elapsed: 00:00\n"
-                "progress: every 1 second (elapsed timer in [status])",
+                "heartbeat: starting (first update within 1 second)",
             )
         return (
             "Auto-dev run queued.\n"
@@ -2063,7 +2063,7 @@ async def handle_control(
                 f"run_id: {run_id}\n"
                 f"resume: {resume_target}\n"
                 "elapsed: 00:00\n"
-                "progress: every 1 second (elapsed timer in [status])",
+                "heartbeat: starting (first update within 1 second)",
             )
         return (
             "Auto-dev resume queued.\n"
@@ -2125,7 +2125,7 @@ async def handle_agent(chat_id: int, request: ClassifiedRequest, store: ChatStat
             f"path: {state['project_path']}\n"
             f"queue_waiting: {queue_waiting}\n"
             "elapsed: 00:00\n"
-            "progress: every 1 second (elapsed timer in [status])",
+            "heartbeat: starting (first update within 1 second)",
         )
     return (
         "Provider run queued.\n"
@@ -2136,5 +2136,6 @@ async def handle_agent(chat_id: int, request: ClassifiedRequest, store: ChatStat
         "elapsed: 00:00\n"
         "hint: use /queue to check waiting jobs"
     )
+
 
 
