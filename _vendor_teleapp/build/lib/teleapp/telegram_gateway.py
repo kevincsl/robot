@@ -533,7 +533,7 @@ class TelegramGateway:
         if event.type == "output":
             return event.text
         if event.type == "status":
-            return f"[status] {event.text}"
+            return event.text
         if event.type == "error":
             return f"[error] {event.text}"
         return f"[{event.type}] {event.text}"

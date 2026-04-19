@@ -90,7 +90,7 @@ async def on_message(ctx):
                     chat_id=ctx.chat_id,
                     request_id=ctx.request_id,
                     stream="inprocess",
-                    raw={"status_key": "heartbeat", "replace": True},
+                    raw={"status_key": "heartbeat", "replace": False},
                 )
             )
     return await handle_request(ctx, SETTINGS, STORE, AGENTS)
