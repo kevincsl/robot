@@ -1698,9 +1698,18 @@ class RoutingTests(unittest.TestCase):
         assert isinstance(body, AppEvent)
         self.assertEqual(body.type, "status")
         self.assertIn("Provider run started.", body.text)
+        self.assertIn("heartbeat: starting (first update within 1 second)", body.text)
         self.assertEqual(body.raw["status_key"], "heartbeat")
         self.assertFalse(body.raw["replace"])
         self.assertTrue(self.agents.is_running(1))
+
+    def test_run_command_with_request_id_uses_request_scoped_heartbeat_key(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/run inspect repo", command="run", request_id="1-9"))
+        body = self.loop.run_until_complete(handle_control(1, request, self.store, self.agents))
+        self.assertIsInstance(body, AppEvent)
+        assert isinstance(body, AppEvent)
+        self.assertEqual(body.request_id, "1-9")
+        self.assertEqual(body.raw["status_key"], "heartbeat:1-9")
 
     def test_agent_command_enqueues_auto_dev_job(self) -> None:
         object.__setattr__(self.settings, "auto_dev_command", ["python", "-c", "import time; time.sleep(30)"])
@@ -1710,6 +1719,7 @@ class RoutingTests(unittest.TestCase):
         assert isinstance(body, AppEvent)
         self.assertEqual(body.type, "status")
         self.assertIn("Auto-dev run started.", body.text)
+        self.assertIn("heartbeat: starting (first update within 1 second)", body.text)
         self.assertEqual(body.raw["status_key"], "heartbeat")
         self.assertFalse(body.raw["replace"])
         queue = self.store.get_agent_queue(1)

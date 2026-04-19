@@ -86,7 +86,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
 
     def test_render_event_formats_known_types(self) -> None:
         self.assertEqual(TelegramGateway._render_event(AppEvent(type="output", text="ok")), "ok")
-        self.assertEqual(TelegramGateway._render_event(AppEvent(type="status", text="up")), "[status] up")
+        self.assertEqual(TelegramGateway._render_event(AppEvent(type="status", text="up")), "up")
         self.assertEqual(TelegramGateway._render_event(AppEvent(type="error", text="bad")), "[error] bad")
 
     async def test_status_command_includes_queue_summary(self) -> None:
@@ -252,6 +252,25 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             app,
             1,
             AppEvent(type="status", text="second", raw={"status_key": "heartbeat", "replace": True}),
+        )
+
+        self.assertEqual(app.bot.calls[0][0], "message")
+        self.assertEqual(app.bot.calls[1][0], "edit_message_text")
+        self.assertEqual(app.bot.calls[1][1]["message_id"], 101)
+
+    async def test_send_event_reuses_initial_status_message_after_non_replace_start(self) -> None:
+        gateway = TelegramGateway(self.config)
+        app = SimpleNamespace(bot=DummyBot())
+
+        await gateway._send_event(
+            app,
+            1,
+            AppEvent(type="status", text="start", raw={"status_key": "heartbeat", "replace": False}),
+        )
+        await gateway._send_event(
+            app,
+            1,
+            AppEvent(type="status", text="tick", raw={"status_key": "heartbeat", "replace": True}),
         )
 
         self.assertEqual(app.bot.calls[0][0], "message")

@@ -14,7 +14,8 @@ from teleapp.protocol import AppEvent
 
 from robot.agents import AgentCoordinator
 from robot.config import load_settings
-from robot.routing import AGENT_REQUEST, classify_request, handle_request
+from robot.projects import format_project_with_branch
+from robot.routing import AGENT_REQUEST, classify_request, handle_request, heartbeat_status_key
 from robot.state import ChatStateStore
 from robot.text import configure_stdio_utf8
 
@@ -74,6 +75,10 @@ async def on_message(ctx):
         if queue is not None:
             state = STORE.get_chat_state(ctx.chat_id)
             queue_pending = len(STORE.get_agent_queue(ctx.chat_id))
+            project_display = format_project_with_branch(
+                str(state["project_name"]),
+                str(state["project_path"]),
+            )
             queue.put_nowait(
                 AppEvent(
                     type="status",
@@ -81,7 +86,7 @@ async def on_message(ctx):
                         [
                             "Request received.",
                             f"goal: {request.payload.strip()}",
-                            f"project: {state['project_name']}",
+                            f"project: {project_display}",
                             f"path: {state['project_path']}",
                             f"queue_pending: {queue_pending}",
                             "elapsed: 00:00",
@@ -90,7 +95,7 @@ async def on_message(ctx):
                     chat_id=ctx.chat_id,
                     request_id=ctx.request_id,
                     stream="inprocess",
-                    raw={"status_key": "heartbeat", "replace": True},
+                    raw={"status_key": heartbeat_status_key(ctx.request_id), "replace": False},
                 )
             )
     return await handle_request(ctx, SETTINGS, STORE, AGENTS)

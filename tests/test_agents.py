@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 from robot.agents import AgentCoordinator
 from robot.config import load_settings
+from robot.providers import RunningInvocation
 from robot.state import ChatStateStore
 
 
@@ -26,7 +27,7 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
         self.coordinator = AgentCoordinator(self.settings, self.store)
         self.events: list[tuple[int, str, str]] = []
 
-        async def capture(chat_id: int, text: str, event_type: str = "output", raw=None) -> None:
+        async def capture(chat_id: int, text: str, event_type: str = "output", raw=None, request_id=None) -> None:
             self.events.append((chat_id, event_type, text))
 
         self.coordinator._emit = capture  # type: ignore[method-assign]
@@ -167,6 +168,57 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(self.store.get_chat_state(chat_id).get("agent_current_run"))
         self.assertIsNone(self.store.recover_agent_current_run(chat_id))
+
+    async def test_queue_watchdog_emits_immediately_before_sleep(self) -> None:
+        chat_id = 5
+        self.store.enqueue_agent_job(
+            chat_id,
+            {
+                "job_id": "job-queued-1",
+                "kind": "provider",
+                "goal": "inspect queue",
+                "project_name": "robot",
+                "project_display": "robot [fix]",
+                "project_path": str(self.settings.project_root),
+                "provider": "codex",
+                "model": "gpt-5.4",
+                "thread_id": None,
+                "source": "manual",
+            },
+        )
+
+        with patch("robot.agents.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.coordinator._queue_watchdog_loop(chat_id)
+
+        self.assertEqual(len(self.events), 1)
+        _chat_id, event_type, text = self.events[0]
+        self.assertEqual(event_type, "status")
+        self.assertIn("排隊中 ...", text)
+        self.assertIn("elapsed: 00:00", text)
+
+    async def test_heartbeat_loop_emits_immediately_before_sleep(self) -> None:
+        chat_id = 6
+        invocation = RunningInvocation()
+        invocation.set_phase("agent: starting")
+        job = {
+            "kind": "provider",
+            "goal": "inspect heartbeat",
+            "project_name": "robot",
+            "project_display": "robot [fix]",
+            "project_path": str(self.settings.project_root),
+        }
+
+        with patch("robot.agents.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError)):
+            with self.assertRaises(asyncio.CancelledError):
+                await self.coordinator._heartbeat_loop(chat_id, job, invocation)
+
+        self.assertEqual(len(self.events), 1)
+        _chat_id, event_type, text = self.events[0]
+        self.assertEqual(event_type, "status")
+        self.assertIn("執行中 ...", text)
+        self.assertIn("phase: agent: starting", text)
+        self.assertIn("elapsed: 00:00", text)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ from teleapp.context import (
 )
 from teleapp.protocol import AppEvent
 from teleapp.response import ButtonResponse
+from teleapp.state import ChatSessionState
 from teleapp.supervisor import AppSupervisor
 
 

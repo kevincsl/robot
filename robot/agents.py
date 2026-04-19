@@ -5,6 +5,7 @@ import contextlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from time import monotonic
 from typing import Any
 from uuid import uuid4
 
@@ -18,6 +19,7 @@ from robot.brain import (
     get_active_or_next_schedule,
 )
 from robot.config import Settings
+from robot.projects import format_project_with_branch
 from robot.providers import (
     RunningInvocation,
     list_auto_dev_profiles,
@@ -33,11 +35,14 @@ class AgentJob:
     kind: str
     goal: str
     project_name: str
+    project_display: str
     project_path: str
     provider: str
     model: str
     thread_id: str | None
     source: str
+    request_id: str | None = None
+    status_key: str | None = None
     run_id: str | None = None
     profile: str | None = None
     config_path: str | None = None
@@ -54,11 +59,14 @@ class AgentJob:
             "kind": self.kind,
             "goal": self.goal,
             "project_name": self.project_name,
+            "project_display": self.project_display,
             "project_path": self.project_path,
             "provider": self.provider,
             "model": self.model,
             "thread_id": self.thread_id,
             "source": self.source,
+            "request_id": self.request_id,
+            "status_key": self.status_key,
             "run_id": self.run_id,
             "profile": self.profile,
             "config_path": self.config_path,
@@ -79,6 +87,7 @@ class AgentCoordinator:
         self._worker_tasks: dict[int, asyncio.Task[None]] = {}
         self._scheduler_task: asyncio.Task[None] | None = None
         self._active_invocations: dict[int, RunningInvocation] = {}
+        self._queue_watchdogs: dict[int, asyncio.Task[None]] = {}
 
     def attach_supervisor(self, supervisor) -> None:
         self._supervisor = supervisor
@@ -97,7 +106,7 @@ class AgentCoordinator:
                                 "Recovered interrupted run after restart.",
                                 f"kind: {recovered.get('kind') or 'provider'}",
                                 f"doing: {recovered.get('goal') or '<resume>'}",
-                                f"project: {recovered.get('project_name') or '-'}",
+                                f"project: {recovered.get('project_display') or recovered.get('project_name') or '-'}",
                                 f"path: {recovered.get('project_path') or '-'}",
                             ]
                         ),
@@ -117,6 +126,12 @@ class AgentCoordinator:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._worker_tasks.clear()
+        for task in list(self._queue_watchdogs.values()):
+            task.cancel()
+        for task in list(self._queue_watchdogs.values()):
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        self._queue_watchdogs.clear()
 
         if self._scheduler_task is not None:
             self._scheduler_task.cancel()
@@ -125,23 +140,78 @@ class AgentCoordinator:
             self._scheduler_task = None
 
     def ensure_worker(self, chat_id: int) -> None:
+        self._ensure_queue_watchdog(chat_id)
         task = self._worker_tasks.get(chat_id)
         if task is not None and not task.done():
             return
         self._worker_tasks[chat_id] = asyncio.create_task(self._worker_loop(chat_id))
 
-    def enqueue(self, chat_id: int, goal: str, *, source: str = "manual") -> tuple[str, int, bool]:
+    def _ensure_queue_watchdog(self, chat_id: int) -> None:
+        task = self._queue_watchdogs.get(chat_id)
+        if task is not None and not task.done():
+            return
+        self._queue_watchdogs[chat_id] = asyncio.create_task(self._queue_watchdog_loop(chat_id))
+
+    async def _queue_watchdog_loop(self, chat_id: int) -> None:
+        started = monotonic()
+        while True:
+            current = self._store.get_chat_state(chat_id).get("agent_current_run")
+            queue = self._store.get_agent_queue(chat_id)
+            if isinstance(current, dict):
+                await asyncio.sleep(1)
+                continue
+            if not queue:
+                self._queue_watchdogs.pop(chat_id, None)
+                return
+            next_job = queue[0]
+            elapsed = int(monotonic() - started)
+            await self._emit(
+                chat_id,
+                "\n".join(
+                    [
+                        "排隊中 ...",
+                        f"kind: {next_job.get('kind') or 'provider'}",
+                        f"doing: {next_job.get('goal') or '<resume>'}",
+                        f"project: {next_job.get('project_display') or next_job.get('project_name') or '-'}",
+                        f"path: {next_job.get('project_path') or '-'}",
+                        "phase: queue: waiting for worker",
+                        f"queue_pending: {len(queue)}",
+                        f"elapsed: {self._format_elapsed(elapsed)}",
+                    ]
+                ),
+                event_type="status",
+                request_id=str(next_job.get("request_id") or "").strip() or None,
+                raw={"status_key": str(next_job.get("status_key") or "heartbeat"), "replace": True},
+            )
+            await asyncio.sleep(1)
+
+    def enqueue(
+        self,
+        chat_id: int,
+        goal: str,
+        *,
+        source: str = "manual",
+        request_id: str | None = None,
+        status_key: str | None = None,
+    ) -> tuple[str, int, bool]:
         state = self._store.get_chat_state(chat_id)
+        project_display = format_project_with_branch(
+            str(state["project_name"]),
+            str(state["project_path"]),
+        )
         job = AgentJob(
             job_id=str(uuid4()),
             kind="provider",
             goal=goal,
             project_name=str(state["project_name"]),
+            project_display=project_display,
             project_path=str(state["project_path"]),
             provider=str(state["provider"]),
             model=str(state["model"]),
             thread_id=state["thread_id"],
             source=source,
+            request_id=request_id,
+            status_key=status_key,
         )
         position = self._store.enqueue_agent_job(chat_id, job.to_dict())
         started = position == 1 and not self.is_running(chat_id)
@@ -160,19 +230,28 @@ class AgentCoordinator:
         enable_push: bool = False,
         enable_pr: bool = False,
         disable_post_run: bool = False,
+        request_id: str | None = None,
+        status_key: str | None = None,
     ) -> tuple[str, str, int, bool]:
         state = self._store.get_chat_state(chat_id)
+        project_display = format_project_with_branch(
+            str(state["project_name"]),
+            str(state["project_path"]),
+        )
         run_id = str(uuid4())
         job = AgentJob(
             job_id=str(uuid4()),
             kind="auto_dev",
             goal=goal,
             project_name=str(state["project_name"]),
+            project_display=project_display,
             project_path=str(state["project_path"]),
             provider="auto-dev",
             model=profile or "default",
             thread_id=None,
             source=source,
+            request_id=request_id,
+            status_key=status_key,
             run_id=run_id,
             profile=profile,
             config_path=config_path,
@@ -198,19 +277,28 @@ class AgentCoordinator:
         enable_push: bool = False,
         enable_pr: bool = False,
         disable_post_run: bool = False,
+        request_id: str | None = None,
+        status_key: str | None = None,
     ) -> tuple[str, str, int, bool]:
         state = self._store.get_chat_state(chat_id)
+        project_display = format_project_with_branch(
+            str(state["project_name"]),
+            str(state["project_path"]),
+        )
         run_id = str(uuid4())
         job = AgentJob(
             job_id=str(uuid4()),
             kind="auto_dev",
             goal="",
             project_name=str(state["project_name"]),
+            project_display=project_display,
             project_path=str(state["project_path"]),
             provider="auto-dev",
             model=profile or "default",
             thread_id=None,
             source=source,
+            request_id=request_id,
+            status_key=status_key,
             run_id=run_id,
             profile=profile,
             config_path=config_path,
@@ -238,19 +326,28 @@ class AgentCoordinator:
         enable_push: bool = False,
         enable_pr: bool = False,
         disable_post_run: bool = False,
+        request_id: str | None = None,
+        status_key: str | None = None,
     ) -> tuple[str, str, int]:
         state = self._store.get_chat_state(chat_id)
+        project_display = format_project_with_branch(
+            str(state["project_name"]),
+            str(state["project_path"]),
+        )
         run_id = str(uuid4())
         job = AgentJob(
             job_id=str(uuid4()),
             kind="auto_dev",
             goal=goal,
             project_name=str(state["project_name"]),
+            project_display=project_display,
             project_path=str(state["project_path"]),
             provider="auto-dev",
             model=profile or "default",
             thread_id=None,
             source=source,
+            request_id=request_id,
+            status_key=status_key,
             run_id=run_id,
             profile=profile,
             config_path=config_path,
@@ -290,7 +387,7 @@ class AgentCoordinator:
                     f"kind: {current.get('kind')}",
                     f"goal: {current.get('goal') or '-'}",
                     f"run_id: {current.get('run_id') or '-'}",
-                    f"project: {current.get('project_name') or '-'}",
+                    f"project: {current.get('project_display') or current.get('project_name') or '-'}",
                     f"path: {current.get('project_path') or '-'}",
                 ]
             )
@@ -300,11 +397,11 @@ class AgentCoordinator:
                 kind = str(job.get("kind") or "provider")
                 if kind == "auto_dev":
                     lines.append(
-                        f"{index}. [auto-dev] {job.get('goal') or '<resume>'} | {job.get('project_name')} | profile={job.get('profile') or 'default'}"
+                        f"{index}. [auto-dev] {job.get('goal') or '<resume>'} | {job.get('project_display') or job.get('project_name')} | profile={job.get('profile') or 'default'}"
                     )
                 else:
                     lines.append(
-                        f"{index}. [provider] {job.get('goal')} | {job.get('project_name')} | {job.get('provider')}/{job.get('model')}"
+                        f"{index}. [provider] {job.get('goal')} | {job.get('project_display') or job.get('project_name')} | {job.get('provider')}/{job.get('model')}"
                     )
         elif not current:
             lines.extend(["", "queue is empty"])
@@ -320,7 +417,7 @@ class AgentCoordinator:
         for index, job in enumerate(schedules, start=1):
             kind = str(job.get("kind") or "provider")
             lines.append(
-                f"{index}. {job.get('run_at')} | {kind} | {job.get('goal') or '<resume>'} | {job.get('project_name')}"
+                f"{index}. {job.get('run_at')} | {kind} | {job.get('goal') or '<resume>'} | {job.get('project_display') or job.get('project_name')}"
             )
         return "\n".join(lines)
 
@@ -450,6 +547,9 @@ class AgentCoordinator:
                 return
 
             self._store.set_agent_current_run(chat_id, job)
+            invocation = RunningInvocation()
+            invocation.set_phase("agent: starting")
+            self._active_invocations[chat_id] = invocation
             await self._emit(
                 chat_id,
                 "\n".join(
@@ -457,23 +557,23 @@ class AgentCoordinator:
                         "Agent run started.",
                         f"kind: {job.get('kind') or 'provider'}",
                         f"goal: {job.get('goal') or '<resume>'}",
-                        f"project: {job.get('project_name')}",
+                        f"project: {job.get('project_display') or job.get('project_name')}",
                         f"path: {job.get('project_path')}",
                         f"provider: {job.get('provider')}",
                         f"model/profile: {job.get('model')}",
+                        f"phase: {invocation.get_phase()}",
                         f"queue_pending: {len(self._store.get_agent_queue(chat_id))}",
                         f"progress: {self._build_heartbeat_progress(0)}",
                         f"elapsed: {self._format_elapsed(0)}",
-                        "status updates: every 1 second",
+                        "heartbeat: active",
                     ]
                 ),
                 event_type="status",
-                raw={"status_key": "heartbeat", "replace": True},
+                request_id=str(job.get("request_id") or "").strip() or None,
+                raw={"status_key": str(job.get("status_key") or "heartbeat"), "replace": True},
             )
 
-            invocation = RunningInvocation()
-            self._active_invocations[chat_id] = invocation
-            heartbeat_task = asyncio.create_task(self._heartbeat_loop(chat_id, job))
+            heartbeat_task = asyncio.create_task(self._heartbeat_loop(chat_id, job, invocation))
             started = datetime.now()
             cancelled_by_shutdown = False
             try:
@@ -486,7 +586,11 @@ class AgentCoordinator:
                         self._settings,
                         prompt=str(job.get("goal") or "").strip() or None,
                         workdir=Path(str(job.get("project_path") or self._settings.project_root)),
-                        project_label=str(job.get("project_name") or self._settings.project_root.name),
+                        project_label=str(
+                            job.get("project_display")
+                            or job.get("project_name")
+                            or self._settings.project_root.name
+                        ),
                         run_id=str(job.get("run_id") or "-"),
                         profile_name=str(job.get("profile") or "").strip() or None,
                         config_path=str(job.get("config_path") or "").strip() or None,
@@ -505,7 +609,11 @@ class AgentCoordinator:
                         prompt=str(job.get("goal") or ""),
                         thread_id=job.get("thread_id") if isinstance(job.get("thread_id"), str) else None,
                         workdir=Path(str(job.get("project_path") or self._settings.project_root)),
-                        project_label=str(job.get("project_name") or self._settings.project_root.name),
+                        project_label=str(
+                            job.get("project_display")
+                            or job.get("project_name")
+                            or self._settings.project_root.name
+                        ),
                         invocation=invocation,
                     )
             except asyncio.CancelledError:
@@ -551,7 +659,8 @@ class AgentCoordinator:
                         ]
                     ),
                     event_type="status",
-                    raw={"status_key": "heartbeat", "replace": True},
+                    request_id=str(job.get("request_id") or "").strip() or None,
+                    raw={"status_key": str(job.get("status_key") or "heartbeat"), "replace": True},
                 )
                 self._worker_tasks.pop(chat_id, None)
                 return
@@ -588,7 +697,7 @@ class AgentCoordinator:
                         "Agent run finished.",
                         f"kind: {job.get('kind') or 'provider'}",
                         f"goal: {job.get('goal') or '<resume>'}",
-                        f"project: {job.get('project_name')}",
+                        f"project: {job.get('project_display') or job.get('project_name')}",
                         f"path: {job.get('project_path')}",
                         f"queue_pending: {len(self._store.get_agent_queue(chat_id))}",
                         f"status: {status_label}",
@@ -596,17 +705,23 @@ class AgentCoordinator:
                     ]
                 ),
                 event_type="status",
-                raw={"status_key": "heartbeat", "replace": True},
+                request_id=str(job.get("request_id") or "").strip() or None,
+                raw={"status_key": str(job.get("status_key") or "heartbeat"), "replace": True},
             )
             await self._emit(chat_id, result.final_text, event_type="output")
 
-    async def _heartbeat_loop(self, chat_id: int, job: dict[str, Any]) -> None:
+    async def _heartbeat_loop(
+        self,
+        chat_id: int,
+        job: dict[str, Any],
+        invocation: RunningInvocation,
+    ) -> None:
         started = datetime.now()
         while True:
-            await asyncio.sleep(1)
             elapsed = int((datetime.now() - started).total_seconds())
             current_goal = str(job.get("goal") or "").strip() or "<resume>"
-            current_project = str(job.get("project_name") or "-")
+            current_project = str(job.get("project_display") or job.get("project_name") or "-")
+            phase = invocation.get_phase()
             await self._emit(
                 chat_id,
                 "\n".join(
@@ -616,14 +731,17 @@ class AgentCoordinator:
                         f"doing: {current_goal}",
                         f"project: {current_project}",
                         f"path: {job.get('project_path') or '-'}",
+                        f"phase: {phase}",
                         f"queue_pending: {len(self._store.get_agent_queue(chat_id))}",
                         f"progress: {self._build_heartbeat_progress(elapsed)}",
                         f"elapsed: {self._format_elapsed(elapsed)}",
                     ]
                 ),
                 event_type="status",
-                raw={"status_key": "heartbeat", "replace": True},
+                request_id=str(job.get("request_id") or "").strip() or None,
+                raw={"status_key": str(job.get("status_key") or "heartbeat"), "replace": True},
             )
+            await asyncio.sleep(1)
 
     @staticmethod
     def _format_elapsed(seconds: int) -> str:
@@ -651,7 +769,14 @@ class AgentCoordinator:
         percent = int(ratio * 100)
         return f"[{bar}] {percent}% (rolling)"
 
-    async def _emit(self, chat_id: int, text: str, event_type: str = "output", raw: dict[str, Any] | None = None) -> None:
+    async def _emit(
+        self,
+        chat_id: int,
+        text: str,
+        event_type: str = "output",
+        raw: dict[str, Any] | None = None,
+        request_id: str | None = None,
+    ) -> None:
         if self._supervisor is None:
             return
         queue = getattr(self._supervisor, "_event_queue", None)
@@ -662,7 +787,7 @@ class AgentCoordinator:
                 type=event_type,
                 text=text,
                 chat_id=chat_id,
-                request_id=None,
+                request_id=request_id,
                 stream="inprocess",
                 raw=raw,
             )
