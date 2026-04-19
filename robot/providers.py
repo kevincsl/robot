@@ -29,12 +29,14 @@ class AgentRunResult:
 class RunningInvocation:
     process: subprocess.Popen[str] | None = None
     cancelled: bool = False
+    phase: str = "pending"
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def set_process(self, process: subprocess.Popen[str]) -> None:
         with self._lock:
             self.process = process
             cancelled = self.cancelled
+            self.phase = "running"
         if cancelled and process.poll() is None:
             with contextlib.suppress(OSError):
                 process.terminate()
@@ -43,10 +45,19 @@ class RunningInvocation:
         with self._lock:
             self.process = None
 
+    def set_phase(self, phase: str) -> None:
+        with self._lock:
+            self.phase = _safe_text(phase).strip() or self.phase
+
+    def get_phase(self) -> str:
+        with self._lock:
+            return self.phase
+
     def cancel(self) -> bool:
         with self._lock:
             self.cancelled = True
             process = self.process
+            self.phase = "stopping"
         if process is None:
             return True
         if process.poll() is not None:
@@ -319,6 +330,8 @@ async def run_auto_dev_request(
     disable_post_run: bool = False,
     invocation: RunningInvocation | None = None,
 ) -> AgentRunResult:
+    if invocation is not None:
+        invocation.set_phase("auto-dev: preparing command")
     command = list(settings.auto_dev_command)
     if resume_target:
         command.extend(["--resume", resume_target])
@@ -338,6 +351,8 @@ async def run_auto_dev_request(
         command.append("--no-post-run")
 
     started = time.monotonic()
+    if invocation is not None:
+        invocation.set_phase("auto-dev: executing")
     completed = await _run_process(command, prompt="", workdir=workdir, invocation=invocation)
     output = (completed.stdout or "").strip()
     error = (completed.stderr or "").strip()
@@ -376,6 +391,8 @@ async def _run_process(
 ) -> subprocess.CompletedProcess[str]:
     def _invoke() -> subprocess.CompletedProcess[str]:
         safe_prompt = _safe_text(prompt)
+        if invocation is not None:
+            invocation.set_phase("process: starting")
         process = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
@@ -389,7 +406,11 @@ async def _run_process(
         if invocation is not None:
             invocation.set_process(process)
         try:
+            if invocation is not None:
+                invocation.set_phase("process: waiting for completion")
             stdout, stderr = process.communicate(safe_prompt)
+            if invocation is not None:
+                invocation.set_phase("process: completed")
         finally:
             if invocation is not None:
                 invocation.clear()
@@ -413,6 +434,8 @@ async def _run_generic(
     project_label: str,
     invocation: RunningInvocation | None,
 ) -> AgentRunResult:
+    if invocation is not None:
+        invocation.set_phase(f"{provider}: preparing command")
     command = list(settings.provider_commands[provider])
     model_flag = settings.provider_model_flags.get(provider, "--model")
     if model:
@@ -420,6 +443,8 @@ async def _run_generic(
 
     started = time.monotonic()
 
+    if invocation is not None:
+        invocation.set_phase(f"{provider}: executing")
     completed = await _run_process(command, prompt=prompt, workdir=workdir, invocation=invocation)
     output = (completed.stdout or "").strip()
     error = (completed.stderr or "").strip()
@@ -452,10 +477,14 @@ async def _run_codex(
     project_label: str,
     invocation: RunningInvocation | None,
 ) -> AgentRunResult:
+    if invocation is not None:
+        invocation.set_phase("codex: preparing command")
     command = _build_codex_command(settings=settings, model=model, thread_id=thread_id)
 
     started = time.monotonic()
 
+    if invocation is not None:
+        invocation.set_phase("codex: executing")
     completed = await _run_process(command, prompt=prompt, workdir=workdir, invocation=invocation)
     cancelled = bool(invocation and invocation.cancelled)
     next_thread_id, assistant_text, latest_detail = _parse_codex_stream(
@@ -470,6 +499,8 @@ async def _run_codex(
         and not assistant_text
         and _is_stream_disconnect(latest_detail)
     ):
+        if invocation is not None:
+            invocation.set_phase("codex: retrying after stream disconnect")
         retry_completed = await _run_process(command, prompt=prompt, workdir=workdir, invocation=invocation)
         retry_thread_id, retry_assistant_text, retry_detail = _parse_codex_stream(
             stdout=retry_completed.stdout or "",
@@ -488,6 +519,8 @@ async def _run_codex(
         and thread_id is not None
         and _is_context_window_exhausted(latest_detail)
     ):
+        if invocation is not None:
+            invocation.set_phase("codex: retrying with fresh thread")
         fresh_command = _build_codex_command(settings=settings, model=model, thread_id=None)
         retry_completed = await _run_process(fresh_command, prompt=prompt, workdir=workdir, invocation=invocation)
         retry_thread_id, retry_assistant_text, retry_detail = _parse_codex_stream(

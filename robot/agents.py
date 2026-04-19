@@ -5,6 +5,7 @@ import contextlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from time import monotonic
 from typing import Any
 from uuid import uuid4
 
@@ -82,6 +83,7 @@ class AgentCoordinator:
         self._worker_tasks: dict[int, asyncio.Task[None]] = {}
         self._scheduler_task: asyncio.Task[None] | None = None
         self._active_invocations: dict[int, RunningInvocation] = {}
+        self._queue_watchdogs: dict[int, asyncio.Task[None]] = {}
 
     def attach_supervisor(self, supervisor) -> None:
         self._supervisor = supervisor
@@ -120,6 +122,12 @@ class AgentCoordinator:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._worker_tasks.clear()
+        for task in list(self._queue_watchdogs.values()):
+            task.cancel()
+        for task in list(self._queue_watchdogs.values()):
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        self._queue_watchdogs.clear()
 
         if self._scheduler_task is not None:
             self._scheduler_task.cancel()
@@ -128,10 +136,48 @@ class AgentCoordinator:
             self._scheduler_task = None
 
     def ensure_worker(self, chat_id: int) -> None:
+        self._ensure_queue_watchdog(chat_id)
         task = self._worker_tasks.get(chat_id)
         if task is not None and not task.done():
             return
         self._worker_tasks[chat_id] = asyncio.create_task(self._worker_loop(chat_id))
+
+    def _ensure_queue_watchdog(self, chat_id: int) -> None:
+        task = self._queue_watchdogs.get(chat_id)
+        if task is not None and not task.done():
+            return
+        self._queue_watchdogs[chat_id] = asyncio.create_task(self._queue_watchdog_loop(chat_id))
+
+    async def _queue_watchdog_loop(self, chat_id: int) -> None:
+        started = monotonic()
+        while True:
+            await asyncio.sleep(1)
+            current = self._store.get_chat_state(chat_id).get("agent_current_run")
+            queue = self._store.get_agent_queue(chat_id)
+            if isinstance(current, dict):
+                continue
+            if not queue:
+                self._queue_watchdogs.pop(chat_id, None)
+                return
+            next_job = queue[0]
+            elapsed = int(monotonic() - started)
+            await self._emit(
+                chat_id,
+                "\n".join(
+                    [
+                        "排隊中 ...",
+                        f"kind: {next_job.get('kind') or 'provider'}",
+                        f"doing: {next_job.get('goal') or '<resume>'}",
+                        f"project: {next_job.get('project_display') or next_job.get('project_name') or '-'}",
+                        f"path: {next_job.get('project_path') or '-'}",
+                        "phase: queue: waiting for worker",
+                        f"queue_pending: {len(queue)}",
+                        f"elapsed: {self._format_elapsed(elapsed)}",
+                    ]
+                ),
+                event_type="status",
+                raw={"status_key": "heartbeat", "replace": True},
+            )
 
     def enqueue(self, chat_id: int, goal: str, *, source: str = "manual") -> tuple[str, int, bool]:
         state = self._store.get_chat_state(chat_id)
@@ -473,6 +519,9 @@ class AgentCoordinator:
                 return
 
             self._store.set_agent_current_run(chat_id, job)
+            invocation = RunningInvocation()
+            invocation.set_phase("agent: starting")
+            self._active_invocations[chat_id] = invocation
             await self._emit(
                 chat_id,
                 "\n".join(
@@ -484,6 +533,7 @@ class AgentCoordinator:
                         f"path: {job.get('project_path')}",
                         f"provider: {job.get('provider')}",
                         f"model/profile: {job.get('model')}",
+                        f"phase: {invocation.get_phase()}",
                         f"queue_pending: {len(self._store.get_agent_queue(chat_id))}",
                         f"progress: {self._build_heartbeat_progress(0)}",
                         f"elapsed: {self._format_elapsed(0)}",
@@ -494,9 +544,7 @@ class AgentCoordinator:
                 raw={"status_key": "heartbeat", "replace": True},
             )
 
-            invocation = RunningInvocation()
-            self._active_invocations[chat_id] = invocation
-            heartbeat_task = asyncio.create_task(self._heartbeat_loop(chat_id, job))
+            heartbeat_task = asyncio.create_task(self._heartbeat_loop(chat_id, job, invocation))
             started = datetime.now()
             cancelled_by_shutdown = False
             try:
@@ -631,13 +679,19 @@ class AgentCoordinator:
             )
             await self._emit(chat_id, result.final_text, event_type="output")
 
-    async def _heartbeat_loop(self, chat_id: int, job: dict[str, Any]) -> None:
+    async def _heartbeat_loop(
+        self,
+        chat_id: int,
+        job: dict[str, Any],
+        invocation: RunningInvocation,
+    ) -> None:
         started = datetime.now()
         while True:
             await asyncio.sleep(1)
             elapsed = int((datetime.now() - started).total_seconds())
             current_goal = str(job.get("goal") or "").strip() or "<resume>"
             current_project = str(job.get("project_display") or job.get("project_name") or "-")
+            phase = invocation.get_phase()
             await self._emit(
                 chat_id,
                 "\n".join(
@@ -647,6 +701,7 @@ class AgentCoordinator:
                         f"doing: {current_goal}",
                         f"project: {current_project}",
                         f"path: {job.get('project_path') or '-'}",
+                        f"phase: {phase}",
                         f"queue_pending: {len(self._store.get_agent_queue(chat_id))}",
                         f"progress: {self._build_heartbeat_progress(elapsed)}",
                         f"elapsed: {self._format_elapsed(elapsed)}",
