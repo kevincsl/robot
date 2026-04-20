@@ -91,6 +91,18 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(TelegramGateway._render_event(AppEvent(type="status", text="up")), "up")
         self.assertEqual(TelegramGateway._render_event(AppEvent(type="error", text="bad")), "[error] bad")
 
+    def test_build_command_menu_keeps_fixed_entries(self) -> None:
+        gateway = TelegramGateway(self.config)
+        gateway.set_custom_commands({"foo", "status", "model"})
+        names = [item.command for item in gateway._build_command_menu()]
+        self.assertEqual(
+            names[:8],
+            ["start", "help", "status", "restart", "model", "projects", "panic", "reset"],
+        )
+        self.assertIn("foo", names)
+        self.assertEqual(names.count("status"), 1)
+        self.assertEqual(names.count("model"), 1)
+
     async def test_status_command_includes_queue_summary(self) -> None:
         gateway = TelegramGateway(self.config)
         state = gateway.supervisor.state

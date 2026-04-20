@@ -5,7 +5,7 @@ import contextlib
 import re
 import sys
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest, Conflict, RetryAfter
 from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
@@ -33,6 +33,17 @@ from teleapp.supervisor import AppSupervisor
 
 MESSAGE_LIMIT = 3900
 _RETRY_IN_SECONDS_RE = re.compile(r"retry(?:\s+in)?\s+(\d+(?:\.\d+)?)\s*seconds?", re.IGNORECASE)
+_FIXED_MENU_COMMANDS: tuple[str, ...] = ("start", "help", "status", "restart", "model", "projects", "panic", "reset")
+_MENU_COMMAND_DESCRIPTIONS: dict[str, str] = {
+    "start": "Show start help",
+    "help": "Show help",
+    "status": "Show runtime status",
+    "restart": "Restart hosted app",
+    "model": "Choose model",
+    "projects": "List projects",
+    "panic": "Emergency cleanup",
+    "reset": "Reset thread state",
+}
 
 
 def _clip(text: str) -> str:
@@ -142,6 +153,17 @@ class TelegramGateway:
         self._startup_hook = startup_hook
         self._shutdown_hook = shutdown_hook
 
+    def _build_command_menu(self) -> list[BotCommand]:
+        commands: list[BotCommand] = []
+        fixed = set(_FIXED_MENU_COMMANDS)
+        for name in _FIXED_MENU_COMMANDS:
+            commands.append(BotCommand(name, _MENU_COMMAND_DESCRIPTIONS.get(name, name)))
+        for name in sorted(self._custom_commands):
+            if name in fixed:
+                continue
+            commands.append(BotCommand(name, f"/{name}"))
+        return commands
+
     async def _post_init(self, app) -> None:
         watched = ", ".join(str(path) for path in self._config.watch_paths or []) or "-"
         _console(
@@ -154,6 +176,10 @@ class TelegramGateway:
             await self._startup_hook()
         await self._supervisor.start()
         self._consumer_task = asyncio.create_task(self._event_consumer(app))
+        try:
+            await app.bot.set_my_commands(self._build_command_menu())
+        except Exception as exc:
+            _console(f"set command menu failed: {exc.__class__.__name__}: {exc}")
         _console("gateway ready")
 
     async def _post_shutdown(self, app) -> None:
