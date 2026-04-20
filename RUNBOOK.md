@@ -32,6 +32,7 @@ In Telegram:
 - `/doctor`
 - `/queue`
 - `/agentstatus`
+- `/schedulesync --dry-run`
 
 Expected healthy signs:
 
@@ -43,6 +44,30 @@ Expected healthy signs:
   - `queued_jobs: 0` when no waiting agent jobs
   - `scheduled_jobs` matches expected scheduled count
   - `ui_flow: -` when no interactive flow is active
+  - `calendar_sync_enabled`, `calendar_sync_direction`, `calendar_sync_dry_run` match expected config
+
+## 2.1) Google Calendar Sync (M1)
+
+Command:
+
+- Dry-run (recommended first): `/schedulesync --period month --dry-run`
+- Apply sync writes: `/schedulesync --period month --apply`
+
+Required env vars:
+
+- `ROBOT_CAL_SYNC_ENABLED=true`
+- `ROBOT_CAL_SYNC_DIRECTION=robot_to_google` (or `bidirectional`)
+- `GOOGLE_CREDENTIALS_PATH=<path-to-credentials.json>`
+- Optional:
+  - `GOOGLE_TOKEN_PATH`
+  - `GOOGLE_CALENDAR_ID` (default `primary`)
+  - `ROBOT_CAL_SYNC_DRY_RUN=true|false`
+
+Expected dry-run result:
+
+- output includes `schedule sync`
+- non-zero `source_count` when schedule notes exist
+- `created/updated/skipped/errors` counters are visible
 
 ## 3) Common Issues
 

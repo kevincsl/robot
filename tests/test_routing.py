@@ -132,6 +132,10 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("security_risk_mode: off", body)
         self.assertIn("codex_bypass_approvals_and_sandbox: False", body)
         self.assertIn("codex_skip_git_repo_check: False", body)
+        self.assertIn("calendar_sync_enabled: False", body)
+        self.assertIn("calendar_sync_direction: robot_to_google", body)
+        self.assertIn("calendar_sync_dry_run: True", body)
+        self.assertIn("calendar_id: primary", body)
         self.assertIn("runtime_commit:", body)
 
     def test_quick_command_returns_quick_reference(self) -> None:
@@ -181,6 +185,50 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("queued_jobs: 1", body)
         self.assertIn("scheduled_jobs: 1", body)
         self.assertIn("ui_flow: await_brain_search", body)
+
+    def test_schedulesync_command_reports_summary(self) -> None:
+        request = classify_request(
+            MessageContext(
+                chat_id=1,
+                text="/schedulesync --period week --limit 25 --dry-run",
+                command="schedulesync",
+            )
+        )
+        with patch(
+            "robot.routing.sync_schedule_to_google",
+            return_value={
+                "enabled": True,
+                "calendar_id": "primary",
+                "dry_run": True,
+                "source_count": 9,
+                "processed": 8,
+                "created": 3,
+                "updated": 5,
+                "skipped": 1,
+                "errors": 0,
+                "error_samples": [],
+            },
+        ) as mock_sync:
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("schedule sync", body)
+        self.assertIn("dry_run: True", body)
+        self.assertIn("source_count: 9", body)
+        self.assertIn("processed: 8", body)
+        self.assertIn("created: 3", body)
+        self.assertIn("updated: 5", body)
+        mock_sync.assert_called_once()
+
+    def test_schedulesync_command_reports_disabled_reason(self) -> None:
+        request = classify_request(
+            MessageContext(chat_id=1, text="/schedulesync", command="schedulesync")
+        )
+        with patch(
+            "robot.routing.sync_schedule_to_google",
+            return_value={"enabled": False, "reason": "disabled"},
+        ):
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("schedule sync skipped.", body)
+        self.assertIn("reason: disabled", body)
 
     def test_continue_without_active_job_falls_through_to_agent(self) -> None:
         self.store.set_agent_current_run(1, None)

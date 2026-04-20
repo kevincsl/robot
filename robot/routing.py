@@ -45,6 +45,8 @@ from robot.brain import (
     search_vault,
     update_schedule_note,
 )
+from robot.calendar_sync import sync_schedule_to_google
+from robot.calendar_sync import sync_schedule_to_google
 from robot.config import MODEL_CHOICES, MODEL_DESCRIPTIONS, PROVIDER_LABELS, SUPPORTED_MODELS, Settings, VERSION
 from robot.diagnostics import build_doctor_report
 from robot.projects import discover_project_workspaces, find_workspace, format_project_with_branch
@@ -69,6 +71,7 @@ COMMAND_NAMES = {
     "projects",
     "queue",
     "schedules",
+    "schedulesync",
     "agentstatus",
     "agentprofiles",
     "menu",
@@ -451,6 +454,16 @@ def _build_schedule_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _build_schedulesync_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--period", choices=["day", "week", "next_week", "month"], default="month")
+    parser.add_argument("--limit", type=int, default=200)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true")
+    mode.add_argument("--apply", action="store_true")
+    return parser
+
+
 def _parse_agent_options(payload: str) -> tuple[AutoDevOptions | None, str | None]:
     parser = _build_agent_parser()
     try:
@@ -533,6 +546,22 @@ def _parse_schedule_options(payload: str) -> tuple[dict[str, str | AutoDevOption
     )
 
 
+def _parse_schedulesync_options(payload: str) -> tuple[dict[str, object] | None, str | None]:
+    parser = _build_schedulesync_parser()
+    try:
+        parsed = parser.parse_args(_split_payload(payload))
+    except SystemExit:
+        return None, "Usage: /schedulesync [--period day|week|next_week|month] [--limit N] [--dry-run|--apply]"
+
+    limit = max(1, min(int(parsed.limit), 500))
+    dry_run: bool | None = None
+    if parsed.dry_run:
+        dry_run = True
+    if parsed.apply:
+        dry_run = False
+    return {"period": str(parsed.period), "limit": limit, "dry_run": dry_run}, None
+
+
 def classify_request(ctx: MessageContext) -> ClassifiedRequest:
     text = (ctx.text or "").strip()
     command = (ctx.command or "").strip().lower() or None
@@ -591,6 +620,10 @@ def _status_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str
             f"security_risk_mode: {'on' if risk_mode else 'off'}",
             f"codex_bypass_approvals_and_sandbox: {settings.codex_bypass_approvals_and_sandbox}",
             f"codex_skip_git_repo_check: {settings.codex_skip_git_repo_check}",
+            f"calendar_sync_enabled: {settings.google_calendar_sync_enabled}",
+            f"calendar_sync_direction: {settings.google_calendar_sync_direction}",
+            f"calendar_sync_dry_run: {settings.google_calendar_sync_dry_run}",
+            f"calendar_id: {settings.google_calendar_id}",
             f"ui_build: {UI_BUILD_TAG}",
             f"hosted_build: {HOSTED_BUILD_TAG}",
             f"runtime_commit: {_runtime_git_commit()}",
@@ -598,7 +631,7 @@ def _status_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str
             f"teleapp_raw_status: {teleapp_raw_status}",
             "",
             "request classes:",
-            "- command request: /provider /model /project /status /doctor /queue /schedules /agentstatus /agentprofiles",
+            "- command request: /provider /model /project /status /doctor /queue /schedules /schedulesync /agentstatus /agentprofiles",
             "- control request: /reset /newthread /restart /panic /run /agent /agentresume /schedule",
             "- agent request: plain text (provider runner)",
         ]
@@ -613,7 +646,7 @@ def _help_text() -> str:
             "deterministic commands:",
             "general:",
             "/quick  /guide  /menu  /help",
-            "/status  /doctor  /queue  /schedules",
+            "/status  /doctor  /queue  /schedules  /schedulesync [--period month] [--dry-run|--apply]",
             "/agentstatus  /agentprofiles [--config PATH]",
             "",
             "workspace:",
@@ -1640,6 +1673,44 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
 
     if request.command == "schedules":
         return agents.schedule_overview(chat_id)
+
+    if request.command == "schedulesync":
+        parsed, error = _parse_schedulesync_options(request.payload)
+        if parsed is None:
+            return error or "Usage: /schedulesync ..."
+        try:
+            summary = sync_schedule_to_google(
+                settings,
+                period=str(parsed["period"]),
+                limit=int(parsed["limit"]),
+                dry_run=parsed["dry_run"] if isinstance(parsed.get("dry_run"), bool) else None,
+            )
+        except RuntimeError as exc:
+            return f"schedule sync failed: {exc}"
+        except Exception as exc:  # noqa: BLE001
+            return f"schedule sync failed: {exc}"
+
+        if not bool(summary.get("enabled")):
+            reason = str(summary.get("reason") or "sync is disabled")
+            return f"schedule sync skipped.\nreason: {reason}"
+
+        lines = [
+            "schedule sync",
+            f"calendar_id: {summary.get('calendar_id') or settings.google_calendar_id}",
+            f"dry_run: {summary.get('dry_run')}",
+            f"source_count: {summary.get('source_count')}",
+            f"processed: {summary.get('processed')}",
+            f"created: {summary.get('created')}",
+            f"updated: {summary.get('updated')}",
+            f"skipped: {summary.get('skipped')}",
+            f"errors: {summary.get('errors')}",
+        ]
+        samples = summary.get("error_samples")
+        if isinstance(samples, list) and samples:
+            lines.append("error_samples:")
+            for sample in samples:
+                lines.append(f"- {sample}")
+        return "\n".join(lines)
 
     if request.command == "agentstatus":
         current = state.get("agent_current_run") if isinstance(state.get("agent_current_run"), dict) else None

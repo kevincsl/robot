@@ -103,6 +103,13 @@ class Settings:
     brain_vault_path: Path | None
     codex_bypass_approvals_and_sandbox: bool
     codex_skip_git_repo_check: bool
+    google_calendar_sync_enabled: bool
+    google_calendar_sync_direction: str
+    google_calendar_sync_dry_run: bool
+    google_calendar_id: str
+    google_credentials_path: Path | None
+    google_token_path: Path
+    google_sync_mapping_path: Path
 
 
 def normalize_provider(provider: str | None) -> str:
@@ -170,6 +177,16 @@ def load_settings(project_root: Path | None = None) -> Settings:
     # Security-first defaults: dangerous Codex flags are opt-in.
     codex_bypass_approvals_and_sandbox = _env_flag("ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX", False)
     codex_skip_git_repo_check = _env_flag("ROBOT_CODEX_SKIP_GIT_REPO_CHECK", False)
+    google_calendar_sync_enabled = _env_flag("ROBOT_CAL_SYNC_ENABLED", False)
+    google_calendar_sync_direction = (os.getenv("ROBOT_CAL_SYNC_DIRECTION", "robot_to_google") or "robot_to_google").strip().lower()
+    google_calendar_sync_dry_run = _env_flag("ROBOT_CAL_SYNC_DRY_RUN", True)
+    google_calendar_id = (os.getenv("GOOGLE_CALENDAR_ID", "primary") or "primary").strip()
+    credentials_raw = (os.getenv("GOOGLE_CREDENTIALS_PATH") or "").strip()
+    google_credentials_path = Path(credentials_raw).expanduser() if credentials_raw else None
+    token_raw = (os.getenv("GOOGLE_TOKEN_PATH") or "").strip()
+    google_token_path = Path(token_raw).expanduser() if token_raw else (state_home / "google_token.json")
+    mapping_raw = (os.getenv("ROBOT_CAL_SYNC_MAPPING_PATH") or "").strip()
+    google_sync_mapping_path = Path(mapping_raw).expanduser() if mapping_raw else (state_home / "schedule_google_mapping.json")
 
     raw_roots = (os.getenv("ROBOT_PROJECTS_ROOTS", "") or "").strip()
     roots: list[Path] = []
@@ -208,4 +225,11 @@ def load_settings(project_root: Path | None = None) -> Settings:
         brain_vault_path=brain_vault_path,
         codex_bypass_approvals_and_sandbox=codex_bypass_approvals_and_sandbox,
         codex_skip_git_repo_check=codex_skip_git_repo_check,
+        google_calendar_sync_enabled=google_calendar_sync_enabled,
+        google_calendar_sync_direction=google_calendar_sync_direction,
+        google_calendar_sync_dry_run=google_calendar_sync_dry_run,
+        google_calendar_id=google_calendar_id,
+        google_credentials_path=google_credentials_path,
+        google_token_path=google_token_path,
+        google_sync_mapping_path=google_sync_mapping_path,
     )
