@@ -101,6 +101,7 @@ CONTROL_NAMES = {
     "restart",
     "panic",
     "clearqueue",
+    "clearschedule",
     "clearschedules",
     "run",
     "agent",
@@ -413,8 +414,13 @@ def _split_payload(payload: str) -> list[str]:
         return []
 
 
+class _SilentArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise ValueError(message)
+
+
 def _build_agent_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = _SilentArgumentParser(add_help=False)
     parser.add_argument("--profile")
     parser.add_argument("--config")
     parser.add_argument("--commit", action="store_true")
@@ -426,7 +432,7 @@ def _build_agent_parser() -> argparse.ArgumentParser:
 
 
 def _build_resume_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = _SilentArgumentParser(add_help=False)
     parser.add_argument("resume", nargs="?")
     parser.add_argument("--profile")
     parser.add_argument("--config")
@@ -438,7 +444,7 @@ def _build_resume_parser() -> argparse.ArgumentParser:
 
 
 def _build_schedule_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = _SilentArgumentParser(add_help=False)
     parser.add_argument("date")
     parser.add_argument("time")
     parser.add_argument("--profile")
@@ -455,7 +461,7 @@ def _parse_agent_options(payload: str) -> tuple[AutoDevOptions | None, str | Non
     parser = _build_agent_parser()
     try:
         parsed = parser.parse_args(_split_payload(payload))
-    except SystemExit:
+    except (SystemExit, ValueError):
         return None, "Usage: /agent [--profile NAME] [--config PATH] [--commit] [--push] [--pr] [--no-post-run] <goal>"
 
     goal = " ".join(parsed.goal).strip()
@@ -480,7 +486,7 @@ def _parse_resume_options(payload: str) -> tuple[dict[str, AutoDevOptions | str]
     parser = _build_resume_parser()
     try:
         parsed = parser.parse_args(_split_payload(payload))
-    except SystemExit:
+    except (SystemExit, ValueError):
         return None, "Usage: /agentresume [run_id_or_path] [--profile NAME] [--config PATH] [--commit] [--push] [--pr] [--no-post-run]"
 
     return (
@@ -504,7 +510,7 @@ def _parse_schedule_options(payload: str) -> tuple[dict[str, str | AutoDevOption
     parser = _build_schedule_parser()
     try:
         parsed = parser.parse_args(_split_payload(payload))
-    except SystemExit:
+    except (SystemExit, ValueError):
         return None, "Usage: /schedule YYYY-MM-DD HH:MM [--profile NAME] [--config PATH] [--commit] [--push] [--pr] [--no-post-run] <goal>"
 
     goal = " ".join(parsed.goal).strip()
@@ -599,7 +605,7 @@ def _status_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str
             "",
             "request classes:",
             "- command request: /provider /model /project /status /doctor /queue /schedules /agentstatus /agentprofiles",
-            "- control request: /reset /newthread /restart /panic /run /agent /agentresume /schedule",
+            "- control request: /reset /newthread /restart /panic /run /agent /agentresume /schedule /clearschedule",
             "- agent request: plain text (provider runner)",
         ]
     )
@@ -644,6 +650,7 @@ def _help_text() -> str:
             "/restart",
             "/panic",
             "/clearqueue",
+            "/clearschedule (/clearschedules)",
             "/clearschedules",
             "/run <goal>",
             "/agent [--profile NAME] [--config PATH] [--commit] [--push] [--pr] [--no-post-run] <goal>",
@@ -1691,12 +1698,12 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         payload = request.payload.strip()
         config_path = None
         if payload:
-            parser = argparse.ArgumentParser(add_help=False)
+            parser = _SilentArgumentParser(add_help=False)
             parser.add_argument("--config")
             try:
                 parsed = parser.parse_args(_split_payload(payload))
                 config_path = parsed.config
-            except SystemExit:
+            except (SystemExit, ValueError):
                 return "Usage: /agentprofiles [--config PATH]"
         return await agents.auto_dev_profiles(chat_id, config_path=config_path)
 
@@ -1952,7 +1959,7 @@ async def handle_control(
     if request.command == "clearqueue":
         agents.clear_queue(chat_id)
         return "Queued agent jobs cleared."
-    if request.command == "clearschedules":
+    if request.command in {"clearschedule", "clearschedules"}:
         agents.clear_schedules(chat_id)
         return "Scheduled agent jobs cleared."
     if request.command in {"continue", "next"}:

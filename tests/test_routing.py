@@ -1,6 +1,8 @@
 ﻿from __future__ import annotations
 
 import asyncio
+import contextlib
+import io
 import tempfile
 import unittest
 from datetime import datetime
@@ -1739,6 +1741,48 @@ class RoutingTests(unittest.TestCase):
         schedules = self.store.get_agent_schedules(1)
         self.assertGreaterEqual(len(schedules), 1)
         self.assertEqual(schedules[-1]["kind"], "auto_dev")
+
+    def test_schedules_command_lists_jobs_with_usage_guidance(self) -> None:
+        self.store.add_agent_schedule(
+            1,
+            {
+                "job_id": "job-scheduled-1",
+                "kind": "auto_dev",
+                "goal": "scheduled goal",
+                "run_at": "2026-05-01T10:00",
+            },
+        )
+        request = classify_request(MessageContext(chat_id=1, text="/schedules", command="schedules"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("agent schedules (cron jobs)", body)
+        self.assertIn("scheduled: 1", body)
+        self.assertIn("2026-05-01T10:00", body)
+        self.assertIn("/schedule YYYY-MM-DD HH:MM <goal> (新增 cron job)", body)
+        self.assertIn("/clearschedule (清除所有 cron jobs)", body)
+
+    def test_clearschedule_alias_clears_scheduled_jobs(self) -> None:
+        self.store.add_agent_schedule(
+            1,
+            {
+                "job_id": "job-scheduled-1",
+                "kind": "auto_dev",
+                "goal": "scheduled goal",
+                "run_at": "2026-05-01T10:00",
+            },
+        )
+        request = classify_request(MessageContext(chat_id=1, text="/clearschedule", command="clearschedule"))
+        self.assertEqual(request.kind, CONTROL_REQUEST)
+        body = self.loop.run_until_complete(handle_control(1, request, self.store, self.agents))
+        self.assertIn("Scheduled agent jobs cleared.", body)
+        self.assertEqual(self.store.get_agent_schedules(1), [])
+
+    def test_schedule_command_without_payload_returns_usage_without_argparse_stderr(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/schedule", command="schedule"))
+        stderr_buffer = io.StringIO()
+        with contextlib.redirect_stderr(stderr_buffer):
+            body = self.loop.run_until_complete(handle_control(1, request, self.store, self.agents))
+        self.assertIn("Usage: /schedule YYYY-MM-DD HH:MM", body)
+        self.assertEqual(stderr_buffer.getvalue(), "")
 
     def test_stop_terminates_running_process(self) -> None:
         self.store.set_provider(1, "gemini")

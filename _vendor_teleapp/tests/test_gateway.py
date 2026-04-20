@@ -96,8 +96,8 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         gateway.set_custom_commands({"foo", "status", "model"})
         names = [item.command for item in gateway._build_command_menu()]
         self.assertEqual(
-            names[:8],
-            ["start", "help", "status", "restart", "model", "projects", "panic", "reset"],
+            names[:9],
+            ["start", "help", "status", "restart", "menu", "brain", "schedules", "panic", "reset"],
         )
         self.assertIn("foo", names)
         self.assertEqual(names.count("status"), 1)

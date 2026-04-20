@@ -11,4 +11,9 @@ fi
 source .venv/bin/activate
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY
 unset http_proxy https_proxy all_proxy
+if [ -n "${PYTHONPATH:-}" ]; then
+  export PYTHONPATH="$PWD:$PYTHONPATH"
+else
+  export PYTHONPATH="$PWD"
+fi
 teleapp robot.py --no-hot-reload

@@ -432,16 +432,24 @@ class AgentCoordinator:
 
     def schedule_overview(self, chat_id: int) -> str:
         schedules = sorted(self._store.get_agent_schedules(chat_id), key=lambda item: str(item.get("run_at") or ""))
-        lines = ["agent schedules"]
+        lines = ["agent schedules (cron jobs)"]
         if not schedules:
             lines.extend(["", "no scheduled jobs"])
-            return "\n".join(lines)
-        lines.extend(["", f"scheduled: {len(schedules)}"])
-        for index, job in enumerate(schedules, start=1):
-            kind = str(job.get("kind") or "provider")
-            lines.append(
-                f"{index}. {job.get('run_at')} | {kind} | {job.get('goal') or '<resume>'} | {job.get('project_display') or job.get('project_name')}"
-            )
+        else:
+            lines.extend(["", f"scheduled: {len(schedules)}"])
+            for index, job in enumerate(schedules, start=1):
+                kind = str(job.get("kind") or "provider")
+                lines.append(
+                    f"{index}. {job.get('run_at')} | {kind} | {job.get('goal') or '<resume>'} | {job.get('project_display') or job.get('project_name')}"
+                )
+        lines.extend(
+            [
+                "",
+                "usage:",
+                "- /schedule YYYY-MM-DD HH:MM <goal> (新增 cron job)",
+                "- /clearschedule (清除所有 cron jobs)",
+            ]
+        )
         return "\n".join(lines)
 
     def clear_queue(self, chat_id: int) -> None:

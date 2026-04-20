@@ -14,4 +14,11 @@ set "ALL_PROXY="
 set "http_proxy="
 set "https_proxy="
 set "all_proxy="
-teleapp robot.py
+set "TELEAPP_APP=robot.py"
+set "TELEAPP_PYTHON=%CD%\.venv\Scripts\python.exe"
+if defined PYTHONPATH (
+  set "PYTHONPATH=%CD%;%PYTHONPATH%"
+) else (
+  set "PYTHONPATH=%CD%"
+)
+"%CD%\.venv\Scripts\teleapp.exe" "%TELEAPP_APP%" --python "%TELEAPP_PYTHON%"

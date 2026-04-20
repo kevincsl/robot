@@ -5,7 +5,15 @@ import contextlib
 import re
 import sys
 
-from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    BotCommand,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeChat,
+    BotCommandScopeDefault,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+)
 from telegram.error import BadRequest, Conflict, RetryAfter
 from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
@@ -33,14 +41,19 @@ from teleapp.supervisor import AppSupervisor
 
 MESSAGE_LIMIT = 3900
 _RETRY_IN_SECONDS_RE = re.compile(r"retry(?:\s+in)?\s+(\d+(?:\.\d+)?)\s*seconds?", re.IGNORECASE)
-_FIXED_MENU_COMMANDS: tuple[str, ...] = ("start", "help", "status", "restart", "model", "projects", "panic", "reset")
+_FIXED_MENU_COMMANDS: tuple[str, ...] = ("start", "help", "status", "restart", "menu", "brain", "schedules", "panic", "reset")
+_MENU_LANGUAGE_CODES: tuple[str, ...] = (
+    "zh",
+    "en",
+)
 _MENU_COMMAND_DESCRIPTIONS: dict[str, str] = {
     "start": "Show start help",
     "help": "Show help",
     "status": "Show runtime status",
     "restart": "Restart hosted app",
-    "model": "Choose model",
-    "projects": "List projects",
+    "menu": "Show menu",
+    "brain": "Open brain menu",
+    "schedules": "Show schedules",
     "panic": "Emergency cleanup",
     "reset": "Reset thread state",
 }
@@ -164,6 +177,24 @@ class TelegramGateway:
             commands.append(BotCommand(name, f"/{name}"))
         return commands
 
+    async def _sync_command_menu(self, app) -> None:
+        commands = self._build_command_menu()
+        scopes = [BotCommandScopeDefault(), BotCommandScopeAllPrivateChats()]
+        scoped_chat_id = self._config.telegram_chat_id or self._config.allowed_user_id
+        if scoped_chat_id:
+            scopes.append(BotCommandScopeChat(chat_id=int(scoped_chat_id)))
+
+        for scope in scopes:
+            with contextlib.suppress(BadRequest):
+                await app.bot.delete_my_commands(scope=scope)
+            for language_code in _MENU_LANGUAGE_CODES:
+                with contextlib.suppress(BadRequest):
+                    await app.bot.delete_my_commands(scope=scope, language_code=language_code)
+            await app.bot.set_my_commands(commands=commands, scope=scope)
+            for language_code in _MENU_LANGUAGE_CODES:
+                with contextlib.suppress(BadRequest):
+                    await app.bot.set_my_commands(commands=commands, scope=scope, language_code=language_code)
+
     async def _post_init(self, app) -> None:
         watched = ", ".join(str(path) for path in self._config.watch_paths or []) or "-"
         _console(
@@ -177,7 +208,7 @@ class TelegramGateway:
         await self._supervisor.start()
         self._consumer_task = asyncio.create_task(self._event_consumer(app))
         try:
-            await app.bot.set_my_commands(self._build_command_menu())
+            await self._sync_command_menu(app)
         except Exception as exc:
             _console(f"set command menu failed: {exc.__class__.__name__}: {exc}")
         _console("gateway ready")
