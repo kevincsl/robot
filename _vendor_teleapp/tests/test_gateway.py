@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import unittest
 from argparse import Namespace
 from datetime import datetime
@@ -276,6 +278,53 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(app.bot.calls[0][0], "message")
         self.assertEqual(app.bot.calls[1][0], "edit_message_text")
         self.assertEqual(app.bot.calls[1][1]["message_id"], 101)
+
+    async def test_send_event_skips_status_when_rate_limited(self) -> None:
+        gateway = TelegramGateway(self.config)
+        app = SimpleNamespace(bot=DummyBot())
+        session = gateway.supervisor.state.chat_sessions.setdefault(1, ChatSessionState(chat_id=1))
+        session.status_rate_limited_until = asyncio.get_running_loop().time() + 60
+
+        await gateway._send_event(
+            app,
+            1,
+            AppEvent(type="status", text="tick", raw={"status_key": "heartbeat", "replace": True}),
+        )
+
+        self.assertEqual(app.bot.calls, [])
+
+    async def test_event_consumer_applies_backoff_for_retryafter_like_errors(self) -> None:
+        gateway = TelegramGateway(self.config)
+        app = SimpleNamespace(bot=DummyBot())
+        event = AppEvent(type="status", text="tick", chat_id=1, raw={"status_key": "heartbeat", "replace": True})
+        queue: asyncio.Queue[AppEvent] = asyncio.Queue()
+        queue.put_nowait(event)
+
+        async def fake_next_event() -> AppEvent:
+            return await queue.get()
+
+        RetryAfterLikeError = type("RetryAfter", (Exception,), {})
+
+        async def fake_send_event(*args, **kwargs):
+            exc = RetryAfterLikeError("Flood control exceeded. Retry in 42 seconds")
+            raise exc
+
+        gateway._supervisor.next_event = fake_next_event  # type: ignore[assignment]
+        gateway._send_event = fake_send_event  # type: ignore[assignment]
+
+        task = asyncio.create_task(gateway._event_consumer(app))
+        for _ in range(20):
+            session = gateway.supervisor.state.chat_sessions.get(1)
+            if session and session.status_rate_limited_until > asyncio.get_running_loop().time() + 30:
+                break
+            await asyncio.sleep(0.01)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        session = gateway.supervisor.state.chat_sessions.get(1)
+        self.assertIsNotNone(session)
+        self.assertGreater(session.status_rate_limited_until, asyncio.get_running_loop().time() + 30)
 
 
 if __name__ == "__main__":

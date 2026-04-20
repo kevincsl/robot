@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import sys
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.error import BadRequest, Conflict
+from telegram.error import BadRequest, Conflict, RetryAfter
 from telegram.ext import ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from teleapp.config import TeleappConfig
@@ -26,10 +27,12 @@ from teleapp.context import (
 )
 from teleapp.protocol import AppEvent
 from teleapp.response import ButtonResponse
+from teleapp.state import ChatSessionState
 from teleapp.supervisor import AppSupervisor
 
 
 MESSAGE_LIMIT = 3900
+_RETRY_IN_SECONDS_RE = re.compile(r"retry(?:\s+in)?\s+(\d+(?:\.\d+)?)\s*seconds?", re.IGNORECASE)
 
 
 def _clip(text: str) -> str:
@@ -46,6 +49,37 @@ def _safe_text(text: str | None) -> str:
 def _console(message: str) -> None:
     sys.stderr.write(f"[teleapp] {message}\n")
     sys.stderr.flush()
+
+
+def _retry_after_seconds(exc: BaseException) -> float:
+    raw_value = getattr(exc, "retry_after", None)
+    if isinstance(raw_value, (int, float)):
+        return max(0.0, float(raw_value))
+    if raw_value is not None:
+        total_seconds = getattr(raw_value, "total_seconds", None)
+        if callable(total_seconds):
+            with contextlib.suppress(Exception):
+                return max(0.0, float(total_seconds()))
+        with contextlib.suppress(Exception):
+            return max(0.0, float(raw_value))
+
+    match = _RETRY_IN_SECONDS_RE.search(_safe_text(str(exc)))
+    if not match:
+        return 0.0
+    with contextlib.suppress(ValueError):
+        return max(0.0, float(match.group(1)))
+    return 0.0
+
+
+def _is_retry_after_error(exc: BaseException) -> bool:
+    if isinstance(exc, RetryAfter):
+        return True
+    if exc.__class__.__name__ == "RetryAfter":
+        return True
+    if hasattr(exc, "retry_after"):
+        return True
+    message = _safe_text(str(exc)).lower()
+    return "flood control" in message and "retry" in message
 
 
 class TelegramGateway:
@@ -170,6 +204,9 @@ class TelegramGateway:
             f"active_chat_id: {state.active_chat_id or '-'}",
             f"active_request_id: {state.active_request_id or '-'}",
             f"queued_requests: {state.total_queued_requests}",
+            f"last_exit_code: {state.last_exit_code if state.last_exit_code is not None else '-'}",
+            f"restart_count: {state.restart_count}",
+            f"last_restart_at: {state.last_restart_at.isoformat(timespec='seconds') if state.last_restart_at else '-'}",
             f"last_restart_reason: {state.last_restart_reason or '-'}",
             f"last_error: {state.last_error or '-'}",
         ]
@@ -255,6 +292,27 @@ class TelegramGateway:
             try:
                 await self._send_event(app, target_chat_id, event)
             except Exception as exc:
+                if _is_retry_after_error(exc):
+                    raw = event.raw or {}
+                    session = self._supervisor.state.chat_sessions.setdefault(
+                        target_chat_id,
+                        ChatSessionState(chat_id=target_chat_id),
+                    )
+                    retry_seconds = _retry_after_seconds(exc)
+                    if retry_seconds <= 0:
+                        retry_seconds = 1.0
+                    if event.type == "status":
+                        now = asyncio.get_running_loop().time()
+                        next_allowed_at = now + retry_seconds
+                        if next_allowed_at > session.status_rate_limited_until:
+                            session.status_rate_limited_until = next_allowed_at
+                    _console(
+                        "send event rate-limited: "
+                        f"chat={target_chat_id} "
+                        f"key={_safe_text(str(raw.get('status_key') or '-'))} "
+                        f"retry_after={int(retry_seconds)}s"
+                    )
+                    continue
                 _console(f"send event failed: {exc.__class__.__name__}: {exc}")
 
     async def _send_event(self, app, chat_id: int, event: AppEvent) -> None:
@@ -263,6 +321,8 @@ class TelegramGateway:
         session = self._supervisor.state.chat_sessions.setdefault(chat_id, ChatSessionState(chat_id=chat_id))
         status_key = _safe_text(str(raw.get("status_key") or "")).strip()
         replace = bool(raw.get("replace"))
+        if event_type == "status" and session.status_rate_limited_until > asyncio.get_running_loop().time():
+            return
 
         if event_type == "photo":
             if raw.get("file_path"):

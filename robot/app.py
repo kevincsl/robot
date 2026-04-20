@@ -37,8 +37,10 @@ async def on_startup():
     )
     queue = getattr(app.supervisor, "_event_queue", None)
     if queue is not None:
-        chat_ids = STORE.list_chat_ids()
-        target_chat_id = chat_ids[0] if chat_ids else app.config.allowed_user_id
+        target_chat_id = app.config.allowed_user_id
+        if not target_chat_id:
+            chat_ids = STORE.list_chat_ids()
+            target_chat_id = chat_ids[0] if chat_ids else None
         if target_chat_id:
             lines = [f"robot booted\n{UI_BUILD_TAG}"]
             if risk_enabled:

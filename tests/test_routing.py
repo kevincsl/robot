@@ -32,6 +32,8 @@ class RoutingTests(unittest.TestCase):
         root = Path(self.tempdir.name)
         (root / "README.md").write_text("# robot\n", encoding="utf-8")
         self.settings = load_settings(root)
+        object.__setattr__(self.settings, "codex_bypass_approvals_and_sandbox", False)
+        object.__setattr__(self.settings, "codex_skip_git_repo_check", False)
         state_home = root / ".robot_state"
         state_home.mkdir(parents=True, exist_ok=True)
         object.__setattr__(self.settings, "state_home", state_home)

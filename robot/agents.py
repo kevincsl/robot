@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -118,8 +119,10 @@ class AgentCoordinator:
                 self.ensure_worker(chat_id)
 
     async def shutdown(self) -> None:
-        for invocation in list(self._active_invocations.values()):
+        active_invocations = list(self._active_invocations.values())
+        for invocation in active_invocations:
             invocation.cancel()
+        await self._wait_invocations_exit(active_invocations)
         for task in list(self._worker_tasks.values()):
             task.cancel()
         for task in list(self._worker_tasks.values()):
@@ -138,6 +141,26 @@ class AgentCoordinator:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._scheduler_task
             self._scheduler_task = None
+
+    async def _wait_invocations_exit(self, invocations: list[RunningInvocation]) -> None:
+        for invocation in invocations:
+            process = invocation.process
+            if process is None:
+                continue
+            await asyncio.to_thread(self._ensure_process_stopped, process)
+
+    @staticmethod
+    def _ensure_process_stopped(process: subprocess.Popen[str]) -> None:
+        if process.poll() is not None:
+            return
+        with contextlib.suppress(subprocess.TimeoutExpired, OSError):
+            process.wait(timeout=2)
+        if process.poll() is not None:
+            return
+        with contextlib.suppress(OSError):
+            process.kill()
+        with contextlib.suppress(subprocess.TimeoutExpired, OSError):
+            process.wait(timeout=2)
 
     def ensure_worker(self, chat_id: int) -> None:
         self._ensure_queue_watchdog(chat_id)
