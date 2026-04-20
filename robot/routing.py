@@ -1,6 +1,9 @@
 ﻿from __future__ import annotations
 
 import argparse
+import json
+import os
+import re
 import shlex
 import subprocess
 from dataclasses import dataclass
@@ -63,6 +66,7 @@ COMMAND_NAMES = {
     "guide",
     "about",
     "status",
+    "statusline",
     "doctor",
     "provider",
     "model",
@@ -638,6 +642,225 @@ def _status_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str
     )
 
 
+def _safe_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _resolve_codex_home() -> Path:
+    configured = (os.getenv("CODEX_HOME") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".codex"
+
+
+def _find_codex_session_file(thread_id: str | None) -> tuple[Path | None, str | None]:
+    sessions_root = _resolve_codex_home() / "sessions"
+    if not sessions_root.exists():
+        return None, f"sessions path missing: {sessions_root}"
+
+    if thread_id:
+        matches = sorted(
+            sessions_root.rglob(f"*{thread_id}.jsonl"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if matches:
+            return matches[0], None
+
+    all_sessions = sorted(
+        sessions_root.rglob("*.jsonl"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if all_sessions:
+        return all_sessions[0], "thread session not found; using latest session file"
+    return None, "no codex session jsonl found"
+
+
+def _read_codex_session_snapshot(session_path: Path) -> tuple[str | None, dict[str, object] | None, str | None, str | None]:
+    latest_model: str | None = None
+    latest_token_info: dict[str, object] | None = None
+    latest_timestamp: str | None = None
+
+    try:
+        with session_path.open("r", encoding="utf-8", errors="ignore") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+
+                payload = event.get("payload")
+                event_type = event.get("type")
+                if event_type == "turn_context" and isinstance(payload, dict):
+                    model = payload.get("model")
+                    if isinstance(model, str) and model.strip():
+                        latest_model = model.strip()
+                    continue
+                if event_type != "event_msg" or not isinstance(payload, dict):
+                    continue
+
+                payload_type = payload.get("type")
+                if payload_type != "token_count":
+                    continue
+
+                info = payload.get("info")
+                if isinstance(info, dict):
+                    latest_token_info = info
+                    timestamp = event.get("timestamp")
+                    if isinstance(timestamp, str) and timestamp.strip():
+                        latest_timestamp = timestamp.strip()
+    except OSError as exc:
+        return latest_model, None, latest_timestamp, f"{exc.__class__.__name__}: {exc}"
+
+    if latest_token_info is None:
+        return latest_model, None, latest_timestamp, "token_count not found in session file"
+    return latest_model, latest_token_info, latest_timestamp, None
+
+
+def _git_statusline_stats(workdir: Path) -> tuple[str | None, int | None, int | None, int | None]:
+    branch: str | None = None
+    dirty_files: int | None = None
+    lines_added: int | None = None
+    lines_removed: int | None = None
+    try:
+        branch_run = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+            cwd=workdir,
+        )
+        candidate = (branch_run.stdout or "").strip()
+        if branch_run.returncode == 0 and candidate:
+            branch = candidate
+
+        status_run = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+            cwd=workdir,
+        )
+        if status_run.returncode == 0:
+            dirty_files = len([line for line in (status_run.stdout or "").splitlines() if line.strip()])
+
+        diff_run = subprocess.run(
+            ["git", "diff", "--numstat"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+            cwd=workdir,
+        )
+        if diff_run.returncode == 0:
+            added = 0
+            removed = 0
+            for line in (diff_run.stdout or "").splitlines():
+                parts = line.split()
+                if len(parts) < 2:
+                    continue
+                left = _safe_int(parts[0])
+                right = _safe_int(parts[1])
+                if left is not None:
+                    added += left
+                if right is not None:
+                    removed += right
+            lines_added = added
+            lines_removed = removed
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return branch, dirty_files, lines_added, lines_removed
+    return branch, dirty_files, lines_added, lines_removed
+
+
+def _statusline_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str:
+    state = store.get_chat_state(chat_id)
+    provider = str(state["provider"])
+    selected_model = str(state["model"])
+    thread_id = str(state.get("thread_id") or "").strip() or None
+    project_path = str(state.get("project_path") or "").strip()
+    workdir = Path(project_path) if project_path else settings.project_root
+
+    session_file, session_note = _find_codex_session_file(thread_id)
+    reported_model: str | None = None
+    context_window: int | None = None
+    total_tokens: int | None = None
+    last_turn_tokens: int | None = None
+    remaining_tokens: int | None = None
+    token_timestamp: str | None = None
+    parse_note: str | None = None
+    if session_file is not None:
+        reported_model, token_info, token_timestamp, parse_note = _read_codex_session_snapshot(session_file)
+        if token_info:
+            total_block = token_info.get("total_token_usage")
+            if isinstance(total_block, dict):
+                total_tokens = _safe_int(total_block.get("total_tokens"))
+            last_block = token_info.get("last_token_usage")
+            if isinstance(last_block, dict):
+                last_turn_tokens = _safe_int(last_block.get("total_tokens"))
+            context_window = _safe_int(token_info.get("model_context_window"))
+
+    if context_window is not None and last_turn_tokens is not None:
+        remaining_tokens = max(0, context_window - last_turn_tokens)
+
+    branch, dirty_files, lines_added, lines_removed = _git_statusline_stats(workdir)
+
+    lines = [
+        "statusline",
+        "",
+        "[session]",
+        f"provider: {provider}",
+        f"model: {selected_model}",
+        f"reported_model: {reported_model or selected_model}",
+        f"thread_id: {thread_id or '-'}",
+        f"project_path: {project_path or '-'}",
+        f"session_file: {session_file.name if session_file is not None else '-'}",
+        f"token_updated_at: {token_timestamp or '-'}",
+        "",
+        "[context]",
+        f"context_used_tokens_total: {total_tokens if total_tokens is not None else '-'}",
+        f"context_used_tokens_last_turn: {last_turn_tokens if last_turn_tokens is not None else '-'}",
+        f"model_context_window: {context_window if context_window is not None else '-'}",
+    ]
+    if last_turn_tokens is not None and context_window:
+        percent = (last_turn_tokens / context_window) * 100
+        lines.append(f"context_usage_percent: {percent:.2f}%")
+    else:
+        lines.append("context_usage_percent: -")
+    lines.append(f"context_remaining_tokens: {remaining_tokens if remaining_tokens is not None else '-'}")
+    lines.extend(
+        [
+            "",
+            "[git]",
+            f"git_branch: {branch or '-'}",
+            f"git_dirty_files: {dirty_files if dirty_files is not None else '-'}",
+            f"git_lines_added: {lines_added if lines_added is not None else '-'}",
+            f"git_lines_removed: {lines_removed if lines_removed is not None else '-'}",
+            "",
+            "source: codex session jsonl (cc-statusline-style)",
+        ]
+    )
+    details = [note for note in [session_note, parse_note] if note]
+    if details:
+        lines.append(f"detail: {'; '.join(details)}")
+    return "\n".join(lines)
+
+
 def _help_text() -> str:
     return "\n".join(
         [
@@ -646,7 +869,7 @@ def _help_text() -> str:
             "deterministic commands:",
             "general:",
             "/quick  /guide  /menu  /help",
-            "/status  /doctor  /queue  /schedules  /schedulesync [--period month] [--dry-run|--apply]",
+            "/status  /statusline  /doctor  /queue  /schedules  /schedulesync [--period month] [--dry-run|--apply]",
             "/agentstatus  /agentprofiles [--config PATH]",
             "",
             "workspace:",
@@ -705,6 +928,7 @@ def _quick_text() -> str:
             "",
             "daily commands:",
             "- /status",
+            "- /statusline",
             "- /mailjson <config.json>",
             "- /braininbox <text>",
             "- /brainsearch <query>",
@@ -1612,6 +1836,9 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
 
     if request.command == "status":
         return _status_text(chat_id, store, settings)
+
+    if request.command == "statusline":
+        return _statusline_text(chat_id, store, settings)
 
     if request.command == "doctor":
         return build_doctor_report(settings)

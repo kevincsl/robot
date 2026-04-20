@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import asyncio
+import subprocess
 import tempfile
 import unittest
 from datetime import datetime
@@ -137,6 +138,49 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("calendar_sync_dry_run: True", body)
         self.assertIn("calendar_id: primary", body)
         self.assertIn("runtime_commit:", body)
+
+    def test_statusline_reports_model_context_window(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/statusline", command="statusline"))
+        self.store.set_project(1, "robot", "robot", str(Path(self.tempdir.name)))
+        self.store.set_thread_id(1, "codex", "019da96d-0622-7f91-ac48-92c261ff855c")
+        with patch(
+            "robot.routing._find_codex_session_file",
+            return_value=(Path("C:/Users/kevin/.codex/sessions/2026/04/20/rollout-2026-04-20T13-46-27-019da96d-0622-7f91-ac48-92c261ff855c.jsonl"), None),
+        ), patch(
+            "robot.routing._read_codex_session_snapshot",
+            return_value=(
+                "gpt-5.3-codex",
+                {
+                    "total_token_usage": {"total_tokens": 14891},
+                    "last_token_usage": {"total_tokens": 7000},
+                    "model_context_window": 258400,
+                },
+                "2026-04-20T06:00:00.000Z",
+                None,
+            ),
+        ), patch(
+            "robot.routing._git_statusline_stats",
+            return_value=("main", 3, 120, 45),
+        ):
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("statusline", body)
+        self.assertIn("[session]", body)
+        self.assertIn("[context]", body)
+        self.assertIn("[git]", body)
+        self.assertIn("provider: codex", body)
+        self.assertIn("model: gpt-5.3-codex", body)
+        self.assertIn("thread_id: 019da96d-0622-7f91-ac48-92c261ff855c", body)
+        self.assertIn("reported_model: gpt-5.3-codex", body)
+        self.assertIn("context_used_tokens_total: 14891", body)
+        self.assertIn("context_used_tokens_last_turn: 7000", body)
+        self.assertIn("model_context_window: 258400", body)
+        self.assertIn("context_usage_percent: 2.71%", body)
+        self.assertIn("context_remaining_tokens: 251400", body)
+        self.assertIn("git_branch: main", body)
+        self.assertIn("git_dirty_files: 3", body)
+        self.assertIn("git_lines_added: 120", body)
+        self.assertIn("git_lines_removed: 45", body)
+        self.assertIn("source: codex session jsonl (cc-statusline-style)", body)
 
     def test_quick_command_returns_quick_reference(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/quick", command="quick"))
