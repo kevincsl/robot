@@ -110,6 +110,10 @@
 用途：設定每週摘要時間
 - `/schedule YYYY-MM-DD HH:MM <goal>`
 用途：排程 auto-dev 任務
+- `/schedules`
+用途：查看目前所有 auto-dev 排程（含執行時間與目標）
+- `/clearschedule`（同義：`/clearschedules`）
+用途：清除目前聊天的所有 auto-dev 排程
 
 ## 4. 實際使用場景
 
@@ -150,6 +154,7 @@
 - `braininbox` 內容盡量一句一件事，避免混太多主題
 - `brainschedule` 盡量含日期/時間，例：`明天 10:00 跟 PM 開會`
 - `brainbatchauto` 先從小量開始，建議 `3` 或 `5`
+- `/schedule` 請固定格式：`YYYY-MM-DD HH:MM`，例：`/schedule 2026-05-01 10:00 修正 routing fallback`
 - 關鍵資料（網址、檔名、專案名）盡量保留原字串
 
 ## 6. 常見問題
@@ -176,4 +181,3 @@
 - 每週：
 1. 回顧（`/brainweekly`）
 2. 決策（`/braindecide <問題>`）
-

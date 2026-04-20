@@ -18,6 +18,12 @@ Linux/macOS:
 ./start_robot.sh
 ```
 
+Start script behavior:
+
+- `start_robot.bat` runs `%CD%\.venv\Scripts\teleapp.exe` with explicit `--python`.
+- `start_robot.sh` runs `teleapp robot.py --no-hot-reload` inside `.venv`.
+- Both scripts clear proxy env vars and prepend repo root to `PYTHONPATH`.
+
 Stop local process:
 
 - Use your terminal stop signal, or platform process tools.
@@ -32,6 +38,7 @@ In Telegram:
 - `/doctor`
 - `/queue`
 - `/agentstatus`
+- `/schedules`
 
 Expected healthy signs:
 
@@ -68,7 +75,8 @@ Action:
 
 1. Check `/agentstatus` and `/queue`.
 2. If needed, send stop intent (`stop`) or clear queue (`/clearqueue`).
-3. Re-run with `/run <goal>` or `/agent <goal>`.
+3. If old schedules are no longer needed, clear them with `/clearschedule`.
+4. Re-run with `/run <goal>` or `/agent <goal>`.
 
 ### C) Missing dependencies after bootstrap
 
@@ -100,10 +108,12 @@ If behavior is inconsistent after crash/restart:
 1. `/status`
 2. `/agentstatus`
 3. `/queue`
-4. If stale state is suspected:
+4. `/schedules`
+5. If stale state is suspected:
    - `/reset` (clear thread state)
    - `/clearqueue` (if queue should be empty)
-5. Restart process and verify health commands again.
+   - `/clearschedule` (if scheduled jobs should be empty)
+6. Restart process and verify health commands again.
 
 ## 5) Pre-Release Checks
 

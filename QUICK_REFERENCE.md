@@ -39,6 +39,9 @@
 - 想查過去資料：`/brainsearch`
 - 想保留今天日誌：`brain -> 寫入今日`
 - 有日期時間事件：`/brainschedule`
+- 想排 auto-dev 任務：`/schedule YYYY-MM-DD HH:MM <goal>`
+- 想看全部排程：`/schedules`
+- 想清掉所有排程：`/clearschedule`（同義：`/clearschedules`）
 - 想做日/週回顧：`/braindaily`、`/brainweekly`
 
 ## 4) 常見錯誤
@@ -47,6 +50,7 @@
 - 指令被當聊天文字：確認有加 `/`
 - `brainbatchauto` 看起來沒變：它是「新增整理後筆記」，不會刪原文
 - `brainweb` 失敗：先確認 URL 可公開存取
+- `/schedule` 參數錯誤：確認格式為 `YYYY-MM-DD HH:MM <goal>`
 
 ## 5) 建議固定節奏
 
