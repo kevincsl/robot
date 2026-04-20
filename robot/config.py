@@ -136,6 +136,15 @@ def _resolve_brain_vault_path(root: Path, configured_path: str | None, vault_nam
     return None
 
 
+def _default_codex_root(root: Path) -> Path:
+    try:
+        home = Path.home()
+    except RuntimeError:
+        # Some test environments clear HOME/USERPROFILE and Path.home() fails.
+        return (root.parent / "codex").resolve()
+    return (home / "codex").expanduser()
+
+
 def load_settings(project_root: Path | None = None) -> Settings:
     root = (project_root or Path(__file__).resolve().parent.parent).resolve()
     state_home = Path(os.getenv("ROBOT_STATE_HOME", str(root / ".robot_state"))).expanduser()
@@ -170,8 +179,7 @@ def load_settings(project_root: Path | None = None) -> Settings:
             if text:
                 roots.append(Path(text).expanduser())
     else:
-        default_codex_root = (Path.home() / "codex").expanduser()
-        roots.append(default_codex_root)
+        roots.append(_default_codex_root(root))
         # Keep explicit project_root discoverable for local/dev/test runs.
         if project_root is not None:
             roots.append(root)

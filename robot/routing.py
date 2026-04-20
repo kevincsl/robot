@@ -621,6 +621,12 @@ def _help_text() -> str:
             "/model [name]  /models",
             "/projects  /project [key-or-label]",
             "",
+            "email (sendmail):",
+            "/mailcli <sendmail-cli-args>",
+            "/mailjson <config.json>",
+            "/mailbatch <recipients.csv> <base_config.json>",
+            "/mailmcp",
+            "",
             "second brain:",
             "/brain  /brainread  /braininbox <text>  /brainweb <url>",
             "/brainsearch <query>  /brainorganize  /brainbatch  /brainbatchauto [limit]",
@@ -666,6 +672,7 @@ def _quick_text() -> str:
             "",
             "daily commands:",
             "- /status",
+            "- /mailjson <config.json>",
             "- /braininbox <text>",
             "- /brainsearch <query>",
             "- /brainbatchauto [limit]",
@@ -699,6 +706,7 @@ def _guide_text() -> str:
             "- /brain",
             "- /brainweb <url>",
             "- /brainbatchauto [limit]",
+            "- /mailcli /mailjson /mailbatch /mailmcp",
         ]
     )
 
