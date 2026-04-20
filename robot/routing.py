@@ -45,7 +45,7 @@ from robot.brain import (
     search_vault,
     update_schedule_note,
 )
-from robot.calendar_sync import sync_schedule_to_google
+from robot.calendar_sync import sync_schedule_from_google, sync_schedule_to_google
 from robot.calendar_sync import sync_schedule_to_google
 from robot.config import MODEL_CHOICES, MODEL_DESCRIPTIONS, PROVIDER_LABELS, SUPPORTED_MODELS, Settings, VERSION
 from robot.diagnostics import build_doctor_report
@@ -1678,38 +1678,66 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         parsed, error = _parse_schedulesync_options(request.payload)
         if parsed is None:
             return error or "Usage: /schedulesync ..."
+        dry_run = parsed["dry_run"] if isinstance(parsed.get("dry_run"), bool) else None
+        direction = settings.google_calendar_sync_direction
         try:
-            summary = sync_schedule_to_google(
-                settings,
-                period=str(parsed["period"]),
-                limit=int(parsed["limit"]),
-                dry_run=parsed["dry_run"] if isinstance(parsed.get("dry_run"), bool) else None,
-            )
+            summaries: list[tuple[str, dict[str, object]]] = []
+            if direction == "google_to_robot":
+                pull_summary = sync_schedule_from_google(
+                    settings,
+                    limit=int(parsed["limit"]),
+                    dry_run=dry_run,
+                )
+                summaries.append(("pull", pull_summary))
+            elif direction == "bidirectional":
+                push_summary = sync_schedule_to_google(
+                    settings,
+                    period=str(parsed["period"]),
+                    limit=int(parsed["limit"]),
+                    dry_run=dry_run,
+                )
+                pull_summary = sync_schedule_from_google(
+                    settings,
+                    limit=int(parsed["limit"]),
+                    dry_run=dry_run,
+                )
+                summaries.append(("push", push_summary))
+                summaries.append(("pull", pull_summary))
+            else:
+                push_summary = sync_schedule_to_google(
+                    settings,
+                    period=str(parsed["period"]),
+                    limit=int(parsed["limit"]),
+                    dry_run=dry_run,
+                )
+                summaries.append(("push", push_summary))
         except RuntimeError as exc:
             return f"schedule sync failed: {exc}"
         except Exception as exc:  # noqa: BLE001
             return f"schedule sync failed: {exc}"
 
-        if not bool(summary.get("enabled")):
-            reason = str(summary.get("reason") or "sync is disabled")
-            return f"schedule sync skipped.\nreason: {reason}"
+        if not summaries:
+            return "schedule sync skipped.\nreason: no sync step selected"
 
-        lines = [
-            "schedule sync",
-            f"calendar_id: {summary.get('calendar_id') or settings.google_calendar_id}",
-            f"dry_run: {summary.get('dry_run')}",
-            f"source_count: {summary.get('source_count')}",
-            f"processed: {summary.get('processed')}",
-            f"created: {summary.get('created')}",
-            f"updated: {summary.get('updated')}",
-            f"skipped: {summary.get('skipped')}",
-            f"errors: {summary.get('errors')}",
-        ]
-        samples = summary.get("error_samples")
-        if isinstance(samples, list) and samples:
-            lines.append("error_samples:")
-            for sample in samples:
-                lines.append(f"- {sample}")
+        lines = ["schedule sync", f"direction: {direction}", f"calendar_id: {settings.google_calendar_id}"]
+        for label, summary in summaries:
+            if not bool(summary.get("enabled")):
+                lines.append(f"{label}: skipped ({summary.get('reason') or 'disabled'})")
+                continue
+            lines.append(f"{label}:")
+            lines.append(f"  dry_run: {summary.get('dry_run')}")
+            lines.append(f"  source_count: {summary.get('source_count')}")
+            lines.append(f"  processed: {summary.get('processed')}")
+            lines.append(f"  created: {summary.get('created')}")
+            lines.append(f"  updated: {summary.get('updated')}")
+            lines.append(f"  skipped: {summary.get('skipped')}")
+            lines.append(f"  deleted: {summary.get('deleted')}")
+            lines.append(f"  errors: {summary.get('errors')}")
+            samples = summary.get("error_samples")
+            if isinstance(samples, list) and samples:
+                lines.append("  error_samples:")
+                for sample in samples:
+                    lines.append(f"  - {sample}")
         return "\n".join(lines)
 
     if request.command == "agentstatus":

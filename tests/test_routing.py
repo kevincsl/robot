@@ -198,19 +198,22 @@ class RoutingTests(unittest.TestCase):
             "robot.routing.sync_schedule_to_google",
             return_value={
                 "enabled": True,
-                "calendar_id": "primary",
+                "mode": "push",
                 "dry_run": True,
                 "source_count": 9,
                 "processed": 8,
                 "created": 3,
                 "updated": 5,
                 "skipped": 1,
+                "deleted": 0,
                 "errors": 0,
                 "error_samples": [],
             },
         ) as mock_sync:
             body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
         self.assertIn("schedule sync", body)
+        self.assertIn("direction: robot_to_google", body)
+        self.assertIn("push:", body)
         self.assertIn("dry_run: True", body)
         self.assertIn("source_count: 9", body)
         self.assertIn("processed: 8", body)
@@ -227,8 +230,84 @@ class RoutingTests(unittest.TestCase):
             return_value={"enabled": False, "reason": "disabled"},
         ):
             body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
-        self.assertIn("schedule sync skipped.", body)
-        self.assertIn("reason: disabled", body)
+        self.assertIn("schedule sync", body)
+        self.assertIn("push: skipped (disabled)", body)
+
+    def test_schedulesync_uses_pull_when_google_to_robot(self) -> None:
+        object.__setattr__(self.settings, "google_calendar_sync_direction", "google_to_robot")
+        request = classify_request(
+            MessageContext(chat_id=1, text="/schedulesync --dry-run", command="schedulesync")
+        )
+        with (
+            patch(
+                "robot.routing.sync_schedule_from_google",
+                return_value={
+                    "enabled": True,
+                    "mode": "pull",
+                    "dry_run": True,
+                    "source_count": 6,
+                    "processed": 6,
+                    "created": 2,
+                    "updated": 3,
+                    "skipped": 1,
+                    "deleted": 0,
+                    "errors": 0,
+                    "error_samples": [],
+                },
+            ) as mock_pull,
+            patch("robot.routing.sync_schedule_to_google") as mock_push,
+        ):
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("direction: google_to_robot", body)
+        self.assertIn("pull:", body)
+        mock_pull.assert_called_once()
+        mock_push.assert_not_called()
+
+    def test_schedulesync_runs_both_when_bidirectional(self) -> None:
+        object.__setattr__(self.settings, "google_calendar_sync_direction", "bidirectional")
+        request = classify_request(
+            MessageContext(chat_id=1, text="/schedulesync --dry-run", command="schedulesync")
+        )
+        with (
+            patch(
+                "robot.routing.sync_schedule_to_google",
+                return_value={
+                    "enabled": True,
+                    "mode": "push",
+                    "dry_run": True,
+                    "source_count": 4,
+                    "processed": 4,
+                    "created": 1,
+                    "updated": 2,
+                    "skipped": 1,
+                    "deleted": 0,
+                    "errors": 0,
+                    "error_samples": [],
+                },
+            ) as mock_push,
+            patch(
+                "robot.routing.sync_schedule_from_google",
+                return_value={
+                    "enabled": True,
+                    "mode": "pull",
+                    "dry_run": True,
+                    "source_count": 5,
+                    "processed": 5,
+                    "created": 2,
+                    "updated": 2,
+                    "skipped": 1,
+                    "deleted": 1,
+                    "errors": 0,
+                    "error_samples": [],
+                },
+            ) as mock_pull,
+        ):
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("direction: bidirectional", body)
+        self.assertIn("push:", body)
+        self.assertIn("pull:", body)
+        mock_push.assert_called_once()
+        mock_pull.assert_called_once()
 
     def test_continue_without_active_job_falls_through_to_agent(self) -> None:
         self.store.set_agent_current_run(1, None)
