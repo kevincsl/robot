@@ -18,7 +18,11 @@ def main() -> None:
     args = parser.parse_args()
     config = load_config(args)
     try:
-        lock_path = acquire_singleton(config.app_path)
+        lock_path = acquire_singleton(
+            config.app_path,
+            token=config.telegram_token,
+            allowed_user_id=config.allowed_user_id,
+        )
     except SingletonInstanceError as exc:
         print(f"[teleapp] singleton guard blocked launch: {exc}", file=sys.stderr, flush=True)
         raise SystemExit(1) from exc

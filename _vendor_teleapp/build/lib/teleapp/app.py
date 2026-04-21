@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import sys
+import time
 from collections.abc import Callable
+
+from telegram.error import Conflict
 
 from teleapp.config import TeleappConfig, build_parser, build_runtime_config, load_config
 from teleapp.context import MessageContext
@@ -127,8 +131,26 @@ class TeleApp:
         self.run_polling()
 
     def run_polling(self) -> None:
-        app = self.build_application()
-        app.run_polling(drop_pending_updates=False)
+        delay_seconds = 5
+        max_delay_seconds = 60
+        while True:
+            app = self.build_application()
+            try:
+                app.run_polling(drop_pending_updates=False)
+            except Conflict as exc:
+                self._gateway.mark_conflict(str(exc))
+
+            conflict_detected, detail = self._gateway.consume_conflict_state()
+            if not conflict_detected:
+                return
+
+            message = detail or "another process is using this bot token"
+            sys.stderr.write(
+                f"[teleapp] polling conflict backoff={delay_seconds}s reason={message}\n"
+            )
+            sys.stderr.flush()
+            time.sleep(delay_seconds)
+            delay_seconds = min(delay_seconds * 2, max_delay_seconds)
 
     def _attach_dispatcher(self) -> None:
         self._gateway.supervisor.attach_callable(self._dispatch_context)
@@ -195,8 +217,8 @@ class TeleApp:
                     data = str(item.get("data") or "").strip()
                     if text and data:
                         buttons.append(Button(text=text, data=data))
-            return ButtonResponse(text=event.text, buttons=buttons)
-        return Response(text=event.text, event_type=event.type)
+            return ButtonResponse(text=event.text, buttons=buttons, raw=event.raw)
+        return Response(text=event.text, event_type=event.type, raw=event.raw)
 
     async def _run_startup_hooks(self) -> None:
         for hook in self._startup_hooks:

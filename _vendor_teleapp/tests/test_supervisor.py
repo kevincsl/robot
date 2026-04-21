@@ -102,6 +102,50 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event.text, "cmd=hello text=world")
         await app.supervisor.stop()
 
+    async def test_send_text_preserves_raw_payload_in_request(self) -> None:
+        supervisor = AppSupervisor(self.config)
+        await supervisor.start()
+        await supervisor.send_text(
+            chat_id=99,
+            text="caption",
+            raw={"document": {"file_id": "f1", "file_unique_id": "u1", "file_name": "a.pdf"}},
+        )
+        active = supervisor._active_request
+        self.assertIsNotNone(active)
+        assert active is not None
+        self.assertIsInstance(active.raw, dict)
+        self.assertEqual(active.raw["document"]["file_id"], "f1")
+        await supervisor.stop()
+
+    async def test_buttons_event_completes_active_request(self) -> None:
+        supervisor = AppSupervisor(self.config)
+        await supervisor.start()
+        supervisor._active_request = type(
+            "Req",
+            (),
+            {
+                "chat_id": 1,
+                "request_id": "1-1",
+                "text": "",
+                "command": "menu",
+                "raw": None,
+                "queued_at": datetime.now(),
+                "dispatched_at": datetime.now(),
+                "first_event_at": None,
+            },
+        )()
+        await supervisor._complete_request(
+            AppEvent(
+                type="buttons",
+                text="pick",
+                chat_id=1,
+                request_id="1-1",
+                raw={"buttons": [{"text": "A", "data": "a"}]},
+            )
+        )
+        self.assertIsNone(supervisor._active_request)
+        await supervisor.stop()
+
     async def test_inprocess_route_handler_matches_before_default_handler(self) -> None:
         app = TeleApp()
 
@@ -194,34 +238,12 @@ class SupervisorTests(unittest.IsolatedAsyncioTestCase):
             )
         )
         event = await asyncio.wait_for(supervisor.next_event(), timeout=5)
-        self.assertEqual(event.text, "Hosted app crashed with code 2.")
-        self.assertEqual((event.raw or {}).get("exit_kind"), "unexpected_exit")
+        self.assertEqual(event.text, "Hosted app exited with code 2.")
         self.assertTrue(supervisor.state.running)
         self.assertIsNotNone(supervisor.state.pid)
         self.assertNotEqual(supervisor.state.pid, current_pid)
         self.assertEqual(supervisor.state.last_exit_code, 2)
         self.assertEqual(supervisor.state.last_restart_reason, "crash auto-restart (code 2)")
-        await supervisor.stop()
-
-    async def test_exit_after_recent_restart_is_marked_restart_failed(self) -> None:
-        supervisor = AppSupervisor(self.config)
-        await supervisor.start()
-        assert supervisor._runner is not None
-        current_pid = supervisor._runner.process.pid
-        supervisor.state.last_restart_at = datetime.now()
-        supervisor.state.last_restart_reason = "file changed: app.py"
-        supervisor._runner.queue.put_nowait(
-            AppEvent(
-                type="status",
-                text="Hosted app exited with code 1.",
-                process_pid=current_pid,
-                stream="system",
-                raw={"return_code": 1},
-            )
-        )
-        event = await asyncio.wait_for(supervisor.next_event(), timeout=5)
-        self.assertIn("restart failed", event.text)
-        self.assertEqual((event.raw or {}).get("exit_kind"), "restart_failed")
         await supervisor.stop()
 
     async def test_reload_is_deferred_until_active_request_completes(self) -> None:

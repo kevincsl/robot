@@ -10,6 +10,7 @@ from teleapp.protocol import AppEvent
 class Response:
     text: str
     event_type: str = "output"
+    raw: dict | None = None
 
     def to_event(self, ctx: MessageContext) -> AppEvent:
         return AppEvent(
@@ -18,6 +19,7 @@ class Response:
             chat_id=ctx.chat_id,
             request_id=ctx.request_id,
             stream="inprocess",
+            raw=self.raw,
         )
 
 

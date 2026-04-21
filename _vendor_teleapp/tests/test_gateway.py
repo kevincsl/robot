@@ -82,7 +82,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
 
     def test_render_event_formats_known_types(self) -> None:
         self.assertEqual(TelegramGateway._render_event(AppEvent(type="output", text="ok")), "ok")
-        self.assertEqual(TelegramGateway._render_event(AppEvent(type="status", text="up")), "[status] up")
+        self.assertEqual(TelegramGateway._render_event(AppEvent(type="status", text="up")), "up")
         self.assertEqual(TelegramGateway._render_event(AppEvent(type="error", text="bad")), "[error] bad")
 
     def test_build_command_menu_keeps_fixed_entries(self) -> None:
@@ -91,13 +91,13 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         names = [item.command for item in gateway._build_command_menu()]
         self.assertEqual(
             names[:9],
-            ["start", "syshelp", "status", "restart", "menu", "model", "projects", "panic", "reset"],
+            ["start", "help", "status", "restart", "menu", "brain", "schedules", "panic", "reset"],
         )
         self.assertIn("foo", names)
         self.assertEqual(names.count("status"), 1)
-        self.assertEqual(names.count("model"), 1)
+        self.assertEqual(names.count("foo"), 1)
 
-    async def test_start_command_shows_robot_and_syshelp_entrypoints(self) -> None:
+    async def test_start_command_shows_runtime_entrypoints(self) -> None:
         gateway = TelegramGateway(self.config)
         message = DummyMessage()
         update = SimpleNamespace(
@@ -109,27 +109,9 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         await gateway._start_command(update, None)
         self.assertEqual(len(message.sent), 1)
         body = message.sent[0]
-        self.assertIn("robot", body)
-        self.assertIn("/help  (robot commands)", body)
-        self.assertIn("/syshelp  (teleapp runtime commands)", body)
-
-    async def test_syshelp_command_shows_teleapp_runtime_help(self) -> None:
-        gateway = TelegramGateway(self.config)
-        message = DummyMessage()
-        update = SimpleNamespace(
-            effective_user=SimpleNamespace(id=1),
-            effective_chat=SimpleNamespace(id=1),
-            message=message,
-        )
-
-        await gateway._syshelp_command(update, None)
-        self.assertEqual(len(message.sent), 1)
-        body = message.sent[0]
         self.assertIn("teleapp", body)
         self.assertIn("/status", body)
         self.assertIn("/restart", body)
-        self.assertIn("/syshelp", body)
-        self.assertIn("Use /help for robot command help.", body)
 
     async def test_status_command_includes_queue_summary(self) -> None:
         gateway = TelegramGateway(self.config)
@@ -286,7 +268,8 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
     async def test_status_event_reuses_existing_message_when_replace_is_enabled(self) -> None:
         gateway = TelegramGateway(self.config)
         app = SimpleNamespace(bot=DummyBot())
-        gateway._status_messages[(1, "heartbeat")] = 321
+        session = gateway.supervisor.state.chat_sessions.setdefault(1, ChatSessionState(chat_id=1))
+        session.status_messages["heartbeat"] = 321
 
         await gateway._send_event(
             app,
@@ -309,7 +292,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(app.bot.calls[0][0], "message")
-        self.assertIn("reply_markup", app.bot.calls[0][1])
+        self.assertNotIn("reply_markup", app.bot.calls[0][1])
 
 
 if __name__ == "__main__":

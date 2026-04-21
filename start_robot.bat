@@ -16,6 +16,8 @@ set "https_proxy="
 set "all_proxy="
 set "TELEAPP_APP=robot.py"
 set "TELEAPP_PYTHON=%CD%\.venv\Scripts\python.exe"
+if not defined TELEAPP_HOT_RELOAD set "TELEAPP_HOT_RELOAD=1"
+if not defined TELEAPP_WATCH_MODE set "TELEAPP_WATCH_MODE=app-file-only"
 if defined PYTHONPATH (
   set "PYTHONPATH=%CD%;%PYTHONPATH%"
 ) else (

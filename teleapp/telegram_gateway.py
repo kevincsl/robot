@@ -114,6 +114,8 @@ class TelegramGateway:
         self._custom_commands: set[str] = set()
         self._startup_hook = None
         self._shutdown_hook = None
+        self._conflict_detected = False
+        self._last_conflict_message = ""
 
     def build(self):
         app = ApplicationBuilder().token(self._config.telegram_token).build()
@@ -150,6 +152,7 @@ class TelegramGateway:
     async def _telegram_error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         err = context.error
         if isinstance(err, Conflict):
+            self.mark_conflict(_safe_text(str(err)) or "telegram conflict")
             _console("telegram conflict detected: another process is using this bot token; stopping")
             context.application.stop_running()
             return
@@ -165,6 +168,17 @@ class TelegramGateway:
     def set_lifecycle_hooks(self, startup_hook, shutdown_hook) -> None:
         self._startup_hook = startup_hook
         self._shutdown_hook = shutdown_hook
+
+    def mark_conflict(self, message: str) -> None:
+        self._conflict_detected = True
+        self._last_conflict_message = _safe_text(message)
+
+    def consume_conflict_state(self) -> tuple[bool, str]:
+        detected = self._conflict_detected
+        message = self._last_conflict_message
+        self._conflict_detected = False
+        self._last_conflict_message = ""
+        return detected, message
 
     def _build_command_menu(self) -> list[BotCommand]:
         commands: list[BotCommand] = []
