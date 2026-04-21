@@ -1,62 +1,51 @@
 # QUICK REFERENCE
 
-一頁式速查表（Telegram 操作版）。
+`robot` Telegram 一頁速查。
 
-## 1) 最常用 10 條指令
+## 1) 開機後先做這 5 件事
 
-- `/status`：看目前狀態
-- `/help`：看完整指令
-- `/provider codex`：切 provider
-- `/model gpt-5.4`：切模型
-- `/brain`：開第二大腦選單
-- `/braininbox <內容>`：先收集想法
-- `/brainsearch <關鍵字>`：找筆記
-- `/brainbatchauto 5`：自動整理最近 Inbox/Daily
-- `/brainweb <url>`：抓網頁到 Daily（含摘要+tags）
-- `/brainschedule <自然語言>`：新增行程
+1. `/status`
+2. `/provider codex`
+3. `/models`
+4. `/model gpt-5.4`
+5. `/project robot`
 
-## 2) 三條最短流程
+## 2) 最常用 12 個指令
 
-### A. 每日收集整理
-1. `/braininbox 今天要補報表權限控管`
-2. `/brainbatchauto 5`
-3. `/braindaily`
+- `/help`
+- `/quick`
+- `/menu`
+- `/status`
+- `/doctor`
+- `/queue`
+- `/projects`
+- `/project <key-or-label>`
+- `/run <goal>`
+- `/braininbox <text>`
+- `/brainsearch <query>`
+- `/brainbatchauto [limit]`
 
-### B. 快速找資料
-1. `/brainsearch 匯出報表`
-2. 點搜尋結果打開
-3. 需要補充就再 `/braininbox ...`
+## 3) Brain 快速流程
 
-### C. 網址收錄
-1. `/brainweb https://www.koc.com.tw/archives/638837`
-2. 看回覆的 `tags` 與 `摘要重點`
-3. 後續用 `/brainsearch nvidia` 找回
+1. 收集想法：`/braininbox 今天要整理租屋資料`
+2. 批次整理：`/brainbatchauto 5`
+3. 看今日摘要：`/braindaily`
 
-## 3) 什麼時候用哪個
+## 4) 排程 / 控制
 
-- 有想法但還沒分類：`/braininbox`
-- 想一次整理近期素材：`/brainbatchauto`
-- 想查過去資料：`/brainsearch`
-- 想保留今天日誌：`brain -> 寫入今日`
-- 有日期時間事件：`/brainschedule`
-- 想排 auto-dev 任務：`/schedule YYYY-MM-DD HH:MM <goal>`
-- 想看全部排程：`/schedules`
-- 想清掉所有排程：`/clearschedule`（同義：`/clearschedules`）
-- 想做日/週回顧：`/braindaily`、`/brainweekly`
+- 新增排程：`/schedule 2026-04-22 10:00 更新 README 並推送`
+- 查排程：`/schedules`
+- 清空排程：`/clearschedule` 或 `/clearschedules`
+- 清空佇列：`/clearqueue`
+- 緊急清理：`/panic`
+- 重啟提示：`/restart`
 
-## 4) 常見錯誤
+## 5) 常見錯誤
 
-- `Unknown command`：先 `/help`，再確認版本是否重啟到最新版
-- 指令被當聊天文字：確認有加 `/`
-- `brainbatchauto` 看起來沒變：它是「新增整理後筆記」，不會刪原文
-- `brainweb` 失敗：先確認 URL 可公開存取
-- `/schedule` 參數錯誤：確認格式為 `YYYY-MM-DD HH:MM <goal>`
+- `Unknown command`：先輸入 `/help`，檢查拼字與參數。
+- 任務卡住：先看 `/queue` 與 `/agentstatus`，必要時 `/panic`。
+- Bot 衝突：通常是同一 token 有多個程序同時 polling，只保留單一實例。
 
-## 5) 建議固定節奏
+## 6) 一句話原則
 
-- 每天：收集（Inbox）-> 整理（batchauto）-> 收尾（daily）
-- 每週：回顧（weekly）-> 決策（braindecide）
-
----
-
-完整手冊請看：`FEATURES_GUIDE.md`
+要穩定可重現就用 slash commands；純文字訊息預設會送給 AI 當任務執行。
