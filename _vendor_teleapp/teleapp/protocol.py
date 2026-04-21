@@ -31,7 +31,14 @@ def _sanitize_surrogates(value: Any) -> Any:
     return value
 
 
-def encode_input_event(chat_id: int, text: str, *, request_id: str, command: str | None = None) -> str:
+def encode_input_event(
+    chat_id: int,
+    text: str,
+    *,
+    request_id: str,
+    command: str | None = None,
+    raw: dict[str, Any] | None = None,
+) -> str:
     payload = {
         "type": "input",
         "chat_id": chat_id,
@@ -40,6 +47,8 @@ def encode_input_event(chat_id: int, text: str, *, request_id: str, command: str
     }
     if command:
         payload["command"] = command
+    if raw:
+        payload["raw"] = raw
     return json.dumps(_sanitize_surrogates(payload), ensure_ascii=False)
 
 

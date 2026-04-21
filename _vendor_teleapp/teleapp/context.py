@@ -29,6 +29,7 @@ class DocumentInput:
     file_unique_id: str
     file_name: str | None = None
     mime_type: str | None = None
+    local_path: str | None = None
 
 
 @dataclass(slots=True)

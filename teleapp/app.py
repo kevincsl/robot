@@ -217,8 +217,8 @@ class TeleApp:
                     data = str(item.get("data") or "").strip()
                     if text and data:
                         buttons.append(Button(text=text, data=data))
-            return ButtonResponse(text=event.text, buttons=buttons)
-        return Response(text=event.text, event_type=event.type)
+            return ButtonResponse(text=event.text, buttons=buttons, raw=event.raw)
+        return Response(text=event.text, event_type=event.type, raw=event.raw)
 
     async def _run_startup_hooks(self) -> None:
         for hook in self._startup_hooks:

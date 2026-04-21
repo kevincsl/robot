@@ -29,6 +29,27 @@ class ProtocolTests(unittest.TestCase):
         payload = json.loads(encode_input_event(123, raw, request_id="req-2"))
         self.assertEqual(payload["text"], "ok??x")
 
+    def test_encode_input_event_can_include_raw_payload(self) -> None:
+        payload = json.loads(
+            encode_input_event(
+                123,
+                "hello",
+                request_id="req-3",
+                raw={"document": {"file_id": "f1", "file_unique_id": "u1", "file_name": "a.pdf"}},
+            )
+        )
+        self.assertIn("raw", payload)
+        self.assertEqual(payload["raw"]["document"]["file_id"], "f1")
+
+    def test_decode_output_line_prefers_nested_raw_payload(self) -> None:
+        event = decode_output_line(
+            '{"type":"buttons","text":"pick","chat_id":1,"raw":{"buttons":[{"text":"A","data":"a"}]}}',
+            stream="stdout",
+        )
+        assert event is not None
+        self.assertEqual(event.type, "buttons")
+        self.assertEqual(event.raw, {"buttons": [{"text": "A", "data": "a"}]})
+
 
 if __name__ == "__main__":
     unittest.main()

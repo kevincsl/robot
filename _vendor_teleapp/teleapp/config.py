@@ -15,9 +15,9 @@ except ImportError:  # pragma: no cover
 if load_dotenv is not None:
     cwd_env = Path.cwd() / ".env"
     if cwd_env.exists():
-        load_dotenv(dotenv_path=cwd_env, override=True, encoding="utf-8-sig")
+        load_dotenv(dotenv_path=cwd_env, override=True)
     else:
-        load_dotenv(override=True, encoding="utf-8-sig")
+        load_dotenv(override=True)
 
 
 def _read_int_env(name: str, default: int = 0) -> int:
