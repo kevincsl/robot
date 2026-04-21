@@ -24,7 +24,7 @@ from teleapp import (
     build_runtime_config,
 )
 from teleapp.context import MessageContext
-from teleapp.protocol import decode_output_line
+from teleapp.protocol import AppEvent, decode_output_line
 from teleapp.supervisor import AppSupervisor
 
 
@@ -99,34 +99,6 @@ class TeleAppTests(unittest.TestCase):
         result = __import__("asyncio").run(response)
         self.assertEqual(result.text, "command=model text=payload")
 
-    def test_decode_output_line_uses_nested_raw_payload(self) -> None:
-        event = decode_output_line(
-            '{"type":"buttons","text":"pick","chat_id":1,"raw":{"buttons":[{"text":"A","data":"a"}]}}',
-            stream="stdout",
-        )
-        assert event is not None
-        self.assertEqual(event.type, "buttons")
-        self.assertEqual(event.raw, {"buttons": [{"text": "A", "data": "a"}]})
-
-    def test_supervisor_treats_buttons_event_as_request_completion(self) -> None:
-        app = TeleApp(build_runtime_config())
-        supervisor = AppSupervisor(app.config)
-        supervisor._active_request = type(
-            "Req",
-            (),
-            {"chat_id": 1, "request_id": "1-1", "text": "", "command": "menu", "queued_at": __import__("datetime").datetime.now(), "dispatched_at": __import__("datetime").datetime.now(), "first_event_at": None},
-        )()
-        event = decode_output_line(
-            '{"type":"buttons","text":"pick","chat_id":1,"request_id":"1-1","raw":{"buttons":[{"text":"A","data":"a"}]}}',
-            stream="stdout",
-        )
-        assert event is not None
-        __import__("asyncio").run(supervisor._complete_request(event))
-        self.assertIsNone(supervisor._active_request)
-        timing = supervisor.state.chat_sessions[1].last_timing
-        self.assertEqual(timing["request_id"], "1-1")
-        self.assertEqual(timing["event_type"], "buttons")
-
     def test_route_decorator_registers_predicate_handler(self) -> None:
         app = TeleApp(build_runtime_config())
 
@@ -138,6 +110,33 @@ class TeleAppTests(unittest.TestCase):
         predicate, handler = app._routes[0]
         self.assertTrue(predicate(type("Ctx", (), {"text": "ping now"})()))
         self.assertEqual(handler, handle)
+
+    def test_supervisor_records_last_timing_on_completion(self) -> None:
+        app = TeleApp(build_runtime_config())
+        supervisor = AppSupervisor(app.config)
+        now = __import__("datetime").datetime.now()
+        supervisor._active_request = type(
+            "Req",
+            (),
+            {
+                "chat_id": 1,
+                "request_id": "1-1",
+                "text": "",
+                "command": "menu",
+                "queued_at": now,
+                "dispatched_at": now,
+                "first_event_at": None,
+            },
+        )()
+        event = decode_output_line(
+            '{"type":"buttons","text":"pick","chat_id":1,"request_id":"1-1","raw":{"buttons":[{"text":"A","data":"a"}]}}',
+            stream="stdout",
+        )
+        assert event is not None
+        __import__("asyncio").run(supervisor._complete_request(event))
+        timing = supervisor.state.chat_sessions[1].last_timing
+        self.assertEqual(timing["request_id"], "1-1")
+        self.assertEqual(timing["event_type"], "buttons")
 
     def test_run_overrides_basic_config_fields(self) -> None:
         app = TeleApp(build_runtime_config())
@@ -198,6 +197,15 @@ class TeleAppTests(unittest.TestCase):
         self.assertEqual(ContactResponse(text="", phone_number="123", first_name="A").event_type, "contact")
         self.assertEqual(PollResponse(text="", question="Q", options=["A", "B"]).event_type, "poll")
         self.assertEqual(VenueResponse(text="", latitude=1.0, longitude=2.0, title="T", address="A").event_type, "venue")
+
+    def test_event_to_response_preserves_raw_metadata(self) -> None:
+        app = TeleApp(build_runtime_config())
+        ctx = MessageContext(chat_id=1, text="x")
+        event = AppEvent(type="status", text="running", raw={"status_key": "heartbeat", "replace": True})
+        response = app._event_to_response(event)
+        roundtrip = response.to_event(ctx)
+        self.assertEqual(roundtrip.raw["status_key"], "heartbeat")
+        self.assertTrue(roundtrip.raw["replace"])
 
 
 if __name__ == "__main__":
