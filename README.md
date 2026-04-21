@@ -2,6 +2,8 @@
 
 Teleapp-based Telegram task and agent router.
 
+English | [Traditional Chinese](./README.zh-TW.md)
+
 `robot` lets you control local coding/automation workflows from Telegram, route requests to different providers, and manage simple queue/brain/schedule flows in one bot process.
 
 ## Features
