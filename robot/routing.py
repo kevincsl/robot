@@ -47,6 +47,11 @@ from robot.brain import (
 )
 from robot.config import MODEL_CHOICES, MODEL_DESCRIPTIONS, PROVIDER_LABELS, SUPPORTED_MODELS, Settings, VERSION
 from robot.diagnostics import build_doctor_report
+from robot.google_calendar import (
+    delete_google_calendar_schedule_event,
+    sync_schedule_jobs_with_google,
+    upsert_google_calendar_schedule_event,
+)
 from robot.projects import discover_project_workspaces, find_workspace, format_project_with_branch
 from robot.state import ChatStateStore
 
@@ -539,6 +544,39 @@ def _parse_schedule_options(payload: str) -> tuple[dict[str, str | AutoDevOption
     )
 
 
+def _parse_schedule_sync_options(payload: str) -> tuple[tuple[str, int, int] | None, str | None]:
+    parts = payload.split()
+    if not parts or parts[0].lower() != "sync":
+        return None, None
+
+    rest = parts[1:]
+    if len(rest) > 3:
+        return None, "Usage: /schedule sync [push|pull|both] [days] [limit]"
+
+    mode = "both"
+    days = 30
+    limit = 200
+    if rest and rest[0].lower() in {"push", "pull", "both"}:
+        mode = rest.pop(0).lower()
+
+    if rest:
+        try:
+            days = int(rest[0])
+        except ValueError:
+            return None, "Usage: /schedule sync [push|pull|both] [days] [limit]"
+    if len(rest) >= 2:
+        try:
+            limit = int(rest[1])
+        except ValueError:
+            return None, "Usage: /schedule sync [push|pull|both] [days] [limit]"
+
+    if days < 1 or days > 120:
+        return None, "days must be between 1 and 120."
+    if limit < 1 or limit > 500:
+        return None, "limit must be between 1 and 500."
+    return (mode, days, limit), None
+
+
 def classify_request(ctx: MessageContext) -> ClassifiedRequest:
     text = (ctx.text or "").strip()
     command = (ctx.command or "").strip().lower() or None
@@ -656,6 +694,7 @@ def _help_text() -> str:
             "/agent [--profile NAME] [--config PATH] [--commit] [--push] [--pr] [--no-post-run] <goal>",
             "/agentresume [run_id_or_path] [--profile NAME] [--config PATH] [--commit] [--push] [--pr] [--no-post-run]",
             "/schedule YYYY-MM-DD HH:MM [--profile NAME] [--config PATH] [--commit] [--push] [--pr] [--no-post-run] <goal>",
+            "/schedule sync [push|pull|both] [days] [limit]",
             "",
             "agent requests:",
             "- normal text message (provider runner)",
@@ -1939,6 +1978,7 @@ async def handle_control(
     store: ChatStateStore,
     agents: AgentCoordinator,
 ) -> str | AppEvent:
+    calendar_settings = getattr(agents, "_settings", None)
     if request.command in {"reset", "newthread"}:
         store.clear_thread_id(chat_id)
         return "Thread state cleared for the current provider."
@@ -1960,8 +2000,32 @@ async def handle_control(
         agents.clear_queue(chat_id)
         return "Queued agent jobs cleared."
     if request.command in {"clearschedule", "clearschedules"}:
+        existing_schedules = store.get_agent_schedules(chat_id)
         agents.clear_schedules(chat_id)
-        return "Scheduled agent jobs cleared."
+        if not isinstance(calendar_settings, Settings) or not calendar_settings.google_calendar_enabled:
+            return "Scheduled agent jobs cleared."
+
+        target_event_ids: list[str] = []
+        for item in existing_schedules:
+            event_id = str(item.get("gcal_event_id") or "").strip()
+            if event_id:
+                target_event_ids.append(event_id)
+        deleted = 0
+        delete_errors = 0
+        for event_id in target_event_ids:
+            try:
+                if delete_google_calendar_schedule_event(calendar_settings, event_id=event_id):
+                    deleted += 1
+            except Exception:
+                delete_errors += 1
+        return "\n".join(
+            [
+                "Scheduled agent jobs cleared.",
+                f"google_events_targeted: {len(target_event_ids)}",
+                f"google_events_deleted: {deleted}",
+                f"google_delete_errors: {delete_errors}",
+            ]
+        )
     if request.command in {"continue", "next"}:
         current = store.get_chat_state(chat_id).get("agent_current_run")
         if isinstance(current, dict):
@@ -2127,6 +2191,54 @@ async def handle_control(
             "hint: use /queue to check waiting jobs"
         )
     if request.command == "schedule":
+        sync_options, sync_error = _parse_schedule_sync_options(request.payload.strip())
+        if sync_options is not None:
+            if not isinstance(calendar_settings, Settings) or not calendar_settings.google_calendar_enabled:
+                return "Google Calendar sync is disabled. Set ROBOT_GOOGLE_CALENDAR_ENABLED=1 first."
+            mode, days, limit = sync_options
+            schedules = store.get_agent_schedules(chat_id)
+            state = store.get_chat_state(chat_id)
+            state_defaults = {
+                "project_name": state.get("project_name"),
+                "project_display": _project_display(state.get("project_name"), state.get("project_path")),
+                "project_path": state.get("project_path"),
+            }
+            try:
+                updated, report = sync_schedule_jobs_with_google(
+                    calendar_settings,
+                    chat_id=chat_id,
+                    schedules=schedules,
+                    mode=mode,
+                    days=days,
+                    limit=limit,
+                    state_defaults=state_defaults,
+                )
+            except Exception as exc:
+                return f"Schedule sync failed.\n{exc}"
+            store.set_agent_schedules(chat_id, updated)
+            lines = [
+                "Schedule sync completed.",
+                f"mode: {report.get('mode', mode)}",
+                f"days: {days}",
+                f"limit: {limit}",
+                f"local_before: {report.get('local_before', 0)}",
+                f"local_after: {report.get('local_after', len(updated))}",
+                f"pushed_created: {report.get('pushed_created', 0)}",
+                f"pushed_updated: {report.get('pushed_updated', 0)}",
+                f"push_errors: {report.get('push_errors', 0)}",
+                f"pulled_created: {report.get('pulled_created', 0)}",
+                f"pulled_updated: {report.get('pulled_updated', 0)}",
+                f"pull_errors: {report.get('pull_errors', 0)}",
+            ]
+            errors = report.get("errors")
+            if isinstance(errors, list) and errors:
+                lines.append("errors:")
+                for item in errors[:10]:
+                    lines.append(f"- {item}")
+            return "\n".join(lines)
+        if sync_error is not None:
+            return sync_error
+
         parsed, error = _parse_schedule_options(request.payload)
         if parsed is None:
             return error or "Usage: /schedule ..."
@@ -2149,16 +2261,57 @@ async def handle_control(
             request_id=request.request_id,
             status_key=status_key,
         )
+
+        gcal_lines: list[str] = []
+        if isinstance(calendar_settings, Settings) and calendar_settings.google_calendar_enabled:
+            schedules = store.get_agent_schedules(chat_id)
+            target_idx = -1
+            for idx, item in enumerate(schedules):
+                if str(item.get("job_id") or "").strip() == str(_job_id).strip():
+                    target_idx = idx
+                    break
+            if target_idx >= 0:
+                target_job = dict(schedules[target_idx])
+                try:
+                    event_id, created = upsert_google_calendar_schedule_event(
+                        calendar_settings,
+                        chat_id=chat_id,
+                        schedule_job=target_job,
+                    )
+                    target_job["gcal_event_id"] = event_id
+                    target_job["gcal_last_synced_at"] = datetime.now().isoformat(timespec="seconds")
+                    target_job.pop("gcal_sync_error", None)
+                    schedules[target_idx] = target_job
+                    store.set_agent_schedules(chat_id, schedules)
+                    gcal_lines.extend(
+                        [
+                            f"google_calendar_sync: {'created' if created else 'updated'}",
+                            f"gcal_event_id: {event_id}",
+                        ]
+                    )
+                except Exception as exc:
+                    target_job["gcal_sync_error"] = str(exc)
+                    schedules[target_idx] = target_job
+                    store.set_agent_schedules(chat_id, schedules)
+                    gcal_lines.extend(
+                        [
+                            "google_calendar_sync: failed",
+                            f"gcal_error: {exc}",
+                        ]
+                    )
+
         state = store.get_chat_state(chat_id)
-        return (
-            "Scheduled auto-dev run.\n"
-            f"goal: {options.goal}\n"
-            f"project: {_project_display(state['project_name'], state['project_path'])}\n"
-            f"path: {state['project_path']}\n"
-            f"run_id: {run_id}\n"
-            f"run_at: {run_at}\n"
-            f"scheduled_count: {count}"
-        )
+        lines = [
+            "Scheduled auto-dev run.",
+            f"goal: {options.goal}",
+            f"project: {_project_display(state['project_name'], state['project_path'])}",
+            f"path: {state['project_path']}",
+            f"run_id: {run_id}",
+            f"run_at: {run_at}",
+            f"scheduled_count: {count}",
+        ]
+        lines.extend(gcal_lines)
+        return "\n".join(lines)
     return f"Unknown control command: /{request.command}"
 
 

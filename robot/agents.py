@@ -20,6 +20,7 @@ from robot.brain import (
     get_active_or_next_schedule,
 )
 from robot.config import Settings
+from robot.google_calendar import sync_schedule_jobs_with_google
 from robot.projects import format_project_with_branch
 from robot.providers import (
     RunningInvocation,
@@ -89,6 +90,8 @@ class AgentCoordinator:
         self._scheduler_task: asyncio.Task[None] | None = None
         self._active_invocations: dict[int, RunningInvocation] = {}
         self._queue_watchdogs: dict[int, asyncio.Task[None]] = {}
+        self._gcal_schedule_sync_interval_seconds = 300
+        self._gcal_schedule_last_sync_at: dict[int, datetime] = {}
 
     def attach_supervisor(self, supervisor) -> None:
         self._supervisor = supervisor
@@ -447,6 +450,7 @@ class AgentCoordinator:
                 "",
                 "usage:",
                 "- /schedule YYYY-MM-DD HH:MM <goal> (新增 cron job)",
+                "- /schedule sync [push|pull|both] [days] [limit] (手動同步 Google Calendar)",
                 "- /clearschedule (清除所有 cron jobs)",
             ]
         )
@@ -463,6 +467,7 @@ class AgentCoordinator:
             now = datetime.now().replace(second=0, microsecond=0)
             for chat_id in self._store.list_chat_ids():
                 await self._process_brain_automation(chat_id, now)
+                await self._maybe_sync_google_schedules(chat_id, now)
                 schedules = self._store.get_agent_schedules(chat_id)
                 due: list[dict[str, Any]] = []
                 keep: list[dict[str, Any]] = []
@@ -491,6 +496,43 @@ class AgentCoordinator:
                 self.ensure_worker(chat_id)
 
             await asyncio.sleep(15)
+
+    async def _maybe_sync_google_schedules(self, chat_id: int, now: datetime) -> None:
+        if not self._settings.google_calendar_enabled:
+            return
+
+        last = self._gcal_schedule_last_sync_at.get(chat_id)
+        if last is not None:
+            elapsed_seconds = int((now - last).total_seconds())
+            if elapsed_seconds < self._gcal_schedule_sync_interval_seconds:
+                return
+
+        schedules = self._store.get_agent_schedules(chat_id)
+        state = self._store.get_chat_state(chat_id)
+        state_defaults = {
+            "project_name": state.get("project_name"),
+            "project_display": format_project_with_branch(
+                str(state.get("project_name") or "-"),
+                str(state.get("project_path") or ""),
+            ),
+            "project_path": state.get("project_path"),
+        }
+        try:
+            updated, _report = sync_schedule_jobs_with_google(
+                self._settings,
+                chat_id=chat_id,
+                schedules=schedules,
+                mode="both",
+                days=30,
+                limit=200,
+                state_defaults=state_defaults,
+            )
+            self._store.set_agent_schedules(chat_id, updated)
+        except Exception:
+            # Keep scheduler resilient; sync retries on next 5-minute window.
+            pass
+        finally:
+            self._gcal_schedule_last_sync_at[chat_id] = now
 
     async def _process_brain_automation(self, chat_id: int, now: datetime) -> None:
         automation = self._store.get_brain_automation(chat_id)

@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 load_dotenv(override=True, encoding="utf-8-sig")
 
 VERSION = "0.1.1"
+DEFAULT_GOOGLE_CALENDAR_SCOPES = ("https://www.googleapis.com/auth/calendar.readonly",)
 
 PROVIDER_LABELS = {
     "codex": "Codex",
@@ -103,6 +104,11 @@ class Settings:
     brain_vault_path: Path | None
     codex_bypass_approvals_and_sandbox: bool
     codex_skip_git_repo_check: bool
+    google_calendar_enabled: bool
+    google_calendar_credentials_path: Path
+    google_calendar_token_path: Path
+    google_calendar_calendar_id: str
+    google_calendar_scopes: tuple[str, ...]
 
 
 def normalize_provider(provider: str | None) -> str:
@@ -145,6 +151,15 @@ def _default_codex_root(root: Path) -> Path:
     return (home / "codex").expanduser()
 
 
+def _split_google_scopes(raw: str | None) -> tuple[str, ...]:
+    text = (raw or "").strip()
+    if not text:
+        return DEFAULT_GOOGLE_CALENDAR_SCOPES
+    normalized = text.replace(";", ",")
+    parts = [item.strip() for item in normalized.split(",") if item.strip()]
+    return tuple(parts) if parts else DEFAULT_GOOGLE_CALENDAR_SCOPES
+
+
 def load_settings(project_root: Path | None = None) -> Settings:
     root = (project_root or Path(__file__).resolve().parent.parent).resolve()
     state_home = Path(os.getenv("ROBOT_STATE_HOME", str(root / ".robot_state"))).expanduser()
@@ -170,6 +185,25 @@ def load_settings(project_root: Path | None = None) -> Settings:
     # Security-first defaults: dangerous Codex flags are opt-in.
     codex_bypass_approvals_and_sandbox = _env_flag("ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX", False)
     codex_skip_git_repo_check = _env_flag("ROBOT_CODEX_SKIP_GIT_REPO_CHECK", False)
+    google_calendar_enabled = _env_flag("ROBOT_GOOGLE_CALENDAR_ENABLED", False)
+    google_calendar_credentials_path = Path(
+        os.getenv(
+            "ROBOT_GOOGLE_CALENDAR_CREDENTIALS_PATH",
+            str(root / "google_calendar_credentials.json"),
+        )
+    ).expanduser()
+    google_calendar_token_path = Path(
+        os.getenv(
+            "ROBOT_GOOGLE_CALENDAR_TOKEN_PATH",
+            str(state_home / "google_calendar_token.json"),
+        )
+    ).expanduser()
+    google_calendar_calendar_id = (
+        os.getenv("ROBOT_GOOGLE_CALENDAR_ID", "primary") or "primary"
+    ).strip() or "primary"
+    google_calendar_scopes = _split_google_scopes(
+        os.getenv("ROBOT_GOOGLE_CALENDAR_SCOPES")
+    )
 
     raw_roots = (os.getenv("ROBOT_PROJECTS_ROOTS", "") or "").strip()
     roots: list[Path] = []
@@ -208,4 +242,9 @@ def load_settings(project_root: Path | None = None) -> Settings:
         brain_vault_path=brain_vault_path,
         codex_bypass_approvals_and_sandbox=codex_bypass_approvals_and_sandbox,
         codex_skip_git_repo_check=codex_skip_git_repo_check,
+        google_calendar_enabled=google_calendar_enabled,
+        google_calendar_credentials_path=google_calendar_credentials_path,
+        google_calendar_token_path=google_calendar_token_path,
+        google_calendar_calendar_id=google_calendar_calendar_id,
+        google_calendar_scopes=google_calendar_scopes,
     )

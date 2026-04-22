@@ -88,6 +88,11 @@ Linux/macOS:
 - `ROBOT_COPILOT_CMD`
 - `ROBOT_PROJECTS_ROOTS`
 - `ROBOT_STATE_HOME`
+- `ROBOT_GOOGLE_CALENDAR_ENABLED`
+- `ROBOT_GOOGLE_CALENDAR_CREDENTIALS_PATH`
+- `ROBOT_GOOGLE_CALENDAR_TOKEN_PATH`
+- `ROBOT_GOOGLE_CALENDAR_ID`
+- `ROBOT_GOOGLE_CALENDAR_SCOPES`
 
 安全相關旗標（預設關閉）：
 
@@ -101,12 +106,28 @@ Linux/macOS:
 - 應用程式有 Telegram polling conflict 處理，並使用 `.robot_state/robot.lock` 做單實例保護。
 - 若仍發生 conflict crash，請確認同一 token 只有一個 bot 程序在跑。
 
+## Google Calendar 同步
+
+- `/schedule ...` 在啟用 Google Calendar 後，會嘗試同步建立/更新對應事件。
+- `/schedule sync [push|pull|both] [days] [limit]` 可手動立即觸發同步。
+- `/clearschedule` 會清空本地排程，且會嘗試刪除已綁定的 Google 事件。
+- 背景同步每 5 分鐘執行一次，維持 `/schedule` 與 Google 行事曆一致。
+- 若要使用可寫入同步（`/schedule`、`/clearschedule` 刪除）：
+  - `ROBOT_GOOGLE_CALENDAR_SCOPES=https://www.googleapis.com/auth/calendar`
+  - 重新執行 `python scripts/google_calendar_auth.py` 完成授權。
+
 ## 開發
 
 執行測試：
 
 ```bash
 pytest -q
+```
+
+Google Calendar 一次性授權：
+
+```bash
+python scripts/google_calendar_auth.py
 ```
 
 專案版本定義於 [robot/config.py](./robot/config.py) 與 `pyproject.toml`（目前 `0.1.1`）。

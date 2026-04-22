@@ -1742,6 +1742,20 @@ class RoutingTests(unittest.TestCase):
         self.assertGreaterEqual(len(schedules), 1)
         self.assertEqual(schedules[-1]["kind"], "auto_dev")
 
+    def test_schedule_command_syncs_google_event_when_enabled(self) -> None:
+        object.__setattr__(self.settings, "google_calendar_enabled", True)
+        request = classify_request(
+            MessageContext(chat_id=1, text="/schedule 2026-04-09 10:00 implement queue", command="schedule")
+        )
+        with patch("robot.routing.upsert_google_calendar_schedule_event", return_value=("evt-1", True)) as mock_upsert:
+            body = self.loop.run_until_complete(handle_control(1, request, self.store, self.agents))
+        self.assertIn("Scheduled auto-dev run.", body)
+        self.assertIn("google_calendar_sync: created", body)
+        self.assertIn("gcal_event_id: evt-1", body)
+        mock_upsert.assert_called_once()
+        schedules = self.store.get_agent_schedules(1)
+        self.assertEqual(schedules[-1].get("gcal_event_id"), "evt-1")
+
     def test_schedules_command_lists_jobs_with_usage_guidance(self) -> None:
         self.store.add_agent_schedule(
             1,
@@ -1775,6 +1789,107 @@ class RoutingTests(unittest.TestCase):
         body = self.loop.run_until_complete(handle_control(1, request, self.store, self.agents))
         self.assertIn("Scheduled agent jobs cleared.", body)
         self.assertEqual(self.store.get_agent_schedules(1), [])
+
+    def test_clearschedule_deletes_google_events_when_enabled(self) -> None:
+        object.__setattr__(self.settings, "google_calendar_enabled", True)
+        self.store.add_agent_schedule(
+            1,
+            {
+                "job_id": "job-scheduled-1",
+                "kind": "auto_dev",
+                "goal": "scheduled goal",
+                "run_at": "2026-05-01T10:00",
+                "gcal_event_id": "evt-1",
+            },
+        )
+        self.store.add_agent_schedule(
+            1,
+            {
+                "job_id": "job-scheduled-2",
+                "kind": "auto_dev",
+                "goal": "scheduled goal2",
+                "run_at": "2026-05-01T11:00",
+            },
+        )
+        request = classify_request(MessageContext(chat_id=1, text="/clearschedule", command="clearschedule"))
+        with patch("robot.routing.delete_google_calendar_schedule_event", return_value=True) as mock_delete:
+            body = self.loop.run_until_complete(handle_control(1, request, self.store, self.agents))
+        self.assertIn("Scheduled agent jobs cleared.", body)
+        self.assertIn("google_events_targeted: 1", body)
+        self.assertIn("google_events_deleted: 1", body)
+        self.assertIn("google_delete_errors: 0", body)
+        mock_delete.assert_called_once_with(self.settings, event_id="evt-1")
+        self.assertEqual(self.store.get_agent_schedules(1), [])
+
+    def test_schedule_sync_command_runs_google_sync_when_enabled(self) -> None:
+        object.__setattr__(self.settings, "google_calendar_enabled", True)
+        self.store.add_agent_schedule(
+            1,
+            {
+                "job_id": "job-1",
+                "kind": "auto_dev",
+                "goal": "sync goal",
+                "run_at": "2026-05-01T10:00",
+            },
+        )
+        request = classify_request(MessageContext(chat_id=1, text="/schedule sync push 14 80", command="schedule"))
+        with patch(
+            "robot.routing.sync_schedule_jobs_with_google",
+            return_value=(
+                [
+                    {
+                        "job_id": "job-1",
+                        "kind": "auto_dev",
+                        "goal": "sync goal",
+                        "run_at": "2026-05-01T10:00",
+                        "gcal_event_id": "evt-1",
+                    }
+                ],
+                {
+                    "mode": "push",
+                    "local_before": 1,
+                    "local_after": 1,
+                    "pushed_created": 1,
+                    "pushed_updated": 0,
+                    "push_errors": 0,
+                    "pulled_created": 0,
+                    "pulled_updated": 0,
+                    "pull_errors": 0,
+                    "errors": [],
+                },
+            ),
+        ) as mock_sync:
+            body = self.loop.run_until_complete(handle_control(1, request, self.store, self.agents))
+        self.assertIn("Schedule sync completed.", body)
+        self.assertIn("mode: push", body)
+        self.assertIn("days: 14", body)
+        self.assertIn("limit: 80", body)
+        mock_sync.assert_called_once()
+        self.assertEqual(mock_sync.call_args.kwargs["mode"], "push")
+        self.assertEqual(mock_sync.call_args.kwargs["days"], 14)
+        self.assertEqual(mock_sync.call_args.kwargs["limit"], 80)
+        self.assertEqual(self.store.get_agent_schedules(1)[0].get("gcal_event_id"), "evt-1")
+
+    def test_schedule_sync_command_requires_google_enabled(self) -> None:
+        object.__setattr__(self.settings, "google_calendar_enabled", False)
+        request = classify_request(MessageContext(chat_id=1, text="/schedule sync", command="schedule"))
+        body = self.loop.run_until_complete(handle_control(1, request, self.store, self.agents))
+        self.assertEqual(body, "Google Calendar sync is disabled. Set ROBOT_GOOGLE_CALENDAR_ENABLED=1 first.")
+
+    def test_schedule_sync_command_validates_payload(self) -> None:
+        object.__setattr__(self.settings, "google_calendar_enabled", True)
+
+        request_usage = classify_request(MessageContext(chat_id=1, text="/schedule sync x y z q", command="schedule"))
+        body_usage = self.loop.run_until_complete(handle_control(1, request_usage, self.store, self.agents))
+        self.assertEqual(body_usage, "Usage: /schedule sync [push|pull|both] [days] [limit]")
+
+        request_days = classify_request(MessageContext(chat_id=1, text="/schedule sync pull 0", command="schedule"))
+        body_days = self.loop.run_until_complete(handle_control(1, request_days, self.store, self.agents))
+        self.assertEqual(body_days, "days must be between 1 and 120.")
+
+        request_limit = classify_request(MessageContext(chat_id=1, text="/schedule sync push 7 700", command="schedule"))
+        body_limit = self.loop.run_until_complete(handle_control(1, request_limit, self.store, self.agents))
+        self.assertEqual(body_limit, "limit must be between 1 and 500.")
 
     def test_schedule_command_without_payload_returns_usage_without_argparse_stderr(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/schedule", command="schedule"))

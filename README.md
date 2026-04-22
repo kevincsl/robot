@@ -88,6 +88,11 @@ From `.env.example` and runtime config:
 - `ROBOT_COPILOT_CMD`
 - `ROBOT_PROJECTS_ROOTS`
 - `ROBOT_STATE_HOME`
+- `ROBOT_GOOGLE_CALENDAR_ENABLED`
+- `ROBOT_GOOGLE_CALENDAR_CREDENTIALS_PATH`
+- `ROBOT_GOOGLE_CALENDAR_TOKEN_PATH`
+- `ROBOT_GOOGLE_CALENDAR_ID`
+- `ROBOT_GOOGLE_CALENDAR_SCOPES`
 
 Security-related flags (default off):
 
@@ -101,12 +106,28 @@ Security-related flags (default off):
 - The app has Telegram polling conflict handling and a single-instance lock in `.robot_state/robot.lock`.
 - If you still see conflict crashes, ensure only one process is using the same bot token.
 
+## Google Calendar Sync
+
+- `/schedule ...` attempts to upsert a matching Google Calendar event when calendar sync is enabled.
+- `/schedule sync [push|pull|both] [days] [limit]` triggers manual sync on demand.
+- `/clearschedule` clears local schedules and also deletes linked Google events when available.
+- Background sync runs every 5 minutes to keep `/schedule` and Google Calendar aligned.
+- For write sync (`/schedule`, `/clearschedule` delete), use scope:
+  - `ROBOT_GOOGLE_CALENDAR_SCOPES=https://www.googleapis.com/auth/calendar`
+  - then re-authorize with `python scripts/google_calendar_auth.py`
+
 ## Development
 
 Run tests:
 
 ```bash
 pytest -q
+```
+
+Google Calendar one-time auth:
+
+```bash
+python scripts/google_calendar_auth.py
 ```
 
 Project version is defined in [robot/config.py](./robot/config.py) and `pyproject.toml` (currently `0.1.1`).

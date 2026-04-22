@@ -221,5 +221,53 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("elapsed: 00:00", text)
 
 
+    async def test_google_schedule_sync_runs_every_5_minutes_when_enabled(self) -> None:
+        chat_id = 7
+        object.__setattr__(self.settings, "google_calendar_enabled", True)
+        self.store.add_agent_schedule(
+            chat_id,
+            {
+                "job_id": "job-1",
+                "kind": "auto_dev",
+                "goal": "sync schedule",
+                "run_at": "2026-04-12T12:00",
+            },
+        )
+
+        with patch(
+            "robot.agents.sync_schedule_jobs_with_google",
+            return_value=(
+                [
+                    {
+                        "job_id": "job-1",
+                        "kind": "auto_dev",
+                        "goal": "sync schedule",
+                        "run_at": "2026-04-12T12:00",
+                        "gcal_event_id": "evt-1",
+                    }
+                ],
+                {"mode": "both"},
+            ),
+        ) as mock_sync:
+            await self.coordinator._maybe_sync_google_schedules(chat_id, datetime(2026, 4, 12, 9, 0))
+            await self.coordinator._maybe_sync_google_schedules(chat_id, datetime(2026, 4, 12, 9, 4))
+            await self.coordinator._maybe_sync_google_schedules(chat_id, datetime(2026, 4, 12, 9, 5))
+
+        self.assertEqual(mock_sync.call_count, 2)
+        first_call = mock_sync.call_args_list[0]
+        self.assertEqual(first_call.kwargs["mode"], "both")
+        self.assertEqual(first_call.kwargs["days"], 30)
+        self.assertEqual(first_call.kwargs["limit"], 200)
+        schedules = self.store.get_agent_schedules(chat_id)
+        self.assertEqual(schedules[0].get("gcal_event_id"), "evt-1")
+
+    async def test_google_schedule_sync_skips_when_disabled(self) -> None:
+        chat_id = 8
+        object.__setattr__(self.settings, "google_calendar_enabled", False)
+        with patch("robot.agents.sync_schedule_jobs_with_google") as mock_sync:
+            await self.coordinator._maybe_sync_google_schedules(chat_id, datetime(2026, 4, 12, 9, 0))
+        mock_sync.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
