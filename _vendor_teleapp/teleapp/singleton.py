@@ -21,11 +21,30 @@ _LOCK_HANDLE = None
 _LOCK_PATH: Path | None = None
 
 
+def _mask_token(token: str) -> str:
+    clean = token.strip()
+    if not clean:
+        return ""
+    if len(clean) <= 4:
+        return "****"
+    if len(clean) <= 8:
+        return f"{clean[:2]}...{clean[-2:]}"
+    return f"{clean[:4]}...{clean[-3:]}"
+
+
 def _lock_identity(app_path: Path, *, token: str | None, allowed_user_id: int | None) -> str:
     clean_token = (token or "").strip()
     clean_user = int(allowed_user_id or 0)
     if clean_token:
         return f"token:{clean_token}|user:{clean_user}"
+    return f"app:{app_path}"
+
+
+def _lock_target_label(app_path: Path, *, token: str | None, allowed_user_id: int | None) -> str:
+    clean_token = (token or "").strip()
+    clean_user = int(allowed_user_id or 0)
+    if clean_token:
+        return f"token:{_mask_token(clean_token)}|user:{clean_user}"
     return f"app:{app_path}"
 
 
@@ -47,7 +66,7 @@ def acquire_singleton(app_path: Path, *, token: str | None = None, allowed_user_
     lock_path = _lock_file_path(app_path, token=token, allowed_user_id=allowed_user_id)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     handle = open(lock_path, "a+", encoding="utf-8")
-    lock_target = _lock_identity(app_path, token=token, allowed_user_id=allowed_user_id)
+    lock_target = _lock_target_label(app_path, token=token, allowed_user_id=allowed_user_id)
 
     try:
         if os.name == "nt":

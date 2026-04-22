@@ -9,6 +9,24 @@ from teleapp.config import build_runtime_config, load_config
 
 
 class ConfigTests(unittest.TestCase):
+    def test_build_runtime_config_reads_bom_prefixed_token_key(self) -> None:
+        old_token = os.getenv("TELEAPP_TOKEN")
+        old_bom_token = os.getenv("\ufeffTELEAPP_TOKEN")
+        try:
+            os.environ.pop("TELEAPP_TOKEN", None)
+            os.environ["\ufeffTELEAPP_TOKEN"] = "bom-token"
+            config = build_runtime_config()
+            self.assertEqual(config.telegram_token, "bom-token")
+        finally:
+            if old_token is None:
+                os.environ.pop("TELEAPP_TOKEN", None)
+            else:
+                os.environ["TELEAPP_TOKEN"] = old_token
+            if old_bom_token is None:
+                os.environ.pop("\ufeffTELEAPP_TOKEN", None)
+            else:
+                os.environ["\ufeffTELEAPP_TOKEN"] = old_bom_token
+
     def test_build_runtime_config_reads_env_defaults(self) -> None:
         old_values = {
             "TELEAPP_TOKEN": os.getenv("TELEAPP_TOKEN"),
@@ -42,6 +60,24 @@ class ConfigTests(unittest.TestCase):
             os.environ.pop("TELEAPP_AUTO_RESTART_ON_CRASH", None)
             os.environ.pop("TELEAPP_RESTART_BACKOFF_SECONDS", None)
             os.environ.pop("TELEAPP_WATCH_MODE", None)
+
+    def test_build_runtime_config_reads_bom_prefixed_token_env(self) -> None:
+        old_token = os.getenv("TELEAPP_TOKEN")
+        old_bom_token = os.getenv("\ufeffTELEAPP_TOKEN")
+        try:
+            os.environ.pop("TELEAPP_TOKEN", None)
+            os.environ["\ufeffTELEAPP_TOKEN"] = "bom-token"
+            config = build_runtime_config()
+            self.assertEqual(config.telegram_token, "bom-token")
+        finally:
+            if old_token is None:
+                os.environ.pop("TELEAPP_TOKEN", None)
+            else:
+                os.environ["TELEAPP_TOKEN"] = old_token
+            if old_bom_token is None:
+                os.environ.pop("\ufeffTELEAPP_TOKEN", None)
+            else:
+                os.environ["\ufeffTELEAPP_TOKEN"] = old_bom_token
 
     def test_load_config_defaults_watch_path_to_app_parent(self) -> None:
         config = load_config(

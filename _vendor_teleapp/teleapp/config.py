@@ -15,13 +15,27 @@ except ImportError:  # pragma: no cover
 if load_dotenv is not None:
     cwd_env = Path.cwd() / ".env"
     if cwd_env.exists():
-        load_dotenv(dotenv_path=cwd_env, override=True)
+        load_dotenv(dotenv_path=cwd_env, override=True, encoding="utf-8-sig")
     else:
-        load_dotenv(override=True)
+        load_dotenv(override=True, encoding="utf-8-sig")
+
+
+def _read_env(name: str) -> str | None:
+    raw = os.getenv(name)
+    if raw is not None:
+        return raw
+    return os.getenv(f"\ufeff{name}")
+
+
+def _read_str_env(name: str, default: str = "") -> str:
+    raw = _read_env(name)
+    if raw is None:
+        return default
+    return raw
 
 
 def _read_int_env(name: str, default: int = 0) -> int:
-    raw = os.getenv(name)
+    raw = _read_env(name)
     if raw is None or not raw.strip():
         return default
     try:
@@ -31,7 +45,7 @@ def _read_int_env(name: str, default: int = 0) -> int:
 
 
 def _read_bool_env(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
+    raw = _read_env(name)
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
@@ -56,22 +70,26 @@ class TeleappConfig:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="teleapp")
     parser.add_argument("app", nargs="?", help="Path to the hosted Python app")
-    parser.add_argument("--token", default=os.getenv("TELEAPP_TOKEN", ""))
+    parser.add_argument("--token", default=_read_str_env("TELEAPP_TOKEN", ""))
     parser.add_argument("--allowed-user-id", type=int, default=_read_int_env("TELEAPP_ALLOWED_USER_ID", 0))
     parser.add_argument("--chat-id", type=int, default=_read_int_env("TELEAPP_CHAT_ID", 0))
-    parser.add_argument("--python", dest="python_executable", default=os.getenv("TELEAPP_PYTHON", sys.executable))
+    parser.add_argument("--python", dest="python_executable", default=_read_str_env("TELEAPP_PYTHON", sys.executable))
     parser.add_argument("--no-hot-reload", action="store_true")
     parser.add_argument("--no-auto-restart-on-crash", action="store_true")
     parser.add_argument("--reload-quiet-seconds", type=int, default=_read_int_env("TELEAPP_RELOAD_QUIET_SECONDS", 2))
     parser.add_argument("--reload-poll-seconds", type=int, default=_read_int_env("TELEAPP_RELOAD_POLL_SECONDS", 1))
     parser.add_argument("--restart-backoff-seconds", type=int, default=_read_int_env("TELEAPP_RESTART_BACKOFF_SECONDS", 1))
-    parser.add_argument("--watch-mode", choices=["app-dir", "app-file-only"], default=os.getenv("TELEAPP_WATCH_MODE", "app-dir"))
+    parser.add_argument(
+        "--watch-mode",
+        choices=["app-dir", "app-file-only"],
+        default=_read_str_env("TELEAPP_WATCH_MODE", "app-dir"),
+    )
     parser.add_argument("--watch", action="append", default=[])
     return parser
 
 
 def load_config(args: argparse.Namespace) -> TeleappConfig:
-    app_value = (args.app or os.getenv("TELEAPP_APP", "")).strip()
+    app_value = (args.app or _read_str_env("TELEAPP_APP", "")).strip()
     if not app_value:
         raise SystemExit("Missing hosted app path. Use `teleapp <app.py>` or TELEAPP_APP.")
 
@@ -126,7 +144,7 @@ def build_runtime_config(
     watch_mode: str | None = None,
     watch_paths: list[str | Path] | None = None,
 ) -> TeleappConfig:
-    resolved_token = (telegram_token if telegram_token is not None else os.getenv("TELEAPP_TOKEN", "")).strip()
+    resolved_token = (telegram_token if telegram_token is not None else _read_str_env("TELEAPP_TOKEN", "")).strip()
     resolved_allowed_user_id = (
         allowed_user_id if allowed_user_id is not None else _read_int_env("TELEAPP_ALLOWED_USER_ID", 0)
     )
@@ -135,7 +153,7 @@ def build_runtime_config(
         if telegram_chat_id is not None
         else (_read_int_env("TELEAPP_CHAT_ID", 0) or None)
     )
-    resolved_python = python_executable or os.getenv("TELEAPP_PYTHON", sys.executable)
+    resolved_python = python_executable or _read_str_env("TELEAPP_PYTHON", sys.executable)
     resolved_hot_reload = hot_reload if hot_reload is not None else _read_bool_env("TELEAPP_HOT_RELOAD", True)
     resolved_auto_restart_on_crash = (
         auto_restart_on_crash
@@ -157,8 +175,8 @@ def build_runtime_config(
         if restart_backoff_seconds is not None
         else _read_int_env("TELEAPP_RESTART_BACKOFF_SECONDS", 1)
     )
-    resolved_watch_mode = (watch_mode or os.getenv("TELEAPP_WATCH_MODE", "app-dir")).strip().lower() or "app-dir"
-    resolved_app_value = app_path if app_path is not None else os.getenv("TELEAPP_APP", "")
+    resolved_watch_mode = (watch_mode or _read_str_env("TELEAPP_WATCH_MODE", "app-dir")).strip().lower() or "app-dir"
+    resolved_app_value = app_path if app_path is not None else _read_str_env("TELEAPP_APP", "")
     resolved_app_path = (
         Path(resolved_app_value).expanduser().resolve()
         if str(resolved_app_value).strip()
