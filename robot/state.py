@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from typing import Any
 
 from robot.config import Settings, normalize_model, normalize_provider
 from robot.projects import get_default_workspace
 from robot.text import normalize_text
+
+CONTACT_KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class ChatStateStore:
@@ -47,6 +51,39 @@ class ChatStateStore:
             )
         except (OSError, UnicodeEncodeError, TypeError, ValueError):
             return
+
+    def _address_book(self) -> dict[str, Any]:
+        book = self._state.setdefault("address_book", {})
+        if not isinstance(book, dict):
+            book = {}
+            self._state["address_book"] = book
+        contacts = book.setdefault("contacts", {})
+        if not isinstance(contacts, dict):
+            contacts = {}
+            book["contacts"] = contacts
+        return book
+
+    @staticmethod
+    def _normalize_contact_key(key: str) -> str:
+        return str(key or "").strip().lower()
+
+    @staticmethod
+    def _normalize_alias(alias: str) -> str:
+        return str(alias or "").strip().lower()
+
+    @staticmethod
+    def _normalize_email(email: str) -> str:
+        return str(email or "").strip().lower()
+
+    @staticmethod
+    def _is_valid_email(email: str) -> bool:
+        return bool(EMAIL_PATTERN.match(email))
+
+    def _ensure_contact_key(self, key: str) -> str:
+        normalized = self._normalize_contact_key(key)
+        if not CONTACT_KEY_PATTERN.match(normalized):
+            raise ValueError("contact key must match: [a-z0-9][a-z0-9_-]{0,31}")
+        return normalized
 
     def _bucket(self, chat_id: int) -> dict[str, Any]:
         chats = self._state.setdefault("chats", {})
@@ -360,3 +397,247 @@ class ChatStateStore:
                 except ValueError:
                     continue
             return sorted(result)
+
+    def list_contacts(self) -> list[dict[str, Any]]:
+        with self._lock:
+            contacts = self._address_book().get("contacts", {})
+            if not isinstance(contacts, dict):
+                return []
+            results: list[dict[str, Any]] = []
+            for key in sorted(contacts.keys()):
+                raw = contacts.get(key)
+                if not isinstance(raw, dict):
+                    continue
+                aliases = raw.get("aliases")
+                alias_items = (
+                    [str(item) for item in aliases if isinstance(item, str)]
+                    if isinstance(aliases, list)
+                    else []
+                )
+                results.append(
+                    {
+                        "key": str(key),
+                        "name": str(raw.get("name") or ""),
+                        "email": str(raw.get("email") or ""),
+                        "aliases": alias_items,
+                        "note": str(raw.get("note") or ""),
+                    }
+                )
+            return results
+
+    def get_contact(self, key: str) -> dict[str, Any] | None:
+        normalized_key = self._normalize_contact_key(key)
+        with self._lock:
+            contacts = self._address_book().get("contacts", {})
+            if not isinstance(contacts, dict):
+                return None
+            raw = contacts.get(normalized_key)
+            if not isinstance(raw, dict):
+                return None
+            aliases = raw.get("aliases")
+            alias_items = (
+                [str(item) for item in aliases if isinstance(item, str)]
+                if isinstance(aliases, list)
+                else []
+            )
+            return {
+                "key": normalized_key,
+                "name": str(raw.get("name") or ""),
+                "email": str(raw.get("email") or ""),
+                "aliases": alias_items,
+                "note": str(raw.get("note") or ""),
+            }
+
+    def upsert_contact(
+        self,
+        *,
+        key: str,
+        email: str,
+        name: str,
+        aliases: list[str] | None = None,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_key = self._ensure_contact_key(key)
+        normalized_email = self._normalize_email(email)
+        normalized_name = str(name or "").strip()
+        if not normalized_name:
+            raise ValueError("name is required.")
+        if not self._is_valid_email(normalized_email):
+            raise ValueError("invalid email format.")
+
+        normalized_aliases: list[str] = []
+        for candidate in aliases or []:
+            clean = self._normalize_alias(candidate)
+            if clean and clean not in normalized_aliases:
+                normalized_aliases.append(clean)
+
+        with self._lock:
+            book = self._address_book()
+            contacts = book.get("contacts", {})
+            assert isinstance(contacts, dict)
+            for existing_key, existing_raw in contacts.items():
+                if not isinstance(existing_raw, dict):
+                    continue
+                existing_email = self._normalize_email(str(existing_raw.get("email") or ""))
+                if existing_email and existing_email == normalized_email and str(existing_key) != normalized_key:
+                    raise ValueError(f"email already used by contact: {existing_key}")
+
+            contacts[normalized_key] = {
+                "name": normalized_name,
+                "email": normalized_email,
+                "aliases": normalized_aliases,
+                "note": str(note or "").strip(),
+            }
+            self._save()
+            current = self.get_contact(normalized_key)
+            assert current is not None
+            return current
+
+    def remove_contact(self, key: str) -> bool:
+        normalized_key = self._normalize_contact_key(key)
+        with self._lock:
+            contacts = self._address_book().get("contacts", {})
+            if not isinstance(contacts, dict):
+                return False
+            if normalized_key not in contacts:
+                return False
+            del contacts[normalized_key]
+            self._save()
+            return True
+
+    def add_contact_alias(self, key: str, alias: str) -> dict[str, Any]:
+        normalized_key = self._normalize_contact_key(key)
+        normalized_alias = self._normalize_alias(alias)
+        if not normalized_alias:
+            raise ValueError("alias is required.")
+        with self._lock:
+            contacts = self._address_book().get("contacts", {})
+            if not isinstance(contacts, dict):
+                raise ValueError("contact not found.")
+            target = contacts.get(normalized_key)
+            if not isinstance(target, dict):
+                raise ValueError("contact not found.")
+
+            for existing_key, existing_raw in contacts.items():
+                if not isinstance(existing_raw, dict) or str(existing_key) == normalized_key:
+                    continue
+                aliases = existing_raw.get("aliases")
+                if not isinstance(aliases, list):
+                    continue
+                if normalized_alias in [self._normalize_alias(str(item)) for item in aliases]:
+                    raise ValueError(f"alias already used by contact: {existing_key}")
+
+            aliases = target.get("aliases")
+            alias_items = (
+                [self._normalize_alias(str(item)) for item in aliases if self._normalize_alias(str(item))]
+                if isinstance(aliases, list)
+                else []
+            )
+            if normalized_alias not in alias_items:
+                alias_items.append(normalized_alias)
+            target["aliases"] = alias_items
+            self._save()
+            current = self.get_contact(normalized_key)
+            assert current is not None
+            return current
+
+    def resolve_contacts(self, tokens: list[str]) -> dict[str, Any]:
+        with self._lock:
+            contacts = self.list_contacts()
+
+        email_to_contact: dict[str, dict[str, Any]] = {}
+        key_to_contact: dict[str, dict[str, Any]] = {}
+        name_to_contacts: dict[str, list[dict[str, Any]]] = {}
+        alias_to_contacts: dict[str, list[dict[str, Any]]] = {}
+        for item in contacts:
+            email = self._normalize_email(str(item.get("email") or ""))
+            key = self._normalize_contact_key(str(item.get("key") or ""))
+            name = self._normalize_alias(str(item.get("name") or ""))
+            if email:
+                email_to_contact[email] = item
+            if key:
+                key_to_contact[key] = item
+            if name:
+                name_to_contacts.setdefault(name, []).append(item)
+            for alias in item.get("aliases") or []:
+                normalized_alias = self._normalize_alias(str(alias))
+                if normalized_alias:
+                    alias_to_contacts.setdefault(normalized_alias, []).append(item)
+
+        resolved_emails: list[str] = []
+        resolved_contacts: list[dict[str, str]] = []
+        unresolved: list[str] = []
+        ambiguous: dict[str, list[str]] = {}
+        for raw_token in tokens:
+            token = str(raw_token or "").strip()
+            if not token:
+                continue
+            token_lower = self._normalize_alias(token)
+            if self._is_valid_email(token_lower):
+                if token_lower not in resolved_emails:
+                    resolved_emails.append(token_lower)
+                    if token_lower in email_to_contact:
+                        match = email_to_contact[token_lower]
+                        resolved_contacts.append(
+                            {
+                                "token": token,
+                                "key": str(match.get("key") or ""),
+                                "email": token_lower,
+                            }
+                        )
+                    else:
+                        resolved_contacts.append(
+                            {
+                                "token": token,
+                                "key": "",
+                                "email": token_lower,
+                            }
+                        )
+                continue
+
+            direct = key_to_contact.get(token_lower)
+            if direct is not None:
+                email = self._normalize_email(str(direct.get("email") or ""))
+                if email and email not in resolved_emails:
+                    resolved_emails.append(email)
+                resolved_contacts.append(
+                    {
+                        "token": token,
+                        "key": str(direct.get("key") or ""),
+                        "email": email,
+                    }
+                )
+                continue
+
+            candidates: list[dict[str, Any]] = []
+            candidates.extend(alias_to_contacts.get(token_lower, []))
+            candidates.extend(name_to_contacts.get(token_lower, []))
+            dedup: dict[str, dict[str, Any]] = {}
+            for candidate in candidates:
+                candidate_key = str(candidate.get("key") or "")
+                if candidate_key and candidate_key not in dedup:
+                    dedup[candidate_key] = candidate
+            if len(dedup) == 1:
+                found = next(iter(dedup.values()))
+                email = self._normalize_email(str(found.get("email") or ""))
+                if email and email not in resolved_emails:
+                    resolved_emails.append(email)
+                resolved_contacts.append(
+                    {
+                        "token": token,
+                        "key": str(found.get("key") or ""),
+                        "email": email,
+                    }
+                )
+                continue
+            if len(dedup) > 1:
+                ambiguous[token] = sorted(dedup.keys())
+                continue
+            unresolved.append(token)
+
+        return {
+            "emails": resolved_emails,
+            "resolved": resolved_contacts,
+            "unresolved": unresolved,
+            "ambiguous": ambiguous,
+        }

@@ -67,6 +67,7 @@ Linux/macOS:
 
 - `/help`：指令總覽
 - `/status`：目前 provider/model/project/queue 狀態
+- `/contact list`、`/contact add <key> <email> <name>`
 - `/provider <codex|gemini|copilot>`
 - `/model <model_name>`
 - `/project <workspace>`
@@ -115,6 +116,21 @@ Linux/macOS:
 - 若要使用可寫入同步（`/schedule`、`/clearschedule` 刪除）：
   - `ROBOT_GOOGLE_CALENDAR_SCOPES=https://www.googleapis.com/auth/calendar`
   - 重新執行 `python scripts/google_calendar_auth.py` 完成授權。
+
+## 通訊錄
+
+- 可用 alias 管理常用收件人：
+  - `/contact add <key> <email> <name>`
+  - `/contact list`
+  - `/contact show <key>`
+  - `/contact remove <key>`
+  - `/contact alias <key> add <alias>`
+  - `/contact resolve <target1> [target2] ...`
+- 寄信指令可直接使用通訊錄 alias：
+  - `/mailcli -t <key_or_email> -s <subject> -bdy <body_or_file>`
+  - `/mailjson <config.json>`
+  - `/mailbatch <recipients.csv> <base_config.json>`
+  - `/mailmcp`
 
 ## 開發
 

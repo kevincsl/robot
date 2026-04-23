@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import io
+import json
 import tempfile
 import unittest
 from datetime import datetime
@@ -1643,6 +1644,150 @@ class RoutingTests(unittest.TestCase):
         with patch("robot.routing.build_doctor_report", return_value="robot doctor\nok"):
             body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
         self.assertIn("robot doctor", body)
+
+    def test_contact_command_crud_flow(self) -> None:
+        add_request = classify_request(
+            MessageContext(chat_id=1, text="/contact add kevin kevincsl@gmail.com Kevin", command="contact")
+        )
+        add_body = self.loop.run_until_complete(handle_command(1, add_request, self.settings, self.store, self.agents))
+        self.assertIn("Contact saved.", add_body)
+        self.assertIn("key: kevin", add_body)
+
+        list_request = classify_request(MessageContext(chat_id=1, text="/contact list", command="contact"))
+        list_body = self.loop.run_until_complete(handle_command(1, list_request, self.settings, self.store, self.agents))
+        self.assertIn("address book contacts: 1", list_body)
+        self.assertIn("kevin", list_body)
+        self.assertIn("kevincsl@gmail.com", list_body)
+
+        show_request = classify_request(MessageContext(chat_id=1, text="/contact show kevin", command="contact"))
+        show_body = self.loop.run_until_complete(handle_command(1, show_request, self.settings, self.store, self.agents))
+        self.assertIn("contact", show_body)
+        self.assertIn("name: Kevin", show_body)
+
+        remove_request = classify_request(MessageContext(chat_id=1, text="/contact remove kevin", command="contact"))
+        remove_body = self.loop.run_until_complete(handle_command(1, remove_request, self.settings, self.store, self.agents))
+        self.assertIn("Contact removed: kevin", remove_body)
+
+    def test_contact_command_alias_and_resolve(self) -> None:
+        add_request = classify_request(
+            MessageContext(chat_id=1, text="/contact add bob bobkaott@gmail.com Bob", command="contact")
+        )
+        _ = self.loop.run_until_complete(handle_command(1, add_request, self.settings, self.store, self.agents))
+
+        alias_request = classify_request(
+            MessageContext(chat_id=1, text="/contact alias bob add 高嘉辰", command="contact")
+        )
+        alias_body = self.loop.run_until_complete(handle_command(1, alias_request, self.settings, self.store, self.agents))
+        self.assertIn("Contact alias updated.", alias_body)
+        self.assertIn("高嘉辰", alias_body)
+
+        resolve_request = classify_request(
+            MessageContext(chat_id=1, text="/contact resolve bob 高嘉辰", command="contact")
+        )
+        resolve_body = self.loop.run_until_complete(
+            handle_command(1, resolve_request, self.settings, self.store, self.agents)
+        )
+        self.assertIn("contact resolve", resolve_body)
+        self.assertIn("bobkaott@gmail.com", resolve_body)
+
+    def test_contact_command_validates_add_payload(self) -> None:
+        invalid_request = classify_request(
+            MessageContext(chat_id=1, text="/contact add bad! not-email Kevin", command="contact")
+        )
+        invalid_body = self.loop.run_until_complete(
+            handle_command(1, invalid_request, self.settings, self.store, self.agents)
+        )
+        self.assertIn("Contact add failed:", invalid_body)
+
+    def test_contact_command_unknown_subcommand_returns_usage(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/contact ping", command="contact"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("contact usage:", body)
+
+    def test_mailcli_command_resolves_contact_aliases(self) -> None:
+        _ = self.loop.run_until_complete(
+            handle_command(
+                1,
+                classify_request(
+                    MessageContext(chat_id=1, text="/contact add kevin kevincsl@gmail.com Kevin", command="contact")
+                ),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        request = classify_request(
+            MessageContext(
+                chat_id=1,
+                text="/mailcli -t kevin -s hello -bdy world",
+                command="mailcli",
+            )
+        )
+        with patch("robot.routing._run_sendmail", return_value=(True, "ok: True")) as mock_run:
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("mailcli sent.", body)
+        called_args = mock_run.call_args.kwargs["args"]
+        self.assertIn("-t", called_args)
+        self.assertIn("kevincsl@gmail.com", called_args)
+
+    def test_mailcli_command_blocks_unresolved_contact_alias(self) -> None:
+        request = classify_request(
+            MessageContext(
+                chat_id=1,
+                text="/mailcli -t unknown_alias -s hello -bdy world",
+                command="mailcli",
+            )
+        )
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("mailcli recipient resolve failed.", body)
+
+    def test_mailjson_command_resolves_contact_aliases(self) -> None:
+        _ = self.loop.run_until_complete(
+            handle_command(
+                1,
+                classify_request(
+                    MessageContext(chat_id=1, text="/contact add kevin kevincsl@gmail.com Kevin", command="contact")
+                ),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        _ = self.loop.run_until_complete(
+            handle_command(
+                1,
+                classify_request(
+                    MessageContext(chat_id=1, text="/contact add bob bobkaott@gmail.com Bob", command="contact")
+                ),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        config_path = Path(self.tempdir.name) / "mail.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "to": "kevin",
+                    "cc": ["bob"],
+                    "subject": "hello",
+                    "body": "world",
+                    "format": "plain",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        request = classify_request(
+            MessageContext(chat_id=1, text=f"/mailjson {config_path}", command="mailjson")
+        )
+        with patch("robot.routing._run_sendmail", return_value=(True, "ok: True")) as mock_run:
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("mailjson sent.", body)
+        resolved_path = Path(mock_run.call_args.kwargs["args"][0])
+        parsed = json.loads(resolved_path.read_text(encoding="utf-8"))
+        self.assertEqual(parsed["to"], "kevincsl@gmail.com")
+        self.assertEqual(parsed["cc"], ["bobkaott@gmail.com"])
 
     def test_reset_clears_current_thread(self) -> None:
         self.store.set_thread_id(1, "codex", "thread-1")

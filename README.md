@@ -67,6 +67,7 @@ Linux/macOS:
 
 - `/help`: command list
 - `/status`: current provider/model/project/queue summary
+- `/contact list`, `/contact add <key> <email> <name>`
 - `/provider <codex|gemini|copilot>`
 - `/model <model_name>`
 - `/project <workspace>`
@@ -115,6 +116,21 @@ Security-related flags (default off):
 - For write sync (`/schedule`, `/clearschedule` delete), use scope:
   - `ROBOT_GOOGLE_CALENDAR_SCOPES=https://www.googleapis.com/auth/calendar`
   - then re-authorize with `python scripts/google_calendar_auth.py`
+
+## Address Book
+
+- Manage reusable recipients by alias:
+  - `/contact add <key> <email> <name>`
+  - `/contact list`
+  - `/contact show <key>`
+  - `/contact remove <key>`
+  - `/contact alias <key> add <alias>`
+  - `/contact resolve <target1> [target2] ...`
+- Mail commands can resolve aliases from address book:
+  - `/mailcli -t <key_or_email> -s <subject> -bdy <body_or_file>`
+  - `/mailjson <config.json>`
+  - `/mailbatch <recipients.csv> <base_config.json>`
+  - `/mailmcp`
 
 ## Development
 

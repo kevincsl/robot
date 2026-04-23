@@ -1,12 +1,16 @@
 ﻿from __future__ import annotations
 
 import argparse
+import json
+import os
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from dotenv import dotenv_values
 from markitdown._exceptions import FileConversionException, MarkItDownException
 from teleapp import Button, ButtonResponse
 from teleapp.context import MessageContext
@@ -67,6 +71,12 @@ COMMAND_NAMES = {
     "about",
     "status",
     "doctor",
+    "contact",
+    "contacts",
+    "mailcli",
+    "mailjson",
+    "mailbatch",
+    "mailmcp",
     "provider",
     "model",
     "models",
@@ -419,6 +429,15 @@ def _split_payload(payload: str) -> list[str]:
         return []
 
 
+def _split_payload_windows(payload: str) -> list[str]:
+    if not payload.strip():
+        return []
+    try:
+        return shlex.split(payload, posix=False)
+    except ValueError:
+        return _split_payload(payload)
+
+
 class _SilentArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         raise ValueError(message)
@@ -577,6 +596,156 @@ def _parse_schedule_sync_options(payload: str) -> tuple[tuple[str, int, int] | N
     return (mode, days, limit), None
 
 
+def _sendmail_root_path() -> Path:
+    return (Path.home() / "codex" / "sendmail").expanduser()
+
+
+def _load_sendmail_env(sendmail_root: Path) -> dict[str, str]:
+    env: dict[str, str] = dict(os.environ)
+    env_file = sendmail_root / ".env"
+    if not env_file.exists():
+        return env
+    loaded = dotenv_values(env_file)
+    for key, value in loaded.items():
+        if key and value is not None:
+            env[str(key)] = str(value)
+    return env
+
+
+def _resolve_input_path(raw_path: str, *, project_path: str, settings: Settings) -> Path:
+    candidate = Path(str(raw_path or "").strip()).expanduser()
+    if candidate.is_absolute():
+        return candidate
+    search_roots: list[Path] = []
+    if project_path.strip():
+        search_roots.append(Path(project_path).expanduser())
+    search_roots.append(settings.project_root)
+    search_roots.append(_sendmail_root_path())
+    for root in search_roots:
+        resolved = root / candidate
+        if resolved.exists():
+            return resolved
+    return settings.project_root / candidate
+
+
+def _resolve_single_contact_target(store: ChatStateStore, target: str) -> tuple[str | None, str | None]:
+    token = str(target or "").strip()
+    if not token:
+        return None, "recipient target is empty."
+    resolved = store.resolve_contacts([token])
+    ambiguous = resolved.get("ambiguous")
+    if isinstance(ambiguous, dict) and token in ambiguous:
+        keys = ambiguous.get(token)
+        return None, f"ambiguous recipient: {token} -> {', '.join(str(item) for item in (keys or []))}"
+    unresolved = resolved.get("unresolved")
+    if isinstance(unresolved, list) and unresolved:
+        return None, f"recipient not found in contacts: {token}"
+    emails = resolved.get("emails")
+    if not isinstance(emails, list) or not emails:
+        return None, f"recipient resolve failed: {token}"
+    if len(emails) > 1:
+        return None, f"recipient resolved to multiple emails: {token}"
+    return str(emails[0]), None
+
+
+def _rewrite_mailcli_targets(store: ChatStateStore, args: list[str]) -> tuple[list[str] | None, str | None]:
+    rewritten: list[str] = []
+    target_flags = {"-t", "--to", "-c", "--cc", "-bc", "--bcc"}
+    i = 0
+    while i < len(args):
+        token = str(args[i])
+        rewritten.append(token)
+        if token not in target_flags:
+            i += 1
+            continue
+        if i + 1 >= len(args):
+            return None, f"missing value for flag: {token}"
+        raw_target = str(args[i + 1])
+        email, error = _resolve_single_contact_target(store, raw_target)
+        if error is not None:
+            return None, error
+        rewritten.append(str(email))
+        i += 2
+    return rewritten, None
+
+
+def _rewrite_json_recipients_with_contacts(
+    store: ChatStateStore,
+    config: dict[str, object],
+) -> tuple[dict[str, object] | None, str | None]:
+    rewritten = dict(config)
+    for field in ("to", "cc", "bcc"):
+        value = rewritten.get(field)
+        if value is None:
+            continue
+        if field == "to":
+            email, error = _resolve_single_contact_target(store, str(value))
+            if error is not None:
+                return None, f"{field}: {error}"
+            rewritten[field] = email
+            continue
+
+        targets: list[str] = []
+        if isinstance(value, str):
+            targets = [value]
+        elif isinstance(value, list):
+            targets = [str(item) for item in value if str(item).strip()]
+        else:
+            return None, f"{field}: must be string or list."
+        resolved_targets: list[str] = []
+        for item in targets:
+            email, error = _resolve_single_contact_target(store, item)
+            if error is not None:
+                return None, f"{field}: {error}"
+            resolved_targets.append(str(email))
+        rewritten[field] = resolved_targets
+    return rewritten, None
+
+
+def _run_sendmail(
+    settings: Settings,
+    *,
+    args: list[str],
+) -> tuple[bool, str]:
+    sendmail_root = _sendmail_root_path()
+    sendmail_script = sendmail_root / "sendmail.py"
+    if not sendmail_root.exists():
+        return False, f"sendmail root not found: {sendmail_root}"
+    if not sendmail_script.exists():
+        return False, f"sendmail script not found: {sendmail_script}"
+
+    command = [sys.executable, str(sendmail_script), *args]
+    env = _load_sendmail_env(sendmail_root)
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=str(settings.project_root),
+            env=env,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        return False, f"sendmail execution failed: {exc}"
+    except subprocess.TimeoutExpired:
+        return False, "sendmail execution timed out after 120 seconds."
+
+    stdout_text = (completed.stdout or "").strip()
+    stderr_text = (completed.stderr or "").strip()
+    lines = [
+        f"ok: {completed.returncode == 0}",
+        f"return_code: {completed.returncode}",
+        f"command: {' '.join(command)}",
+    ]
+    if stdout_text:
+        lines.append("stdout:")
+        lines.append(stdout_text)
+    if stderr_text:
+        lines.append("stderr:")
+        lines.append(stderr_text)
+    return completed.returncode == 0, "\n".join(lines)
+
+
 def classify_request(ctx: MessageContext) -> ClassifiedRequest:
     text = (ctx.text or "").strip()
     command = (ctx.command or "").strip().lower() or None
@@ -659,6 +828,7 @@ def _help_text() -> str:
             "/quick  /guide  /menu  /help",
             "/status  /doctor  /queue  /schedules",
             "/agentstatus  /agentprofiles [--config PATH]",
+            "/contact list  /contact add <key> <email> <name>",
             "",
             "workspace:",
             "/provider [codex|gemini|copilot]",
@@ -748,6 +918,7 @@ def _guide_text() -> str:
             "- /quick",
             "- /help",
             "- /menu",
+            "- /contact list /contact add <key> <email> <name>",
             "- /provider /model /projects /project",
             "- /brain",
             "- /brainweb <url>",
@@ -1628,6 +1799,215 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
 
     if request.command == "doctor":
         return build_doctor_report(settings)
+
+    if request.command in {"contact", "contacts"}:
+        parts = _split_payload(request.payload)
+        usage = "\n".join(
+            [
+                "contact usage:",
+                "- /contact list",
+                "- /contact show <key>",
+                "- /contact add <key> <email> <name>",
+                "- /contact remove <key>",
+                "- /contact alias <key> add <alias>",
+                "- /contact resolve <target1> [target2] ...",
+            ]
+        )
+        if not parts:
+            return usage
+        action = str(parts[0]).strip().lower()
+
+        if action == "list":
+            contacts = store.list_contacts()
+            lines = [f"address book contacts: {len(contacts)}"]
+            if not contacts:
+                lines.append("- (empty)")
+                return "\n".join(lines)
+            for item in contacts:
+                aliases = item.get("aliases") if isinstance(item.get("aliases"), list) else []
+                alias_text = ", ".join(str(alias) for alias in aliases) if aliases else "-"
+                lines.append(
+                    f"- {item.get('key')} | {item.get('name')} | {item.get('email')} | aliases: {alias_text}"
+                )
+            return "\n".join(lines)
+
+        if action == "show":
+            if len(parts) != 2:
+                return "Usage: /contact show <key>"
+            contact = store.get_contact(parts[1])
+            if contact is None:
+                return f"Contact not found: {parts[1]}"
+            aliases = contact.get("aliases") if isinstance(contact.get("aliases"), list) else []
+            return "\n".join(
+                [
+                    "contact",
+                    f"key: {contact.get('key')}",
+                    f"name: {contact.get('name')}",
+                    f"email: {contact.get('email')}",
+                    f"aliases: {', '.join(str(alias) for alias in aliases) if aliases else '-'}",
+                    f"note: {contact.get('note') or '-'}",
+                ]
+            )
+
+        if action == "add":
+            if len(parts) < 4:
+                return "Usage: /contact add <key> <email> <name>"
+            key = str(parts[1]).strip()
+            email = str(parts[2]).strip()
+            name = " ".join(str(item) for item in parts[3:]).strip()
+            if not name:
+                return "Usage: /contact add <key> <email> <name>"
+            try:
+                contact = store.upsert_contact(key=key, email=email, name=name)
+            except ValueError as exc:
+                return f"Contact add failed: {exc}"
+            return "\n".join(
+                [
+                    "Contact saved.",
+                    f"key: {contact.get('key')}",
+                    f"name: {contact.get('name')}",
+                    f"email: {contact.get('email')}",
+                ]
+            )
+
+        if action in {"remove", "rm", "del", "delete"}:
+            if len(parts) != 2:
+                return "Usage: /contact remove <key>"
+            removed = store.remove_contact(parts[1])
+            if not removed:
+                return f"Contact not found: {parts[1]}"
+            return f"Contact removed: {parts[1]}"
+
+        if action == "alias":
+            if len(parts) < 4:
+                return "Usage: /contact alias <key> add <alias>"
+            key = str(parts[1]).strip()
+            subaction = str(parts[2]).strip().lower()
+            alias = " ".join(str(item) for item in parts[3:]).strip()
+            if subaction != "add" or not alias:
+                return "Usage: /contact alias <key> add <alias>"
+            try:
+                contact = store.add_contact_alias(key, alias)
+            except ValueError as exc:
+                return f"Contact alias failed: {exc}"
+            aliases = contact.get("aliases") if isinstance(contact.get("aliases"), list) else []
+            return "\n".join(
+                [
+                    "Contact alias updated.",
+                    f"key: {contact.get('key')}",
+                    f"aliases: {', '.join(str(item) for item in aliases) if aliases else '-'}",
+                ]
+            )
+
+        if action == "resolve":
+            targets = [str(item).strip() for item in parts[1:] if str(item).strip()]
+            if not targets:
+                return "Usage: /contact resolve <target1> [target2] ..."
+            result = store.resolve_contacts(targets)
+            emails = result.get("emails") if isinstance(result.get("emails"), list) else []
+            unresolved = result.get("unresolved") if isinstance(result.get("unresolved"), list) else []
+            ambiguous = result.get("ambiguous") if isinstance(result.get("ambiguous"), dict) else {}
+            lines = [
+                "contact resolve",
+                f"targets: {len(targets)}",
+                f"emails: {', '.join(str(item) for item in emails) if emails else '-'}",
+            ]
+            if unresolved:
+                lines.append(f"unresolved: {', '.join(str(item) for item in unresolved)}")
+            if ambiguous:
+                lines.append("ambiguous:")
+                for token, keys in sorted(ambiguous.items()):
+                    if isinstance(keys, list):
+                        lines.append(f"- {token}: {', '.join(str(key) for key in keys)}")
+            return "\n".join(lines)
+
+        return usage
+
+    if request.command == "mailcli":
+        parts = _split_payload_windows(request.payload)
+        if not parts:
+            return "Usage: /mailcli <sendmail-cli-args>"
+        rewritten, error = _rewrite_mailcli_targets(store, parts)
+        if rewritten is None:
+            return f"mailcli recipient resolve failed.\n{error}"
+        ok, report = _run_sendmail(settings, args=rewritten)
+        return ("mailcli sent.\n" if ok else "mailcli failed.\n") + report
+
+    if request.command == "mailjson":
+        parts = _split_payload_windows(request.payload)
+        if len(parts) != 1:
+            return "Usage: /mailjson <config.json>"
+        config_path = _resolve_input_path(
+            parts[0],
+            project_path=str(state.get("project_path") or ""),
+            settings=settings,
+        )
+        if not config_path.exists():
+            return f"mailjson file not found: {config_path}"
+        try:
+            parsed = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return f"mailjson parse failed: {exc}"
+        if not isinstance(parsed, dict):
+            return "mailjson config must be a JSON object."
+        rewritten_json, error = _rewrite_json_recipients_with_contacts(store, parsed)
+        if rewritten_json is None:
+            return f"mailjson recipient resolve failed.\n{error}"
+        resolved_path = settings.state_home / f"mailjson_resolved_chat{chat_id}.json"
+        try:
+            resolved_path.write_text(
+                json.dumps(rewritten_json, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            return f"mailjson write failed: {exc}"
+        ok, report = _run_sendmail(settings, args=[str(resolved_path)])
+        return ("mailjson sent.\n" if ok else "mailjson failed.\n") + report
+
+    if request.command == "mailbatch":
+        parts = _split_payload_windows(request.payload)
+        if len(parts) != 2:
+            return "Usage: /mailbatch <recipients.csv> <base_config.json>"
+        csv_path = _resolve_input_path(
+            parts[0],
+            project_path=str(state.get("project_path") or ""),
+            settings=settings,
+        )
+        json_path = _resolve_input_path(
+            parts[1],
+            project_path=str(state.get("project_path") or ""),
+            settings=settings,
+        )
+        if not csv_path.exists():
+            return f"mailbatch csv not found: {csv_path}"
+        if not json_path.exists():
+            return f"mailbatch base json not found: {json_path}"
+        ok, report = _run_sendmail(
+            settings,
+            args=["batch", str(csv_path), str(json_path)],
+        )
+        return ("mailbatch sent.\n" if ok else "mailbatch failed.\n") + report
+
+    if request.command == "mailmcp":
+        sendmail_root = _sendmail_root_path()
+        sendmail_script = sendmail_root / "sendmail.py"
+        mcp_server = sendmail_root / "sendmail_mcp" / "server.py"
+        env_file = sendmail_root / ".env"
+        env_values = dotenv_values(env_file) if env_file.exists() else {}
+        gmail_user = str(env_values.get("GMAIL_USER") or "")
+        gmail_password = str(env_values.get("GMAIL_APP_PASSWORD") or "")
+        env_ready = bool(gmail_user and gmail_password)
+        return "\n".join(
+            [
+                "mailmcp status",
+                f"sendmail_root: {sendmail_root}",
+                f"sendmail_root_exists: {sendmail_root.exists()}",
+                f"sendmail_script_exists: {sendmail_script.exists()}",
+                f"mcp_server_exists: {mcp_server.exists()}",
+                f"env_file_exists: {env_file.exists()}",
+                f"env_ready: {env_ready}",
+            ]
+        )
 
     if request.command == "provider":
         payload = request.payload.strip().lower()

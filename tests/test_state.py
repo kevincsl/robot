@@ -88,6 +88,52 @@ class StateTests(unittest.TestCase):
         state = self.store.get_chat_state(1)
         self.assertEqual(state["last_provider_timing"], timing)
 
+    def test_contact_crud_round_trip(self) -> None:
+        created = self.store.upsert_contact(
+            key="kevin",
+            email="kevincsl@gmail.com",
+            name="Kevin",
+        )
+        self.assertEqual(created["key"], "kevin")
+        self.assertEqual(created["email"], "kevincsl@gmail.com")
+        self.assertEqual(len(self.store.list_contacts()), 1)
+
+        loaded = self.store.get_contact("kevin")
+        self.assertIsNotNone(loaded)
+        assert loaded is not None
+        self.assertEqual(loaded["name"], "Kevin")
+
+        removed = self.store.remove_contact("kevin")
+        self.assertTrue(removed)
+        self.assertEqual(self.store.list_contacts(), [])
+
+    def test_contact_alias_and_resolve(self) -> None:
+        self.store.upsert_contact(
+            key="bob",
+            email="bobkaott@gmail.com",
+            name="高嘉辰",
+        )
+        self.store.add_contact_alias("bob", "kajiachen")
+        self.store.add_contact_alias("bob", "高嘉辰")
+
+        result = self.store.resolve_contacts(["bob", "kajiachen", "高嘉辰", "none@example.com"])
+        self.assertEqual(result["emails"], ["bobkaott@gmail.com", "none@example.com"])
+        self.assertEqual(result["unresolved"], [])
+        self.assertEqual(result["ambiguous"], {})
+
+    def test_contact_rejects_duplicate_email_for_different_key(self) -> None:
+        self.store.upsert_contact(
+            key="kevin",
+            email="kevincsl@gmail.com",
+            name="Kevin",
+        )
+        with self.assertRaises(ValueError):
+            self.store.upsert_contact(
+                key="kevin2",
+                email="kevincsl@gmail.com",
+                name="Kevin2",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
