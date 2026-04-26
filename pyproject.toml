@@ -15,6 +15,7 @@ dependencies = [
   "google-auth>=2.40.0",
   "google-auth-oauthlib>=1.2.2",
   "markitdown[pdf]>=0.1.5",
+  "teleapp>=0.1.0",
 ]
 
 [project.scripts]
@@ -22,4 +23,5 @@ robot = "robot.entry:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["robot*", "teleapp*"]
+include = ["robot*"]
+exclude = ["robot._vendor*", "tests*"]

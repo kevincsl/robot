@@ -8,7 +8,7 @@ English | [Traditional Chinese](./README.zh-TW.md)
 
 ## Features
 
-- Multi-provider routing: `codex`, `gemini`, `copilot`
+- Multi-provider routing: `claude`, `codex`, `gemini`
 - Model switching per chat (`/provider`, `/model`, `/models`)
 - Workspace selection (`/project`, `/projects`)
 - Agent queue and status controls (`/queue`, `/agentstatus`, `/clearqueue`)
@@ -22,9 +22,9 @@ English | [Traditional Chinese](./README.zh-TW.md)
 - Telegram bot token + allowed user id
 - Teleapp runtime (installed via dependencies)
 - Optional CLIs on PATH (depending on provider you use):
+  - `claude`
   - `codex`
   - `gemini`
-  - `copilot`
 
 ## Quick Start
 
@@ -57,10 +57,22 @@ Windows:
 start_robot.bat
 ```
 
+Background mode (no interactive CMD window):
+
+```bat
+start_robot_bg.bat
+```
+
 Linux/macOS:
 
 ```bash
 ./start_robot.sh
+```
+
+Shutdown on Windows:
+
+```bat
+shutdown_robot.bat
 ```
 
 ## Common Commands
@@ -68,7 +80,7 @@ Linux/macOS:
 - `/help`: command list
 - `/status`: current provider/model/project/queue summary
 - `/contact list`, `/contact add <key> <email> <name>`
-- `/provider <codex|gemini|copilot>`
+- `/provider <claude|codex|gemini>`
 - `/model <model_name>`
 - `/project <workspace>`
 - `/queue`
@@ -85,8 +97,9 @@ From `.env.example` and runtime config:
 - `ROBOT_DEFAULT_PROVIDER`
 - `ROBOT_DEFAULT_MODEL`
 - `ROBOT_CODEX_CMD`
+- `ROBOT_CLAUDE_CMD`
+- `ROBOT_CUSTOM_MODELS` (comma-separated custom model names)
 - `ROBOT_GEMINI_CMD`
-- `ROBOT_COPILOT_CMD`
 - `ROBOT_PROJECTS_ROOTS`
 - `ROBOT_STATE_HOME`
 - `ROBOT_GOOGLE_CALENDAR_ENABLED`
@@ -99,11 +112,14 @@ Security-related flags (default off):
 
 - `ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX=0`
 - `ROBOT_CODEX_SKIP_GIT_REPO_CHECK=0`
+- `ROBOT_CLAUDE_SKIP_PERMISSIONS=0`
 
 ## Hot Reload / Conflict Notes
 
 - Use `start_robot.bat` / `start_robot.sh` as primary entrypoint.
-- Default watch mode in `start_robot.bat` is `TELEAPP_WATCH_MODE=app-file-only` to reduce restart conflicts.
+- If you want a background daemon style start on Windows, use `start_robot_bg.bat`.
+- Default mode is `TELEAPP_HOT_RELOAD=0` (stable mode, fewer process layers/conflicts).
+- If needed, temporarily enable hot reload with `set TELEAPP_HOT_RELOAD=1` before startup.
 - The app has Telegram polling conflict handling and a single-instance lock in `.robot_state/robot.lock`.
 - If you still see conflict crashes, ensure only one process is using the same bot token.
 

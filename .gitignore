@@ -8,3 +8,6 @@ __pycache__/
 # CocoIndex Code (ccc)
 /.cocoindex_code/
 files/
+# Vendored dependencies
+teleapp/
+_vendor_teleapp/

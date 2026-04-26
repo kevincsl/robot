@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import shlex
 from dataclasses import dataclass
@@ -8,34 +9,43 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Use utf-8-sig so `.env` files saved with BOM still parse first key correctly.
-load_dotenv(override=True, encoding="utf-8-sig")
+# Don't override existing environment variables (security best practice)
+load_dotenv(override=False, encoding="utf-8-sig")
+
+# Log warning if .env file would override existing vars
+if Path(".env").exists():
+    from dotenv import dotenv_values
+    env_vars = dotenv_values(".env")
+    for key in env_vars:
+        if key in os.environ:
+            logging.warning(f"Environment variable {key} already set, not overriding from .env")
 
 VERSION = "0.1.1"
 DEFAULT_GOOGLE_CALENDAR_SCOPES = ("https://www.googleapis.com/auth/calendar.readonly",)
 
 PROVIDER_LABELS = {
     "codex": "Codex",
+    "claude": "Claude",
     "gemini": "Gemini",
-    "copilot": "Copilot",
 }
 
 SUPPORTED_MODELS = {
     "codex": [
         "gpt-5.3-codex",
         "gpt-5.4",
-        "gpt-5.2-codex",
-        "gpt-5.1-codex-max",
-        "gpt-5.2",
-        "gpt-5.1-codex-mini",
+        "gpt-5.4-mini",
+        "custom",
+    ],
+    "claude": [
+        "claude-opus-4-7",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5",
+        "custom",
     ],
     "gemini": [
         "gemini-2.5-pro",
         "gemini-2.5-flash",
-    ],
-    "copilot": [
-        "gpt-5",
-        "claude-sonnet-4",
-        "gemini-2.5-pro",
+        "custom",
     ],
 }
 
@@ -43,19 +53,19 @@ MODEL_CHOICES = {
     "codex": [
         ("gpt-5.3-codex", "gpt-5.3-codex | coding"),
         ("gpt-5.4", "gpt-5.4 | strong general"),
-        ("gpt-5.2-codex", "gpt-5.2-codex | balanced coding"),
-        ("gpt-5.1-codex-max", "gpt-5.1-codex-max | deep"),
-        ("gpt-5.2", "gpt-5.2 | general"),
-        ("gpt-5.1-codex-mini", "gpt-5.1-codex-mini | fast"),
+        ("gpt-5.4-mini", "gpt-5.4-mini | fast general"),
+        ("custom", "custom | specify any model"),
+    ],
+    "claude": [
+        ("claude-opus-4-7", "claude-opus-4-7 | strongest"),
+        ("claude-sonnet-4-6", "claude-sonnet-4-6 | balanced"),
+        ("claude-haiku-4-5", "claude-haiku-4-5 | fastest"),
+        ("custom", "custom | specify any model"),
     ],
     "gemini": [
         ("gemini-2.5-pro", "gemini-2.5-pro"),
         ("gemini-2.5-flash", "gemini-2.5-flash"),
-    ],
-    "copilot": [
-        ("gpt-5", "gpt-5"),
-        ("claude-sonnet-4", "claude-sonnet-4"),
-        ("gemini-2.5-pro", "gemini-2.5-pro"),
+        ("custom", "custom | specify any model"),
     ],
 }
 
@@ -63,10 +73,19 @@ MODEL_DESCRIPTIONS = {
     "codex": {
         "gpt-5.3-codex": "Latest frontier agentic coding model.",
         "gpt-5.4": "Latest frontier agentic coding model.",
-        "gpt-5.2-codex": "Frontier agentic coding model.",
-        "gpt-5.1-codex-max": "Codex-optimized flagship for deep and fast reasoning.",
-        "gpt-5.2": "Latest frontier model with improvements across knowledge and coding.",
-        "gpt-5.1-codex-mini": "Optimized for codex. Cheaper, faster, but less capable.",
+        "gpt-5.4-mini": "Fast and cost-efficient GPT-5.4 variant.",
+        "custom": "Use any model (e.g. deepseek-chat, qwen-turbo).",
+    },
+    "claude": {
+        "claude-opus-4-7": "Most capable model for complex tasks.",
+        "claude-sonnet-4-6": "Balanced performance and speed.",
+        "claude-haiku-4-5": "Fast and cost-efficient.",
+        "custom": "Use any model (e.g. deepseek-chat, qwen-turbo).",
+    },
+    "gemini": {
+        "gemini-2.5-pro": "Google's most capable model.",
+        "gemini-2.5-flash": "Fast and efficient.",
+        "custom": "Use any model (e.g. deepseek-chat, qwen-turbo).",
     }
 }
 
@@ -93,6 +112,7 @@ class Settings:
     project_root: Path
     state_home: Path
     session_state_path: Path
+    robot_id: str
     default_provider: str
     default_model: str
     provider_commands: dict[str, list[str]]
@@ -104,6 +124,8 @@ class Settings:
     brain_vault_path: Path | None
     codex_bypass_approvals_and_sandbox: bool
     codex_skip_git_repo_check: bool
+    claude_skip_permissions: bool
+    custom_models: list[str]
     google_calendar_enabled: bool
     google_calendar_credentials_path: Path
     google_calendar_token_path: Path
@@ -165,18 +187,23 @@ def load_settings(project_root: Path | None = None) -> Settings:
     state_home = Path(os.getenv("ROBOT_STATE_HOME", str(root / ".robot_state"))).expanduser()
     state_home.mkdir(parents=True, exist_ok=True)
 
+    robot_id = os.getenv("ROBOT_ID", "").strip()
+    if not robot_id:
+        token = os.getenv("TELEAPP_TOKEN", "")
+        robot_id = f"robot-{hash(token) % 100000:05d}" if token else "robot-unknown"
+
     default_provider = normalize_provider(os.getenv("ROBOT_DEFAULT_PROVIDER", "codex"))
     default_model = normalize_model(default_provider, os.getenv("ROBOT_DEFAULT_MODEL", "gpt-5.3-codex"))
 
     commands = {
         "codex": _split_command(os.getenv("ROBOT_CODEX_CMD", "codex")),
+        "claude": _split_command(os.getenv("ROBOT_CLAUDE_CMD", "claude")),
         "gemini": _split_command(os.getenv("ROBOT_GEMINI_CMD", "gemini")),
-        "copilot": _split_command(os.getenv("ROBOT_COPILOT_CMD", "copilot")),
     }
     model_flags = {
         "codex": "-m",
+        "claude": os.getenv("ROBOT_CLAUDE_MODEL_FLAG", "--model").strip() or "--model",
         "gemini": os.getenv("ROBOT_GEMINI_MODEL_FLAG", "--model").strip() or "--model",
-        "copilot": os.getenv("ROBOT_COPILOT_MODEL_FLAG", "--model").strip() or "--model",
     }
     auto_dev_command = _split_command(os.getenv("ROBOT_AUTO_DEV_CMD", "python auto_dev_agent.py"))
     brain_cli_command = _split_command(os.getenv("ROBOT_BRAIN_CLI_CMD", "obsidian"))
@@ -185,6 +212,9 @@ def load_settings(project_root: Path | None = None) -> Settings:
     # Security-first defaults: dangerous Codex flags are opt-in.
     codex_bypass_approvals_and_sandbox = _env_flag("ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX", False)
     codex_skip_git_repo_check = _env_flag("ROBOT_CODEX_SKIP_GIT_REPO_CHECK", False)
+    claude_skip_permissions = _env_flag("ROBOT_CLAUDE_SKIP_PERMISSIONS", False)
+    raw_custom_models = os.getenv("ROBOT_CUSTOM_MODELS", "") or ""
+    custom_models = [m.strip() for m in raw_custom_models.split(",") if m.strip()]
     google_calendar_enabled = _env_flag("ROBOT_GOOGLE_CALENDAR_ENABLED", False)
     google_calendar_credentials_path = Path(
         os.getenv(
@@ -230,7 +260,8 @@ def load_settings(project_root: Path | None = None) -> Settings:
     return Settings(
         project_root=root,
         state_home=state_home,
-        session_state_path=state_home / "robot_state.json",
+        session_state_path=state_home / f"robot_state_{robot_id}.json",
+        robot_id=robot_id,
         default_provider=default_provider,
         default_model=default_model,
         provider_commands=commands,
@@ -242,6 +273,8 @@ def load_settings(project_root: Path | None = None) -> Settings:
         brain_vault_path=brain_vault_path,
         codex_bypass_approvals_and_sandbox=codex_bypass_approvals_and_sandbox,
         codex_skip_git_repo_check=codex_skip_git_repo_check,
+        claude_skip_permissions=claude_skip_permissions,
+        custom_models=custom_models,
         google_calendar_enabled=google_calendar_enabled,
         google_calendar_credentials_path=google_calendar_credentials_path,
         google_calendar_token_path=google_calendar_token_path,

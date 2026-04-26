@@ -66,6 +66,27 @@ async def _run() -> None:
     agents.attach_supervisor(_SupervisorProxy())
     agents.start()
 
+    from robot.coordinator import RobotCoordinator
+    coordinator = RobotCoordinator(settings.state_home, settings.robot_id)
+    coordinator.update_status(status="starting")
+
+    async def heartbeat_loop():
+        while True:
+            await asyncio.sleep(15)
+            try:
+                state = store.get_chat_state(0) if store.list_chat_ids() else {}
+                coordinator.update_status(
+                    status="running",
+                    current_provider=state.get("provider"),
+                    current_model=state.get("model"),
+                    active_chats=len(store.list_chat_ids()),
+                    queue_size=len(store.get_agent_queue(0)) if store.list_chat_ids() else 0,
+                )
+            except Exception:
+                pass
+
+    heartbeat_task = asyncio.create_task(heartbeat_loop())
+
     try:
         while True:
             line = await asyncio.to_thread(sys.stdin.readline)
@@ -121,6 +142,8 @@ async def _run() -> None:
                 traceback.print_exc(file=sys.stderr)
                 _emit("error", str(exc), chat_id=chat_id, request_id=request_id)
     finally:
+        heartbeat_task.cancel()
+        coordinator.update_status(status="stopped")
         await agents.shutdown()
 
 

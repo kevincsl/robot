@@ -6,6 +6,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -108,6 +109,8 @@ COMMAND_NAMES = {
     "brainautodaily",
     "brainautoweekly",
     "robotonly",
+    "robots",
+    "robotstatus",
 }
 
 CONTROL_NAMES = {
@@ -185,14 +188,14 @@ def _schedule_confirm_response(parsed: dict[str, str]) -> ButtonResponse:
                 f"原文: {parsed['source_text']}",
                 "",
                 "按「確認建立」會寫入第二大腦。",
-                "按「改送 Codex」會把原句直接送去 AI。",
-                "按「取消」也會改送 Codex，不會建立行程。",
-                "如果你只是想問 AI，不要建立行程，請按「改送 Codex」。",
+                "按「改送 Claude」會把原句直接送去 AI。",
+                "按「取消」也會改送 Claude，不會建立行程。",
+                "如果你只是想問 AI，不要建立行程，請按「改送 Claude」。",
             ]
         ),
         buttons=[
             Button("確認建立", "brain:schedule_confirm"),
-            Button("改送 Codex", "brain:schedule_send_agent"),
+            Button("改送 Claude", "brain:schedule_send_agent"),
             Button("取消", "brain:cancel"),
         ],
     )
@@ -222,12 +225,12 @@ def _schedule_delete_confirm_response(match: dict[str, str], source_text: str) -
                 "",
                 warning_line,
                 "按「確認刪除」會把這筆行程移到 Archive。",
-                "按「改送 Codex」會把原句直接送去 AI。",
+                "按「改送 Claude」會把原句直接送去 AI。",
             ]
         ),
         buttons=[
             Button("確認刪除", "brain:schedule_delete_confirm"),
-            Button("改送 Codex", "brain:schedule_send_agent"),
+            Button("改送 Claude", "brain:schedule_send_agent"),
             Button("取消", "brain:cancel"),
         ],
     )
@@ -268,14 +271,14 @@ def _schedule_update_confirm_response(match: dict[str, str], updates: dict[str, 
             f"原文: {source_text}",
             "",
             "按「確認修改」會直接更新這筆行程。",
-            "按「改送 Codex」會把原句直接送去 AI。",
+            "按「改送 Claude」會把原句直接送去 AI。",
         ]
     )
     return ButtonResponse(
         "\n".join(lines),
         buttons=[
             Button("確認修改", "brain:schedule_update_confirm"),
-            Button("改送 Codex", "brain:schedule_send_agent"),
+            Button("改送 Claude", "brain:schedule_send_agent"),
             Button("取消", "brain:cancel"),
         ],
     )
@@ -319,12 +322,12 @@ async def _send_schedule_confirm_source_to_agent(
     if not isinstance(flow, dict) or flow.get("kind") not in valid_kinds:
         flow = store.get_last_schedule_candidate(chat_id)
     if not isinstance(flow, dict) or flow.get("kind") not in valid_kinds:
-        return "目前沒有可改送 Codex 的行程原文。請直接重新輸入原句。"
+        return "目前沒有可改送 Claude 的行程原文。請直接重新輸入原句。"
     source_text = str(flow.get("source_text") or "").strip()
     store.clear_ui_flow(chat_id)
     store.clear_last_schedule_candidate(chat_id)
     if not source_text:
-        return "原始訊息遺失，無法送到 Codex。"
+        return "原始訊息遺失，無法送到 Claude。"
     return await handle_agent(chat_id, ClassifiedRequest(AGENT_REQUEST, None, source_text), store, agents)
 
 
@@ -613,19 +616,40 @@ def _load_sendmail_env(sendmail_root: Path) -> dict[str, str]:
 
 
 def _resolve_input_path(raw_path: str, *, project_path: str, settings: Settings) -> Path:
+    from robot.security import validate_path_traversal, SecurityError
+
     candidate = Path(str(raw_path or "").strip()).expanduser()
-    if candidate.is_absolute():
-        return candidate
-    search_roots: list[Path] = []
+
+    # Build allowed roots
+    allowed_roots: list[Path] = []
     if project_path.strip():
-        search_roots.append(Path(project_path).expanduser())
-    search_roots.append(settings.project_root)
-    search_roots.append(_sendmail_root_path())
-    for root in search_roots:
+        allowed_roots.append(Path(project_path).expanduser())
+    allowed_roots.append(settings.project_root)
+    allowed_roots.append(_sendmail_root_path())
+
+    # If absolute path, validate it's within allowed roots
+    if candidate.is_absolute():
+        try:
+            return validate_path_traversal(candidate, allowed_roots, must_exist=False)
+        except SecurityError as exc:
+            raise ValueError(f"Path validation failed: {exc}") from exc
+
+    # For relative paths, try each root
+    for root in allowed_roots:
         resolved = root / candidate
-        if resolved.exists():
-            return resolved
-    return settings.project_root / candidate
+        try:
+            validated = validate_path_traversal(resolved, allowed_roots, must_exist=False)
+            if validated.exists():
+                return validated
+        except SecurityError:
+            continue
+
+    # Default to project root, but still validate
+    default_path = settings.project_root / candidate
+    try:
+        return validate_path_traversal(default_path, allowed_roots, must_exist=False)
+    except SecurityError as exc:
+        raise ValueError(f"Path validation failed: {exc}") from exc
 
 
 def _resolve_single_contact_target(store: ChatStateStore, target: str) -> tuple[str | None, str | None]:
@@ -707,6 +731,8 @@ def _run_sendmail(
     *,
     args: list[str],
 ) -> tuple[bool, str]:
+    from robot.security import validate_command_args, sanitize_error_message, SecurityError
+
     sendmail_root = _sendmail_root_path()
     sendmail_script = sendmail_root / "sendmail.py"
     if not sendmail_root.exists():
@@ -714,8 +740,16 @@ def _run_sendmail(
     if not sendmail_script.exists():
         return False, f"sendmail script not found: {sendmail_script}"
 
-    command = [sys.executable, str(sendmail_script), *args]
+    # Validate all arguments for security
+    try:
+        validated_args = validate_command_args(args)
+    except SecurityError as exc:
+        error_msg = sanitize_error_message(str(exc), settings.project_root)
+        return False, f"sendmail argument validation failed: {error_msg}"
+
+    command = [sys.executable, str(sendmail_script), *validated_args]
     env = _load_sendmail_env(sendmail_root)
+
     try:
         completed = subprocess.run(
             command,
@@ -726,16 +760,23 @@ def _run_sendmail(
             env=env,
         )
     except (FileNotFoundError, OSError) as exc:
-        return False, f"sendmail execution failed: {exc}"
+        error_msg = sanitize_error_message(str(exc), settings.project_root)
+        return False, f"sendmail execution failed: {error_msg}"
     except subprocess.TimeoutExpired:
         return False, "sendmail execution timed out after 120 seconds."
 
     stdout_text = (completed.stdout or "").strip()
     stderr_text = (completed.stderr or "").strip()
+
+    # Sanitize output to avoid leaking sensitive info
+    stdout_text = sanitize_error_message(stdout_text, settings.project_root)
+    stderr_text = sanitize_error_message(stderr_text, settings.project_root)
+
     lines = [
         f"ok: {completed.returncode == 0}",
         f"return_code: {completed.returncode}",
-        f"command: {' '.join(command)}",
+        # Don't include full command in output (may contain sensitive data)
+        "command: sendmail.py [args redacted]",
     ]
     if stdout_text:
         lines.append("stdout:")
@@ -831,7 +872,7 @@ def _help_text() -> str:
             "/contact list  /contact add <key> <email> <name>",
             "",
             "workspace:",
-            "/provider [codex|gemini|copilot]",
+            "/provider [claude|codex|gemini]",
             "/model [name]  /models",
             "/projects  /project [key-or-label]",
             "",
@@ -882,7 +923,7 @@ def _quick_text() -> str:
             "",
             "system setup:",
             "- /menu (主選單)",
-            "- /provider [codex|gemini|copilot]",
+            "- /provider [claude|codex|gemini]",
             "- /model [name] /models",
             "- /projects /project [key-or-label]",
             "",
@@ -947,7 +988,7 @@ def _menu_text(chat_id: int, store: ChatStateStore) -> str:
             "",
             "slash commands:",
             "- /status",
-            "- /provider codex",
+            "- /provider claude",
             "- /model gpt-5.4",
             "- /project <key-or-label>",
             "",
@@ -1343,13 +1384,14 @@ def _provider_menu_response(chat_id: int, store: ChatStateStore) -> str:
     return "\n".join(lines)
 
 
-def _model_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
+def _model_menu_response(chat_id: int, store: ChatStateStore, settings: Settings) -> ButtonResponse:
     state = store.get_chat_state(chat_id)
     provider = str(state["provider"])
     models = SUPPORTED_MODELS.get(provider, [])
     choices = MODEL_CHOICES.get(provider, [(item, item) for item in models])
     default_model = models[0] if models else ""
     descriptions = MODEL_DESCRIPTIONS.get(provider, {})
+    custom_models = settings.custom_models
     store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_MODEL})
     lines = [
         "Select Model",
@@ -1360,7 +1402,16 @@ def _model_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
         "",
     ]
     buttons: list[Button] = []
-    for index, (item, label) in enumerate(choices[:8], start=1):
+    # Build menu items: built-in choices + custom models
+    menu_items: list[tuple[str, str]] = list(choices)
+    if custom_models:
+        menu_items.append(("---", "---"))  # separator
+        for cm in custom_models:
+            menu_items.append((cm, cm))
+    for index, (item, label) in enumerate(menu_items, start=1):
+        if item == "---":
+            lines.append("--- custom models ---")
+            continue
         tags: list[str] = []
         if item == default_model:
             tags.append("default")
@@ -1399,7 +1450,8 @@ def _resolve_model_selection(provider: str, text: str) -> str | None:
     lookup = {item.lower(): item for item in models}
     if lowered in lookup:
         return lookup[lowered]
-    if normalized.startswith(("gpt-", "o", "claude-", "gemini-")):
+    # Allow any text to pass through as model name (for custom/Chinese models like deepseek-chat, qwen-turbo, etc.)
+    if normalized:
         return normalized
     return None
 
@@ -1499,12 +1551,20 @@ async def _handle_menu_action(
         )
 
     if command == "menu:model":
-        return _model_menu_response(chat_id, store)
+        return _model_menu_response(chat_id, store, settings)
 
     if command.startswith("menu:set_model:"):
         model = command.split(":", 2)[2].strip()
         if not model:
             return "Empty model name."
+        if model == "custom":
+            store.clear_ui_flow(chat_id)
+            return (
+                "Custom model selected.\n"
+                "請使用 /model <實際模型名稱> 來設定自訂模型。\n"
+                "例如: /model deepseek-chat, /model qwen-turbo, /model gpt-4o\n\n"
+                "輸入 /menu 可回到主選單。"
+            )
         next_state = store.set_model(chat_id, model)
         store.clear_ui_flow(chat_id)
         return (
@@ -1713,9 +1773,18 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
         command = command.split("@", 1)[0].strip()
 
     if ctx.document is not None and not command:
+        from robot.security import sanitize_file_size, SecurityError
+
         local_path = str(ctx.document.local_path or "").strip()
         if not local_path:
             return "文件已收到，但目前沒有可讀取的本機路徑。請重新上傳後再試。"
+
+        # Add file size check
+        try:
+            sanitize_file_size(Path(local_path), max_size_mb=50)
+        except SecurityError as exc:
+            return f"文件大小驗證失敗: {exc}"
+
         title = (ctx.caption or "").strip()
         source_name = str(ctx.document.file_name or Path(local_path).name)
         if not title:
@@ -1739,12 +1808,12 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
         store.clear_ui_flow(ctx.chat_id)
         return _main_menu_response(ctx.chat_id, store)
     if command == "model":
-        return _model_menu_response(ctx.chat_id, store)
+        return _model_menu_response(ctx.chat_id, store, settings)
     if command == "brain":
         store.clear_ui_flow(ctx.chat_id)
         return _brain_menu_response(ctx.chat_id, store)
 
-    # Non-blocking rule: plain text should always reach Codex for content flows.
+    # Non-blocking rule: plain text should always reach the agent for content flows.
     # Keep numeric/text selection for settings flows (model/provider/project).
     active_flow = store.get_ui_flow(ctx.chat_id)
     if text and not command and isinstance(active_flow, dict):
@@ -2026,12 +2095,15 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         provider = str(state["provider"])
         lines = [f"Models for {provider}:"]
         lines.extend(f"- {item}" for item in SUPPORTED_MODELS.get(provider, []))
+        if settings.custom_models:
+            lines.append("--- custom models ---")
+            lines.extend(f"- {item}" for item in settings.custom_models)
         return "\n".join(lines)
 
     if request.command == "model":
         payload = request.payload.strip()
         if not payload:
-            return _model_menu_response(chat_id, store)
+            return _model_menu_response(chat_id, store, settings)
         selected_model = _resolve_model_selection(str(state["provider"]), payload)
         if selected_model is None:
             return (
@@ -2348,6 +2420,57 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
                 "fingerprint: robot-only-2026-04-11-a",
             ]
         )
+
+    if request.command == "robots":
+        from robot.coordinator import RobotCoordinator
+        coordinator = RobotCoordinator(settings.state_home, settings.robot_id)
+        robots = coordinator.get_all_robots(timeout_seconds=60.0)
+        if not robots:
+            return "No active robots found."
+
+        lines = [f"Active robots: {len(robots)}\n"]
+        for robot in robots:
+            age = time.time() - robot.last_heartbeat
+            status_icon = "🟢" if age < 30 else "🟡" if age < 60 else "🔴"
+            lines.append(
+                f"{status_icon} {robot.robot_id}\n"
+                f"  status: {robot.status}\n"
+                f"  provider: {robot.current_provider or '-'}\n"
+                f"  model: {robot.current_model or '-'}\n"
+                f"  chats: {robot.active_chats} | queue: {robot.queue_size}\n"
+                f"  last_seen: {int(age)}s ago\n"
+            )
+        return "".join(lines)
+
+    if request.command == "robotstatus":
+        from robot.coordinator import RobotCoordinator
+        coordinator = RobotCoordinator(settings.state_home, settings.robot_id)
+
+        target_id = request.payload.strip() if request.payload else settings.robot_id
+        robot = coordinator.get_robot_status(target_id)
+
+        if robot is None:
+            return f"Robot not found: {target_id}"
+
+        age = time.time() - robot.last_heartbeat
+        status_icon = "🟢" if age < 30 else "🟡" if age < 60 else "🔴"
+
+        lines = [
+            f"{status_icon} Robot Status: {robot.robot_id}\n",
+            f"status: {robot.status}",
+            f"provider: {robot.current_provider or '-'}",
+            f"model: {robot.current_model or '-'}",
+            f"active_chats: {robot.active_chats}",
+            f"queue_size: {robot.queue_size}",
+            f"last_heartbeat: {int(age)}s ago",
+        ]
+
+        if robot.metadata:
+            lines.append("\nmetadata:")
+            for key, value in robot.metadata.items():
+                lines.append(f"  {key}: {value}")
+
+        return "\n".join(lines)
 
     return f"Unknown command: /{request.command}\nUse /help."
 

@@ -11,11 +11,11 @@ fi
 source .venv/bin/activate
 unset HTTP_PROXY HTTPS_PROXY ALL_PROXY
 unset http_proxy https_proxy all_proxy
-export TELEAPP_HOT_RELOAD="${TELEAPP_HOT_RELOAD:-1}"
+export TELEAPP_HOT_RELOAD="${TELEAPP_HOT_RELOAD:-0}"
 export TELEAPP_WATCH_MODE="${TELEAPP_WATCH_MODE:-app-file-only}"
 if [ -n "${PYTHONPATH:-}" ]; then
   export PYTHONPATH="$PWD:$PYTHONPATH"
 else
   export PYTHONPATH="$PWD"
 fi
-teleapp robot.py
+.venv/bin/python -m teleapp robot.py --python .venv/bin/python

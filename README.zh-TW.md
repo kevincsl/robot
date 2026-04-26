@@ -8,7 +8,7 @@
 
 ## 功能
 
-- 多 provider 路由：`codex`、`gemini`、`copilot`
+- 多 provider 路由：`claude`、`codex`、`gemini`
 - 每個 chat 可切換模型（`/provider`、`/model`、`/models`）
 - 可選擇工作目錄（`/project`、`/projects`）
 - Agent 佇列與狀態控制（`/queue`、`/agentstatus`、`/clearqueue`）
@@ -22,9 +22,9 @@
 - Telegram bot token 與允許的 user id
 - Teleapp runtime（依賴安裝後可用）
 - 依 provider 需求，PATH 上可選擇安裝：
+  - `claude`
   - `codex`
   - `gemini`
-  - `copilot`
 
 ## 快速開始
 
@@ -68,7 +68,7 @@ Linux/macOS:
 - `/help`：指令總覽
 - `/status`：目前 provider/model/project/queue 狀態
 - `/contact list`、`/contact add <key> <email> <name>`
-- `/provider <codex|gemini|copilot>`
+- `/provider <claude|codex|gemini>`
 - `/model <model_name>`
 - `/project <workspace>`
 - `/queue`
@@ -85,8 +85,9 @@ Linux/macOS:
 - `ROBOT_DEFAULT_PROVIDER`
 - `ROBOT_DEFAULT_MODEL`
 - `ROBOT_CODEX_CMD`
+- `ROBOT_CLAUDE_CMD`
+- `ROBOT_CUSTOM_MODELS`（逗號分隔的自訂模型名稱）
 - `ROBOT_GEMINI_CMD`
-- `ROBOT_COPILOT_CMD`
 - `ROBOT_PROJECTS_ROOTS`
 - `ROBOT_STATE_HOME`
 - `ROBOT_GOOGLE_CALENDAR_ENABLED`
@@ -99,6 +100,7 @@ Linux/macOS:
 
 - `ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX=0`
 - `ROBOT_CODEX_SKIP_GIT_REPO_CHECK=0`
+- `ROBOT_CLAUDE_SKIP_PERMISSIONS=0`
 
 ## Hot Reload / 衝突備註
 

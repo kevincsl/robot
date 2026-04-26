@@ -162,16 +162,21 @@ def authorize_google_calendar(settings: Settings, *, open_browser: bool = True) 
     if not credentials_path.exists():
         raise GoogleCalendarAuthError(f"Credentials file not found: {credentials_path}")
     _request_cls, _credentials_cls, flow_cls, _build, _http_error_cls = _import_google_modules()
-    flow = flow_cls.from_client_secrets_file(
-        str(credentials_path),
-        list(settings.google_calendar_scopes),
-    )
-    if open_browser:
-        creds = flow.run_local_server(port=0, open_browser=True)
-    else:
-        if not hasattr(flow, "run_console"):
-            raise GoogleCalendarAuthError("Console OAuth flow is not available in this environment.")
-        creds = flow.run_console()
+    try:
+        flow = flow_cls.from_client_secrets_file(
+            str(credentials_path),
+            list(settings.google_calendar_scopes),
+        )
+    except Exception as exc:
+        raise GoogleCalendarAuthError(
+            f"Credentials file is invalid for OAuth client flow: {credentials_path}. {exc}"
+        ) from exc
+    # Use loopback server flow for both modes. In no-browser mode, the library prints
+    # a URL for manual open and waits for the OAuth callback.
+    try:
+        creds = flow.run_local_server(port=0, open_browser=open_browser)
+    except Exception as exc:
+        raise GoogleCalendarAuthError(f"OAuth flow failed: {exc}") from exc
     _write_token(settings.google_calendar_token_path, creds)
     return "\n".join(
         [

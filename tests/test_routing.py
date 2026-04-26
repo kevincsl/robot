@@ -731,7 +731,7 @@ class RoutingTests(unittest.TestCase):
         with patch(
             "robot.routing.import_markitdown_resource",
             return_value=("04 Resources/Meeting notes.md", "# Meeting notes\n\nSummary body"),
-        ) as mock_import:
+        ) as mock_import, patch("robot.security.sanitize_file_size"):
             body = self.loop.run_until_complete(handle_request(ctx, self.settings, self.store, self.agents))
         mock_import.assert_called_once()
         args, kwargs = mock_import.call_args
@@ -782,7 +782,7 @@ class RoutingTests(unittest.TestCase):
                     "* pip install markitdown[pdf]"
                 )
             ),
-        ):
+        ), patch("robot.security.sanitize_file_size"):
             body = self.loop.run_until_complete(handle_request(ctx, self.settings, self.store, self.agents))
         self.assertIn("還沒有安裝 PDF 轉換依賴", body)
         self.assertIn("meeting.pdf", body)

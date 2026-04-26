@@ -26,7 +26,7 @@
 
 ### 2.2 Workspace / Provider
 
-- `/provider [codex|gemini|copilot]`
+- `/provider [claude|codex|gemini]`
 - `/models`
 - `/model <name>`
 - `/projects`
@@ -81,7 +81,7 @@
 ### B. 快速交付任務
 
 1. `/project robot`
-2. `/provider codex`
+2. `/provider claude`
 3. `/run <goal>`
 4. `/queue` / `/agentstatus` 追蹤進度
 

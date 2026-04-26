@@ -222,6 +222,70 @@ def _is_context_window_exhausted(detail: str) -> bool:
     )
 
 
+def _parse_claude_stream(
+    *,
+    stdout: str,
+    stderr: str,
+    base_session_id: str | None,
+) -> tuple[str | None, str, str]:
+    next_session_id = base_session_id
+    assistant_text = ""
+    latest_detail = ""
+    stdout_lines = [line.strip() for line in (stdout or "").splitlines() if line.strip()]
+    stderr_text = (stderr or "").strip()
+
+    for line in stdout_lines:
+        event = _parse_json_event_line(line)
+        if event is None:
+            latest_detail = line
+            continue
+
+        event_type = event.get("type")
+        if event_type == "system":
+            if event.get("subtype") == "init":
+                candidate = str(event.get("session_id") or "").strip()
+                if candidate:
+                    next_session_id = candidate
+            continue
+        if event_type == "assistant":
+            message = event.get("message")
+            if isinstance(message, dict):
+                content = message.get("content")
+                if isinstance(content, list):
+                    for item in content:
+                        if isinstance(item, dict):
+                            if item.get("type") == "text":
+                                text_val = str(item.get("text") or "").strip()
+                                if text_val:
+                                    assistant_text = text_val
+                            elif item.get("type") == "thinking":
+                                # skip thinking blocks
+                                pass
+            continue
+        if event_type == "result":
+            subtype = event.get("subtype")
+            if subtype == "success":
+                result_text = str(event.get("result") or "").strip()
+                if result_text:
+                    assistant_text = result_text
+                error_status = event.get("api_error_status")
+                if error_status:
+                    latest_detail = str(error_status)
+            elif subtype == "error":
+                latest_detail = str(event.get("error") or event.get("message") or "").strip() or latest_detail
+            continue
+
+    detail = latest_detail or stderr_text
+    return next_session_id, assistant_text, detail
+
+
+def _is_claude_permission_denied(detail: str) -> bool:
+    text = (detail or "").strip().lower()
+    if not text:
+        return False
+    return "permission denied" in text or "not allowed to use" in text
+
+
 def _build_codex_command(
     *,
     settings: Settings,
@@ -261,6 +325,28 @@ def _build_codex_command(
     return command
 
 
+def _build_claude_command(
+    *,
+    settings: Settings,
+    model: str,
+    session_id: str | None,
+    prompt: str,
+) -> list[str]:
+    command = list(settings.provider_commands["claude"])
+    shared_flags: list[str] = ["-p", "--output-format", "stream-json", "--verbose"]
+    if settings.claude_skip_permissions:
+        shared_flags.append("--dangerously-skip-permissions")
+    if session_id:
+        command.extend(["--resume", session_id])
+    command.extend(shared_flags)
+    model_flag = settings.provider_model_flags.get("claude", "-m")
+    command.extend([model_flag, model])
+    # Claude CLI takes prompt as positional argument
+    if prompt:
+        command.append(prompt)
+    return command
+
+
 async def run_agent_request(
     settings: Settings,
     *,
@@ -279,6 +365,16 @@ async def run_agent_request(
             model=model,
             prompt=prompt,
             thread_id=thread_id,
+            workdir=workdir,
+            project_label=project_label,
+            invocation=invocation,
+        )
+    if normalized == "claude":
+        return await _run_claude(
+            settings,
+            model=model,
+            prompt=prompt,
+            session_id=thread_id,
             workdir=workdir,
             project_label=project_label,
             invocation=invocation,
@@ -545,6 +641,70 @@ async def _run_codex(
         model=model,
         final_text=_clip(f"{body}\n\n{footer}"),
         thread_id=next_thread_id,
+        return_code=completed.returncode,
+        elapsed_seconds=int(time.monotonic() - started),
+        cancelled=cancelled,
+    )
+
+
+async def _run_claude(
+    settings: Settings,
+    *,
+    model: str,
+    prompt: str,
+    session_id: str | None,
+    workdir: Path,
+    project_label: str,
+    invocation: RunningInvocation | None,
+) -> AgentRunResult:
+    if invocation is not None:
+        invocation.set_phase("claude: preparing command")
+    command = _build_claude_command(settings=settings, model=model, session_id=session_id, prompt=prompt)
+
+    started = time.monotonic()
+
+    if invocation is not None:
+        invocation.set_phase("claude: executing")
+    completed = await _run_process(command, prompt="", workdir=workdir, invocation=invocation)
+    cancelled = bool(invocation and invocation.cancelled)
+    next_session_id, assistant_text, latest_detail = _parse_claude_stream(
+        stdout=completed.stdout or "",
+        stderr=completed.stderr or "",
+        base_session_id=session_id,
+    )
+
+    if (
+        completed.returncode != 0
+        and not cancelled
+        and not assistant_text
+        and _is_stream_disconnect(latest_detail)
+    ):
+        if invocation is not None:
+            invocation.set_phase("claude: retrying after stream disconnect")
+        retry_completed = await _run_process(command, prompt="", workdir=workdir, invocation=invocation)
+        retry_session_id, retry_assistant_text, retry_detail = _parse_claude_stream(
+            stdout=retry_completed.stdout or "",
+            stderr=retry_completed.stderr or "",
+            base_session_id=next_session_id,
+        )
+        completed = retry_completed
+        if retry_session_id:
+            next_session_id = retry_session_id
+        assistant_text = retry_assistant_text
+        latest_detail = retry_detail
+
+    body = assistant_text or latest_detail or "Claude finished without an assistant reply."
+    if cancelled:
+        body = f"Claude run stopped.\n\n{body}".strip()
+    if completed.returncode != 0:
+        body = f"Claude failed (code {completed.returncode}).\n\n{body}".strip()
+
+    footer = f"project: {project_label}\nprovider: claude\nmodel: {model}"
+    return AgentRunResult(
+        provider="claude",
+        model=model,
+        final_text=_clip(f"{body}\n\n{footer}"),
+        thread_id=next_session_id,
         return_code=completed.returncode,
         elapsed_seconds=int(time.monotonic() - started),
         cancelled=cancelled,

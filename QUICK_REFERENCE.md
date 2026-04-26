@@ -5,9 +5,9 @@
 ## 1) 開機後先做這 5 件事
 
 1. `/status`
-2. `/provider codex`
+2. `/provider claude`
 3. `/models`
-4. `/model gpt-5.4`
+4. `/model claude-sonnet-4-6`
 5. `/project robot`
 
 ## 2) 最常用 12 個指令

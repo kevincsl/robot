@@ -9,6 +9,8 @@ Windows:
 ```powershell
 bootstrap_robot.bat
 start_robot.bat
+start_robot_bg.bat
+shutdown_robot.bat
 ```
 
 Linux/macOS:
@@ -20,13 +22,15 @@ Linux/macOS:
 
 Start script behavior:
 
-- `start_robot.bat` runs `%CD%\.venv\Scripts\teleapp.exe` with explicit `--python`.
-- `start_robot.sh` runs `teleapp robot.py --no-hot-reload` inside `.venv`.
+- `start_robot.bat` runs `%CD%\.venv\Scripts\python.exe -m teleapp` with explicit `--python`.
+- `start_robot_bg.bat` runs `start_robot.bat` in hidden background mode and writes logs to `robot.bg.stderr.log` / `robot.bg.stdout.log`.
+- `start_robot.sh` runs `.venv/bin/python -m teleapp robot.py --python .venv/bin/python` with default `TELEAPP_HOT_RELOAD=0`.
 - Both scripts clear proxy env vars and prepend repo root to `PYTHONPATH`.
 
 Stop local process:
 
 - Use your terminal stop signal, or platform process tools.
+- On Windows, prefer `shutdown_robot.bat` (or `killall.bat`, now mapped to shutdown script) to stop only this repo's robot processes.
 - Telegram-side restart command: `/restart` (managed by `teleapp` supervisor).
 - Avoid direct `python -m robot`/`robot` unless `--standalone` is explicitly intended for local debug.
 

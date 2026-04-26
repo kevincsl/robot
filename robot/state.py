@@ -20,7 +20,10 @@ class ChatStateStore:
         self._state = self._load()
 
     def _default_state(self) -> dict[str, Any]:
-        return {"chats": {}}
+        return {
+            "robots": {},  # per-robot namespaces: robots/{robot_id}/chats/{chat_id}
+            "address_book": {},  # shared across robots
+        }
 
     def _load(self) -> dict[str, Any]:
         path = self._settings.session_state_path
@@ -30,7 +33,31 @@ class ChatStateStore:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return self._default_state()
-        return data if isinstance(data, dict) else self._default_state()
+        if not isinstance(data, dict):
+            return self._default_state()
+        # Migration: if old format with "chats" at root, convert to per-robot
+        if "chats" in data and "robots" not in data:
+            data["robots"] = {self._settings.robot_id: {"chats": data.pop("chats")}}
+        if "robots" not in data:
+            data["robots"] = {}
+        if "address_book" not in data:
+            data["address_book"] = {}
+        return data
+
+    def _robot_chats(self) -> dict[str, Any]:
+        robots = self._state.setdefault("robots", {})
+        if not isinstance(robots, dict):
+            robots = {}
+            self._state["robots"] = robots
+        robot_namespace = robots.setdefault(self._settings.robot_id, {})
+        if not isinstance(robot_namespace, dict):
+            robot_namespace = {}
+            robots[self._settings.robot_id] = robot_namespace
+        chats = robot_namespace.setdefault("chats", {})
+        if not isinstance(chats, dict):
+            chats = {}
+            robot_namespace["chats"] = chats
+        return chats
 
     def _save(self) -> None:
         def _sanitize(value: Any) -> Any:
@@ -86,7 +113,7 @@ class ChatStateStore:
         return normalized
 
     def _bucket(self, chat_id: int) -> dict[str, Any]:
-        chats = self._state.setdefault("chats", {})
+        chats = self._robot_chats()
         bucket = chats.setdefault(str(chat_id), {})
         if not isinstance(bucket, dict):
             bucket = {}
@@ -490,7 +517,8 @@ class ChatStateStore:
             }
             self._save()
             current = self.get_contact(normalized_key)
-            assert current is not None
+            if current is None:
+                raise RuntimeError(f"Failed to retrieve contact after upsert: {normalized_key}")
             return current
 
     def remove_contact(self, key: str) -> bool:
@@ -538,7 +566,8 @@ class ChatStateStore:
             target["aliases"] = alias_items
             self._save()
             current = self.get_contact(normalized_key)
-            assert current is not None
+            if current is None:
+                raise RuntimeError(f"Failed to retrieve contact after alias add: {normalized_key}")
             return current
 
     def resolve_contacts(self, tokens: list[str]) -> dict[str, Any]:

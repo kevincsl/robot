@@ -103,9 +103,16 @@ def _ensure_daily_note(settings: Settings) -> Path:
     return path
 
 
+def _safe_note_path(vault_root: Path, relative_path: str) -> Path:
+    """Resolve and validate that relative_path is within vault_root."""
+    resolved = (vault_root / Path(relative_path)).resolve()
+    resolved.relative_to(vault_root)
+    return resolved
+
+
 def _create_note_direct(settings: Settings, relative_path: str, content: str | None = None, template: str | None = None) -> str:
     vault_root = _vault_root(settings)
-    path = vault_root / Path(relative_path)
+    path = _safe_note_path(vault_root, relative_path)
     if content is None and template is not None:
         content = _render_template(settings, template)
     _write_file(path, (content or "").rstrip() + "\n")
@@ -114,7 +121,7 @@ def _create_note_direct(settings: Settings, relative_path: str, content: str | N
 
 def _append_to_note_direct(settings: Settings, relative_path: str, content: str) -> None:
     vault_root = _vault_root(settings)
-    path = vault_root / Path(relative_path)
+    path = _safe_note_path(vault_root, relative_path)
     existing = _read_file(path).rstrip() if path.exists() else ""
     updated = f"{existing}\n{content.rstrip()}\n" if existing else f"{content.rstrip()}\n"
     _write_file(path, updated)
@@ -144,7 +151,7 @@ def _serialize_frontmatter(frontmatter: dict[str, str]) -> str:
 
 def _set_property_direct(settings: Settings, relative_path: str, name: str, value: str) -> None:
     vault_root = _vault_root(settings)
-    path = vault_root / Path(relative_path)
+    path = _safe_note_path(vault_root, relative_path)
     text = _read_file(path) if path.exists() else ""
     frontmatter, body = _parse_frontmatter(text)
     frontmatter[name] = value
@@ -1210,9 +1217,22 @@ def _is_valid_web_url(url: str) -> bool:
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
+def _is_blocked_ip(host: str) -> bool:
+    """Block private, loopback, and link-local addresses to prevent SSRF."""
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address(host)
+        return addr.is_private or addr.is_loopback or addr.is_link_local
+    except ValueError:
+        return False
+
+
 def fetch_webpage_text(url: str, *, timeout_seconds: float = 8.0, max_chars: int = 12000) -> tuple[str, str]:
     if not _is_valid_web_url(url):
         raise ValueError("Invalid URL. Only http/https URLs are supported.")
+    parsed = urlparse(url.strip())
+    if _is_blocked_ip(parsed.hostname or ""):
+        raise ValueError("URL resolves to a blocked address (private/loopback/link-local).")
 
     req = Request(
         url.strip(),
