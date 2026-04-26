@@ -30,31 +30,146 @@
 
 ## 啟動多個 Robot
 
-### Windows
+### 配置檔準備
 
-```bat
-# 啟動第一個 robot (使用 .env 中的 token)
-start_robot_multi.bat robot-1
-
-# 啟動第二個 robot (指定不同的 bot token)
-start_robot_multi.bat robot-2 YOUR_BOT_TOKEN_2
-
-# 啟動第三個 robot
-start_robot_multi.bat robot-3 YOUR_BOT_TOKEN_3
-```
-
-### Linux/macOS
+每個 robot 需要獨立的配置檔：
 
 ```bash
-# 啟動第一個 robot
-./start_robot_multi.sh robot-1
-
-# 啟動第二個 robot (指定不同的 bot token)
-./start_robot_multi.sh robot-2 YOUR_BOT_TOKEN_2
-
-# 啟動第三個 robot
-./start_robot_multi.sh robot-3 YOUR_BOT_TOKEN_3
+# 複製範例配置檔
+copy .env.robot1.example .env.robot1
+copy .env.robot2.example .env.robot2
+copy .env.robot3.example .env.robot3
 ```
+
+編輯每個配置檔，至少設定：
+- `ROBOT_ID` - robot 識別碼（如 robot-1, robot-2, robot-3）
+- `TELEAPP_TOKEN` - 該 robot 專用的 Telegram bot token
+- `TELEAPP_ALLOWED_USER_ID` - 允許的使用者 ID
+- 其他 provider 和 model 設定
+
+### 啟動方式
+
+使用統一的 `start_robot` 腳本，支援三種模式：
+
+#### 1. 啟動單一 Robot
+
+Windows:
+```bat
+start_robot.bat robot1   # 讀取 .env.robot1
+start_robot.bat robot2   # 讀取 .env.robot2
+start_robot.bat mybot    # 讀取 .env.mybot
+```
+
+Linux/macOS:
+```bash
+./start_robot.sh robot1
+./start_robot.sh robot2
+./start_robot.sh mybot
+```
+
+#### 2. 啟動所有 Robot（背景執行）
+
+Windows:
+```bat
+start_robot.bat all      # 自動掃描並在背景啟動所有 .env.robot* 配置
+# 或使用快捷腳本
+start_all.bat
+```
+
+Linux/macOS:
+```bash
+./start_robot.sh all     # 自動掃描並在背景啟動所有 .env.robot* 配置
+# 或使用快捷腳本
+./start_all.sh
+```
+
+這會自動掃描所有 `.env.robot*` 檔案（排除 `.example` 檔案），並在背景程序中啟動每個 robot。所有輸出會記錄到 `.robot_state/<robot_id>.log`。
+
+#### 3. 查看可用配置
+
+Windows:
+```bat
+start_robot.bat          # 無參數時顯示說明和可用配置
+```
+
+Linux/macOS:
+```bash
+./start_robot.sh         # 無參數時顯示說明和可用配置
+```
+
+### 擴展性
+
+這個設計支援任意數量的 robot：
+- 需要 5 個 robot？建立 `.env.robot1` 到 `.env.robot5`
+- 需要 10 個？建立 `.env.robot1` 到 `.env.robot10`
+- 配置檔可以任意命名：`.env.prod`、`.env.dev`、`.env.backup` 等
+
+**安全提示**: 所有敏感資訊（bot token、API keys）都存放在配置檔中，不透過命令列參數傳遞，避免在 process list 或 shell history 中洩漏。
+
+## Robot 管理工具
+
+### 查看運行狀態
+
+Windows:
+```bat
+manage_robots.bat status
+```
+
+Linux/macOS:
+```bash
+./manage_robots.sh status
+```
+
+顯示所有運行中的 robot 程序和狀態檔案。
+
+### 停止特定 Robot
+
+Windows:
+```bat
+manage_robots.bat stop robot1
+```
+
+Linux/macOS:
+```bash
+./manage_robots.sh stop robot1
+```
+
+### 停止所有 Robot
+
+Windows:
+```bat
+manage_robots.bat stopall
+# 或使用快捷腳本
+stop_all.bat
+```
+
+Linux/macOS:
+```bash
+./manage_robots.sh stopall
+# 或使用快捷腳本
+./stop_all.sh
+```
+
+### 查看 Robot 日誌
+
+Windows:
+```bat
+manage_robots.bat logs robot1
+```
+
+Linux/macOS:
+```bash
+./manage_robots.sh logs robot1
+```
+
+顯示特定 robot 的最近日誌（最後 100 行）。
+
+### 快捷腳本
+
+為了方便使用，提供了以下快捷腳本：
+
+- `start_all.bat` / `start_all.sh` - 啟動所有 robot
+- `stop_all.bat` / `stop_all.sh` - 停止所有 robot
 
 ## State 檔案結構
 
@@ -173,10 +288,11 @@ coordinator.cleanup_old_messages(max_age_seconds=3600)
 
 ## 注意事項
 
-1. **Bot Token**: 每個 robot 需要不同的 Telegram bot token
-2. **檔案鎖**: 原有的單實例鎖 (`robot.lock`) 仍然存在，但現在是針對每個 bot token
-3. **State 隔離**: 每個 robot 的 chat state 完全獨立
-4. **Address Book**: 通訊錄在所有 robot 間共享
+1. **Bot Token**: 每個 robot 需要不同的 Telegram bot token，設定在各自的 `.env.robot{N}` 檔案中
+2. **配置檔安全**: `.env.robot*` 檔案包含敏感資訊，已加入 `.gitignore`，請勿提交到版本控制
+3. **檔案鎖**: 原有的單實例鎖 (`robot.lock`) 仍然存在，但現在是針對每個 bot token
+4. **State 隔離**: 每個 robot 的 chat state 完全獨立
+5. **Address Book**: 通訊錄在所有 robot 間共享
 
 ## 向後相容
 
