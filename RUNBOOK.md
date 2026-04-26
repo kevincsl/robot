@@ -4,13 +4,15 @@ Operational runbook for `robot`.
 
 ## 1) Start / Stop
 
+### Single Robot
+
 Windows:
 
 ```powershell
 bootstrap_robot.bat
-start_robot.bat
-start_robot_bg.bat
-shutdown_robot.bat
+start_robot.bat              # Foreground
+start_robot_bg.bat           # Background (hidden window)
+shutdown_robot.bat           # Stop background robot
 ```
 
 Linux/macOS:
@@ -20,19 +22,54 @@ Linux/macOS:
 ./start_robot.sh
 ```
 
+### Multiple Robots
+
+Windows:
+
+```bat
+# Start specific robot with config
+start_robot.bat robot1
+
+# Start all robots in background
+start_all.bat
+# or
+start_robot.bat all
+
+# Manage running robots
+manage_robots.bat status      # Check all running robots
+manage_robots.bat stop robot1 # Stop specific robot
+manage_robots.bat stopall     # Stop all robots
+manage_robots.bat logs robot1 # View robot logs
+```
+
+Linux/macOS:
+
+```bash
+./start_robot.sh robot1       # Start specific robot
+./start_all.sh                # Start all robots in background
+./manage_robots.sh status     # Check running robots
+./manage_robots.sh stop robot1
+./manage_robots.sh stopall
+./manage_robots.sh logs robot1
+```
+
 Start script behavior:
 
 - `start_robot.bat` runs `%CD%\.venv\Scripts\python.exe -m teleapp` with explicit `--python`.
-- `start_robot_bg.bat` runs `start_robot.bat` in hidden background mode and writes logs to `robot.bg.stderr.log` / `robot.bg.stdout.log`.
+- `start_robot.bat <config>` loads `.env.<config>` and starts that robot instance.
+- `start_robot.bat all` scans all `.env.robot*` files and starts each in background with logs to `.robot_state/<config>.log`.
+- `start_robot_bg.bat` runs single robot in hidden background mode with logs to `robot.bg.stderr.log` / `robot.bg.stdout.log`.
 - `start_robot.sh` runs `.venv/bin/python -m teleapp robot.py --python .venv/bin/python` with default `TELEAPP_HOT_RELOAD=0`.
 - Both scripts clear proxy env vars and prepend repo root to `PYTHONPATH`.
 
 Stop local process:
 
-- Use your terminal stop signal, or platform process tools.
-- On Windows, prefer `shutdown_robot.bat` (or `killall.bat`, now mapped to shutdown script) to stop only this repo's robot processes.
+- **Single robot**: Use terminal stop signal, or `shutdown_robot.bat` on Windows.
+- **Multi-robot**: Use `manage_robots.bat stopall` or `manage_robots.bat stop <config>`.
 - Telegram-side restart command: `/restart` (managed by `teleapp` supervisor).
 - Avoid direct `python -m robot`/`robot` unless `--standalone` is explicitly intended for local debug.
+
+**Note**: Config name (e.g., `robot1`) is used for startup and log files. `ROBOT_ID` inside the config is used for runtime state files and Telegram commands.
 
 ## 2) Basic Health Check
 
@@ -43,6 +80,11 @@ In Telegram:
 - `/queue`
 - `/agentstatus`
 - `/schedules`
+
+For multi-robot setups:
+
+- `/robots` - list all active robots
+- `/robotstatus <robot_id>` - detailed status for specific robot
 
 Expected healthy signs:
 

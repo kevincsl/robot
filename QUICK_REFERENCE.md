@@ -25,6 +25,11 @@
 - `/brainsearch <query>`
 - `/brainbatchauto [limit]`
 
+### 多 Robot 指令
+
+- `/robots` - 列出所有活躍的 robot
+- `/robotstatus <robot_id>` - 查看特定 robot 狀態
+
 ## 3) Brain 快速流程
 
 1. 收集想法：`/braininbox 今天要整理租屋資料`
@@ -39,6 +44,20 @@
 - 清空佇列：`/clearqueue`
 - 緊急清理：`/panic`
 - 重啟提示：`/restart`
+
+### 多 Robot 管理（Shell）
+
+```bat
+# Windows
+manage_robots.bat status      # 查看運行中的 robot
+manage_robots.bat stopall     # 停止所有 robot
+manage_robots.bat logs robot1 # 查看日誌
+
+# Linux/macOS
+./manage_robots.sh status
+./manage_robots.sh stopall
+./manage_robots.sh logs robot1
+```
 
 ## 5) 常見錯誤
 

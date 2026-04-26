@@ -51,16 +51,12 @@ Fill at least:
 
 3. Start bot
 
+### Single Robot
+
 Windows:
 
 ```bat
 start_robot.bat
-```
-
-Background mode (no interactive CMD window):
-
-```bat
-start_robot_bg.bat
 ```
 
 Linux/macOS:
@@ -69,11 +65,44 @@ Linux/macOS:
 ./start_robot.sh
 ```
 
-Shutdown on Windows:
+### Multiple Robots (Background)
 
-```bat
-shutdown_robot.bat
+For running multiple robot instances with different configs:
+
+1. Create config files:
+```bash
+copy .env.example .env.robot1
+copy .env.example .env.robot2
 ```
+
+2. Edit each config file and set unique:
+   - `ROBOT_ID` (e.g., `robot-claude`, `robot-codex`)
+   - `TELEAPP_TOKEN` (different bot token for each)
+   - Provider/model settings
+
+3. Start single robot:
+```bat
+start_robot.bat robot1
+```
+
+4. Start all robots in background:
+```bat
+start_all.bat
+# or
+start_robot.bat all
+```
+
+5. Manage running robots:
+```bat
+manage_robots.bat status      # Check running robots
+manage_robots.bat stop robot1 # Stop specific robot
+manage_robots.bat stopall     # Stop all robots
+manage_robots.bat logs robot1 # View robot logs
+```
+
+See [MULTI_ROBOT.md](./MULTI_ROBOT.md) for detailed multi-robot setup.
+
+**Note**: Config name (e.g., `robot1`) is used for startup and log files. `ROBOT_ID` inside the config is used for runtime state files.
 
 ## Common Commands
 
@@ -86,6 +115,13 @@ shutdown_robot.bat
 - `/queue`
 - `/restart`
 - `/brain`, `/brainsearch`, `/braininbox`, `/brainschedule`
+
+### Multi-Robot Commands
+
+When running multiple robots:
+
+- `/robots`: list all active robots and their status
+- `/robotstatus <robot_id>`: show detailed status for specific robot
 
 ## Important Env Vars
 
@@ -117,10 +153,11 @@ Security-related flags (default off):
 ## Hot Reload / Conflict Notes
 
 - Use `start_robot.bat` / `start_robot.sh` as primary entrypoint.
-- If you want a background daemon style start on Windows, use `start_robot_bg.bat`.
+- For single-robot background mode on Windows, use `start_robot_bg.bat` / `shutdown_robot.bat`.
+- For multi-robot background mode, use `start_robot.bat all` and `manage_robots.bat`.
 - Default mode is `TELEAPP_HOT_RELOAD=0` (stable mode, fewer process layers/conflicts).
 - If needed, temporarily enable hot reload with `set TELEAPP_HOT_RELOAD=1` before startup.
-- The app has Telegram polling conflict handling and a single-instance lock in `.robot_state/robot.lock`.
+- Each robot instance uses a single-instance lock based on its bot token to prevent polling conflicts.
 - If you still see conflict crashes, ensure only one process is using the same bot token.
 
 ## Google Calendar Sync

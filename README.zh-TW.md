@@ -51,6 +51,8 @@ copy .env.example .env
 
 3. 啟動 bot
 
+### 單一 Robot
+
 Windows:
 
 ```bat
@@ -63,6 +65,45 @@ Linux/macOS:
 ./start_robot.sh
 ```
 
+### 多個 Robot（背景執行）
+
+若要同時執行多個不同配置的 robot：
+
+1. 建立配置檔：
+```bash
+copy .env.example .env.robot1
+copy .env.example .env.robot2
+```
+
+2. 編輯每個配置檔，設定不同的：
+   - `ROBOT_ID`（例如 `robot-claude`、`robot-codex`）
+   - `TELEAPP_TOKEN`（每個 robot 使用不同的 bot token）
+   - Provider/model 設定
+
+3. 啟動單一 robot：
+```bat
+start_robot.bat robot1
+```
+
+4. 背景啟動所有 robot：
+```bat
+start_all.bat
+# 或
+start_robot.bat all
+```
+
+5. 管理運行中的 robot：
+```bat
+manage_robots.bat status      # 查看運行中的 robot
+manage_robots.bat stop robot1 # 停止特定 robot
+manage_robots.bat stopall     # 停止所有 robot
+manage_robots.bat logs robot1 # 查看 robot 日誌
+```
+
+詳細的多 robot 設定請參考 [MULTI_ROBOT.md](./MULTI_ROBOT.md)。
+
+**注意**：配置名稱（如 `robot1`）用於啟動和日誌檔案。配置檔內的 `ROBOT_ID` 用於執行時的狀態檔案。
+
 ## 常用指令
 
 - `/help`：指令總覽
@@ -74,6 +115,13 @@ Linux/macOS:
 - `/queue`
 - `/restart`
 - `/brain`、`/brainsearch`、`/braininbox`、`/brainschedule`
+
+### 多 Robot 指令
+
+當執行多個 robot 時：
+
+- `/robots`：列出所有活躍的 robot 及其狀態
+- `/robotstatus <robot_id>`：顯示特定 robot 的詳細狀態
 
 ## 重要環境變數
 
@@ -105,8 +153,11 @@ Linux/macOS:
 ## Hot Reload / 衝突備註
 
 - 主要入口建議使用 `start_robot.bat` / `start_robot.sh`。
+- 單 robot 背景模式（Windows）：使用 `start_robot_bg.bat` / `shutdown_robot.bat`。
+- 多 robot 背景模式：使用 `start_robot.bat all` 與 `manage_robots.bat`。
 - `start_robot.bat` 預設 `TELEAPP_WATCH_MODE=app-file-only`，可降低重啟衝突。
-- 應用程式有 Telegram polling conflict 處理，並使用 `.robot_state/robot.lock` 做單實例保護。
+- 預設模式為 `TELEAPP_HOT_RELOAD=0`（穩定模式，較少程序層級衝突）。
+- 每個 robot 實例使用基於其 bot token 的單實例鎖來防止 polling 衝突。
 - 若仍發生 conflict crash，請確認同一 token 只有一個 bot 程序在跑。
 
 ## Google Calendar 同步

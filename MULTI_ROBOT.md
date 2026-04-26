@@ -290,9 +290,13 @@ coordinator.cleanup_old_messages(max_age_seconds=3600)
 
 1. **Bot Token**: 每個 robot 需要不同的 Telegram bot token，設定在各自的 `.env.robot{N}` 檔案中
 2. **配置檔安全**: `.env.robot*` 檔案包含敏感資訊，已加入 `.gitignore`，請勿提交到版本控制
-3. **檔案鎖**: 原有的單實例鎖 (`robot.lock`) 仍然存在，但現在是針對每個 bot token
-4. **State 隔離**: 每個 robot 的 chat state 完全獨立
-5. **Address Book**: 通訊錄在所有 robot 間共享
+3. **Config Name vs ROBOT_ID**: 
+   - **Config name**（如 `robot1`）用於啟動腳本和日誌檔案（`.robot_state/robot1.log`）
+   - **ROBOT_ID**（配置檔內設定）用於執行時狀態檔案（`.robot_state/robot_state_<ROBOT_ID>.json`）和 Telegram 指令
+   - 管理工具 `manage_robots` 使用 config name 來操作
+4. **單實例鎖**: 目前實作使用固定路徑 `.robot_state/robot.lock`。多 robot 並行執行依賴不同的 bot token 來區分實例。若遇到鎖衝突，請確認每個 robot 使用不同的 `TELEAPP_TOKEN`。
+5. **State 隔離**: 每個 robot 的 chat state 完全獨立
+6. **Address Book**: 通訊錄在所有 robot 間共享
 
 ## 向後相容
 

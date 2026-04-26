@@ -1,5 +1,9 @@
 # Multi-Robot Configuration Examples
 
+> **Note**: This document provides configuration examples and reference for multi-robot setups. For the recommended unified launcher approach, see [MULTI_ROBOT.md](./MULTI_ROBOT.md).
+>
+> The numbered scripts (`start_robot1.bat`, `start_robot2.bat`, etc.) shown here are convenience wrappers. The unified launcher (`start_robot.bat <config>`) is the current recommended approach for scalability.
+
 ## 設定檔方式啟動多個 Robot
 
 每個 robot 使用獨立的 `.env` 檔案，可以設定不同的 AI 模型、API URL 和其他參數。

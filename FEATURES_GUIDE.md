@@ -24,6 +24,31 @@
 - `/agentstatus`: agent 執行狀態
 - `/agentprofiles`: agent profile 資訊
 
+### 2.1.1 多 Robot 操作
+
+當執行多個 robot 實例時：
+
+- `/robots`: 列出所有活躍的 robot 及其狀態
+- `/robotstatus <robot_id>`: 顯示特定 robot 的詳細狀態
+
+Shell 管理工具（用於背景執行的多 robot）：
+
+```bat
+# Windows
+manage_robots.bat status      # 查看所有運行中的 robot
+manage_robots.bat stop robot1 # 停止特定 robot
+manage_robots.bat stopall     # 停止所有 robot
+manage_robots.bat logs robot1 # 查看 robot 日誌
+
+# Linux/macOS
+./manage_robots.sh status
+./manage_robots.sh stop robot1
+./manage_robots.sh stopall
+./manage_robots.sh logs robot1
+```
+
+詳細說明請參考 [MULTI_ROBOT.md](./MULTI_ROBOT.md)。
+
 ### 2.2 Workspace / Provider
 
 - `/provider [claude|codex|gemini]`
