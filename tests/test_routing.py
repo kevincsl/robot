@@ -1655,7 +1655,7 @@ class RoutingTests(unittest.TestCase):
     def test_project_flow_updates_state_from_numeric_choice(self) -> None:
         open_menu = self.loop.run_until_complete(
             handle_request(
-                MessageContext(chat_id=1, text="", command="menu:projects"),
+                MessageContext(chat_id=1, text="", command="menu:projects:discover"),
                 self.settings,
                 self.store,
                 self.agents,
@@ -1678,7 +1678,7 @@ class RoutingTests(unittest.TestCase):
     def test_project_flow_updates_state_from_inline_button_choice(self) -> None:
         open_menu = self.loop.run_until_complete(
             handle_request(
-                MessageContext(chat_id=1, text="", command="menu:projects"),
+                MessageContext(chat_id=1, text="", command="menu:projects:discover"),
                 self.settings,
                 self.store,
                 self.agents,
@@ -1700,6 +1700,19 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("Project updated.", applied)
         self.assertEqual(self.store.get_chat_state(1)["project_key"], project_button.data)
         self.assertIsNone(self.store.get_ui_flow(1))
+
+    def test_menu_projects_opens_management_panel(self) -> None:
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="menu:projects"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("Project management", body.text)
+        self.assertTrue(any(button.data == "menu:projects:list" for button in (body.buttons or [])))
 
     def test_doctor_command_returns_report(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/doctor", command="doctor"))

@@ -1003,7 +1003,7 @@ def _menu_text(chat_id: int, store: ChatStateStore) -> str:
             "- status",
             "- provider",
             "- model",
-            "- projects",
+            "- project management",
             "- cancel",
             "",
             "slash commands:",
@@ -1521,6 +1521,35 @@ def _projects_menu_response(chat_id: int, settings: Settings, store: ChatStateSt
     return ButtonResponse("\n".join(lines), buttons=buttons)
 
 
+def _project_management_menu_response(chat_id: int, settings: Settings, store: ChatStateStore) -> ButtonResponse:
+    state = store.get_chat_state(chat_id)
+    items, active_name = list_registered_projects(settings)
+    lines = [
+        "Project management",
+        f"Current context: {_project_display(state['project_name'], state['project_path'])}",
+        f"Registered projects: {len(items)}",
+        "",
+        "推薦流程：",
+        "1) /project register [name] <path>",
+        "2) /project use <name|key>",
+        "3) /project info <name|key>",
+        "",
+        "可用按鈕：List / Discover / Back",
+    ]
+    buttons: list[Button] = [
+        Button("List", "menu:projects:list"),
+        Button("Discover", "menu:projects:discover"),
+    ]
+    for item in items[:5]:
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        marker = " *" if name == active_name else ""
+        buttons.append(Button(f"Use {name}{marker}", f"menu:projects:use:{name}"))
+    buttons.append(Button("Back", "menu:open"))
+    return ButtonResponse("\n".join(lines), buttons=buttons)
+
+
 def _projects_list_response(chat_id: int, settings: Settings, store: ChatStateStore) -> str:
     state = store.get_chat_state(chat_id)
     workspaces = discover_project_workspaces(settings)
@@ -1832,7 +1861,22 @@ async def _handle_menu_action(
         )
 
     if command == "menu:projects":
+        store.clear_ui_flow(chat_id)
+        return _project_management_menu_response(chat_id, settings, store)
+
+    if command == "menu:projects:list":
+        store.clear_ui_flow(chat_id)
+        return _handle_project_command(chat_id, "list", settings, store)
+
+    if command == "menu:projects:discover":
         return _projects_menu_response(chat_id, settings, store)
+
+    if command.startswith("menu:projects:use:"):
+        name = command.removeprefix("menu:projects:use:").strip()
+        if not name:
+            return "Empty project selection."
+        store.clear_ui_flow(chat_id)
+        return _handle_project_command(chat_id, f"use {name}", settings, store)
 
     return f"Unknown menu action: {command}"
 
