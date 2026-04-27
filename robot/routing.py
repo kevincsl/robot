@@ -874,7 +874,8 @@ def _help_text() -> str:
             "workspace:",
             "/provider [claude|codex|gemini]",
             "/model [name]  /models",
-            "/projects  /project [key-or-label]",
+            "/project [key-or-label]  (/projects same behavior)",
+            "/projects list",
             "",
             "email (sendmail):",
             "/mailcli <sendmail-cli-args>",
@@ -925,7 +926,8 @@ def _quick_text() -> str:
             "- /menu (主選單)",
             "- /provider [claude|codex|gemini]",
             "- /model [name] /models",
-            "- /projects /project [key-or-label]",
+            "- /project [key-or-label] (/projects same)",
+            "- /projects list",
             "",
             "daily commands:",
             "- /status",
@@ -960,7 +962,7 @@ def _guide_text() -> str:
             "- /help",
             "- /menu",
             "- /contact list /contact add <key> <email> <name>",
-            "- /provider /model /projects /project",
+            "- /provider /model /project (/projects same)",
             "- /brain",
             "- /brainweb <url>",
             "- /brainbatchauto [limit]",
@@ -990,7 +992,7 @@ def _menu_text(chat_id: int, store: ChatStateStore) -> str:
             "- /status",
             "- /provider claude",
             "- /model gpt-5.4",
-            "- /project <key-or-label>",
+            "- /project <key-or-label>  (/projects same)",
             "",
             "其他自然語言訊息不會被選單吃掉，會直接送進 AI。",
         ]
@@ -1500,6 +1502,33 @@ def _projects_menu_response(chat_id: int, settings: Settings, store: ChatStateSt
     return ButtonResponse("\n".join(lines), buttons=buttons)
 
 
+def _projects_list_response(chat_id: int, settings: Settings, store: ChatStateStore) -> str:
+    state = store.get_chat_state(chat_id)
+    workspaces = discover_project_workspaces(settings)
+    if not workspaces:
+        return "No projects discovered."
+
+    current_key = str(state.get("project_key") or "")
+    current_path = str(state.get("project_path") or "")
+    lines = [
+        f"Current project: {_project_display(state['project_name'], state['project_path'])}",
+        f"Available projects: {len(workspaces)}",
+    ]
+    for index, workspace in enumerate(workspaces, start=1):
+        marker = ""
+        if workspace.key == current_key or str(workspace.path) == current_path:
+            marker = "  *current"
+        lines.append(f"{index}. {workspace.label} | {workspace.key}{marker}")
+    lines.extend(
+        [
+            "",
+            "Use /project <key-or-label> or /projects <key-or-label> to switch.",
+            "Use /project (or /projects) to open chooser buttons.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _resolve_project_selection(settings: Settings, text: str):
     normalized = text.strip()
     if not normalized:
@@ -1515,6 +1544,28 @@ def _resolve_project_selection(settings: Settings, text: str):
             return workspaces[index - 1]
         return None
     return find_workspace(settings, normalized)
+
+
+def _handle_project_selection(chat_id: int, payload: str, settings: Settings, store: ChatStateStore) -> ButtonResponse | str:
+    normalized = payload.strip()
+    if not normalized:
+        return _projects_menu_response(chat_id, settings, store)
+    if normalized.lower() in {"list", "ls"}:
+        store.clear_ui_flow(chat_id)
+        return _projects_list_response(chat_id, settings, store)
+
+    workspace = _resolve_project_selection(settings, normalized)
+    if workspace is None:
+        return (
+            f"Project not found: {normalized}\n"
+            "Use /project (or /projects) to open chooser, or /projects list for indexed list."
+        )
+
+    next_state = store.set_project(chat_id, workspace.key, workspace.label, str(workspace.path))
+    store.clear_ui_flow(chat_id)
+    return (
+        f"Project updated.\nproject: {_project_display(next_state['project_name'], next_state['project_path'])}\npath: {next_state['project_path']}"
+    )
 
 
 async def _handle_menu_action(
@@ -1580,7 +1631,7 @@ async def _handle_menu_action(
         if workspace is None:
             return (
                 f"Project not found: {project_ref}\n"
-                "Use /project to open the project chooser, or /projects to list available workspaces."
+                "Use /project (or /projects) to open chooser, or /projects list for indexed list."
             )
         next_state = store.set_project(chat_id, workspace.key, workspace.label, str(workspace.path))
         store.clear_ui_flow(chat_id)
@@ -2113,25 +2164,8 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         next_state = store.set_model(chat_id, selected_model)
         return f"Model updated.\nprovider: {next_state['provider']}\nmodel: {next_state['model']}"
 
-    if request.command == "projects":
-        workspaces = discover_project_workspaces(settings)
-        lines = ["Available projects:"]
-        for workspace in workspaces:
-            lines.append(f"- {workspace.label} | {workspace.key}")
-        return "\n".join(lines) if workspaces else "No projects discovered."
-
-    if request.command == "project":
-        payload = request.payload.strip()
-        if not payload:
-            return _projects_menu_response(chat_id, settings, store)
-        workspace = _resolve_project_selection(settings, payload)
-        if workspace is None:
-            return (
-                f"Project not found: {payload}\n"
-                "Use /project to open the project chooser, or /projects to list available workspaces."
-            )
-        next_state = store.set_project(chat_id, workspace.key, workspace.label, str(workspace.path))
-        return f"Project updated.\nproject: {_project_display(next_state['project_name'], next_state['project_path'])}\npath: {next_state['project_path']}"
+    if request.command in {"project", "projects"}:
+        return _handle_project_selection(chat_id, request.payload, settings, store)
 
     if request.command == "queue":
         return agents.queue_overview(chat_id)

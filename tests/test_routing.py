@@ -152,7 +152,7 @@ class RoutingTests(unittest.TestCase):
         body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
         self.assertIn("features guide", body)
         self.assertIn("FEATURES_GUIDE.md", body)
-        self.assertIn("/provider /model /projects /project", body)
+        self.assertIn("/provider /model /project (/projects same)", body)
 
     def test_status_shows_risk_mode_when_dangerous_flags_enabled(self) -> None:
         object.__setattr__(self.settings, "codex_bypass_approvals_and_sandbox", True)
@@ -1589,6 +1589,29 @@ class RoutingTests(unittest.TestCase):
         flow = self.store.get_ui_flow(1)
         self.assertIsInstance(flow, dict)
         self.assertEqual(flow.get("kind"), "await_project")
+
+    def test_projects_command_without_payload_opens_chooser(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/projects", command="projects"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("Available projects:", body.text)
+        flow = self.store.get_ui_flow(1)
+        self.assertIsInstance(flow, dict)
+        self.assertEqual(flow.get("kind"), "await_project")
+
+    def test_projects_list_returns_indexed_text_list(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/projects list", command="projects"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIsInstance(body, str)
+        self.assertIn("Available projects:", body)
+        self.assertIn("1.", body)
+
+    def test_projects_command_with_payload_updates_state(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/projects 1", command="projects"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("Project updated.", body)
+        state = self.store.get_chat_state(1)
+        self.assertTrue(str(state["project_key"]).startswith("proj-"))
 
     def test_project_flow_updates_state_from_numeric_choice(self) -> None:
         open_menu = self.loop.run_until_complete(
