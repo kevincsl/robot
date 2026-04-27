@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 
-ENV_PATH = Path(".env")
+ROBOTS_DIR = Path(".robots")
+ENV_PATH = ROBOTS_DIR / "default.env"
 ENV_EXAMPLE_PATH = Path(".env.example")
 
 TOKEN_KEY = "TELEAPP_TOKEN"
@@ -66,9 +67,10 @@ def _write_env(path: Path, original_lines: list[str], updates: dict[str, str]) -
 
 
 def main() -> None:
+    ROBOTS_DIR.mkdir(parents=True, exist_ok=True)
     if not ENV_PATH.exists() and ENV_EXAMPLE_PATH.exists():
         ENV_PATH.write_text(ENV_EXAMPLE_PATH.read_text(encoding="utf-8"), encoding="utf-8")
-        print("Created .env from .env.example")
+        print("Created .robots/default.env from .env.example")
 
     original_lines, env_map = _read_env(ENV_PATH)
 
@@ -79,7 +81,7 @@ def main() -> None:
     }
 
     _write_env(ENV_PATH, original_lines, updates)
-    print("Updated .env with TELEAPP settings.")
+    print("Updated .robots/default.env with TELEAPP settings.")
 
 
 if __name__ == "__main__":

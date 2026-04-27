@@ -265,9 +265,28 @@ def build_launch_spec(root: Path, config: RobotConfigRef) -> LaunchSpec:
 def _is_pid_running(pid: int | None) -> bool:
     if not pid or pid <= 0:
         return False
+    if os.name == "nt":
+        try:
+            completed = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=3,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if completed.returncode != 0:
+            return False
+        output = (completed.stdout or "").strip()
+        if not output:
+            return False
+        if output.startswith("INFO: No tasks are running"):
+            return False
+        return str(pid) in output
     try:
         os.kill(pid, 0)
-    except OSError:
+    except (OSError, SystemError):
         return False
     return True
 

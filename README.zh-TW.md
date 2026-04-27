@@ -31,9 +31,8 @@
 1. 安裝依賴
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -e .
+bootstrap_robot.bat
+# 或：./bootstrap_robot.sh
 ```
 
 2. 建立設定檔
@@ -49,6 +48,8 @@ copy .env.example .robots\default.env
 - `TELEAPP_ALLOWED_USER_ID`
 - `ROBOT_DEFAULT_PROVIDER`
 - `ROBOT_DEFAULT_MODEL`
+
+`bootstrap_robot.*` 也會把 `robotctl` shim 安裝到 `~/.local/bin`，因此在 PowerShell 與已包含該路徑的 shell 中可直接執行 `robotctl start all`。
 
 3. 啟動 bot
 

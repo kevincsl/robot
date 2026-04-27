@@ -5,9 +5,10 @@ import tempfile
 import unittest
 from io import StringIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from robot.control import (
+    _is_pid_running,
     _log_file,
     _migrate_legacy_root_logs,
     build_launch_spec,
@@ -127,6 +128,11 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(len(moved), 1)
         self.assertFalse(source.exists())
         self.assertTrue((self.root / ".robot_state" / "logs" / "legacy-root" / "robot.stderr.log").exists())
+
+    def test_is_pid_running_uses_tasklist_on_windows(self) -> None:
+        completed = Mock(returncode=0, stdout='"python.exe","1234","Console","1","10,000 K"\n')
+        with patch("robot.control.os.name", "nt"), patch("robot.control.subprocess.run", return_value=completed):
+            self.assertTrue(_is_pid_running(1234))
 
 
 if __name__ == "__main__":

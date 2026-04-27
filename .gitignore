@@ -3,6 +3,7 @@ __pycache__/
 .env
 .robots/*.env
 .venv/
+.claude/
 .robot_state/
 *.log
 *.egg-info/

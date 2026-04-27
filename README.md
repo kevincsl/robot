@@ -31,9 +31,8 @@ English | [Traditional Chinese](./README.zh-TW.md)
 1. Install dependencies
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -e .
+bootstrap_robot.bat
+# or: ./bootstrap_robot.sh
 ```
 
 2. Configure env file
@@ -49,6 +48,8 @@ Fill at least:
 - `TELEAPP_ALLOWED_USER_ID`
 - `ROBOT_DEFAULT_PROVIDER`
 - `ROBOT_DEFAULT_MODEL`
+
+`bootstrap_robot.*` also installs a `robotctl` shim into `~/.local/bin`, so `robotctl start all` works directly in PowerShell and shells where that path is already on `PATH`.
 
 3. Start bot
 
