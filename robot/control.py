@@ -703,7 +703,7 @@ def create_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(
         dest="command",
-        metavar="{help,list,show,add,edit,delete,run,start,stop,restart,status,logs}",
+        metavar="{help,list,show,add,edit,delete,run,start,stop,restart,status,logs,doctor}",
     )
 
     help_parser = subparsers.add_parser(
@@ -836,6 +836,15 @@ def create_parser() -> argparse.ArgumentParser:
     logs_parser.add_argument("config")
     logs_parser.add_argument("-n", type=int, default=100)
     logs_parser.add_argument("-f", "--follow", action="store_true")
+
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        add_help=False,
+        prefix_chars="-/",
+        help="Run health checks for robot configs.",
+    )
+    _add_help_flags(doctor_parser)
+    doctor_parser.add_argument("target", nargs="?", default="all")
 
     supervise_parser = subparsers.add_parser(
         "_supervise",
@@ -1285,6 +1294,71 @@ def cmd_logs(_parser: argparse.ArgumentParser, args: argparse.Namespace, root: P
             return 0
 
 
+def _doctor_checks(root: Path, config: RobotConfigRef) -> tuple[list[str], list[str]]:
+    infos: list[str] = []
+    issues: list[str] = []
+    raw = config.env_file.read_text(encoding="utf-8", errors="replace")
+    values = _env_values(config.env_file)
+    state = _read_state(_state_file(root, config.name))
+
+    infos.append(f"env={config.env_file}")
+    if raw.startswith("\ufeff"):
+        infos.append("env_bom=utf8-sig (supported)")
+    else:
+        infos.append("env_bom=none")
+
+    if (values.get("TELEAPP_TOKEN") or "").strip():
+        infos.append("token=ok")
+    else:
+        issues.append("TELEAPP_TOKEN missing")
+
+    python_path = _default_python_path(root)
+    if python_path.exists():
+        infos.append(f"venv_python=ok ({python_path})")
+    else:
+        issues.append(f"venv_python missing ({python_path})")
+
+    log_path = _log_file(root, config.name)
+    infos.append(f"log={log_path}")
+
+    if state:
+        effective = _effective_state_name(state)
+        infos.append(f"state={effective}")
+        supervisor_pid = int(state.get("supervisor_pid") or 0)
+        child_pid = int(state.get("child_pid") or 0)
+        if supervisor_pid and not _is_pid_running(supervisor_pid):
+            issues.append(f"supervisor_pid dead ({supervisor_pid})")
+        if child_pid and not _is_pid_running(child_pid):
+            issues.append(f"child_pid dead ({child_pid})")
+    else:
+        infos.append("state=none")
+
+    stop_path = _stop_file(root, config.name)
+    if stop_path.exists():
+        issues.append(f"stop flag exists ({stop_path})")
+
+    return infos, issues
+
+
+def cmd_doctor(_parser: argparse.ArgumentParser, args: argparse.Namespace, root: Path) -> int:
+    root = _repo_root(root)
+    targets = _select_targets(root, args.target)
+    has_issue = False
+    for index, config in enumerate(targets):
+        infos, issues = _doctor_checks(root, config)
+        if index:
+            print()
+        status = "ISSUE" if issues else "OK"
+        print(f"{config.name}: {status}")
+        for info in infos:
+            print(f"  - {info}")
+        for issue in issues:
+            print(f"  - issue: {issue}")
+        if issues:
+            has_issue = True
+    return 1 if has_issue else 0
+
+
 def cmd_supervise(_parser: argparse.ArgumentParser, args: argparse.Namespace, root: Path) -> int:
     return _run_supervisor(
         root,
@@ -1309,6 +1383,7 @@ COMMAND_HANDLERS = {
     "restart": cmd_restart,
     "status": cmd_status,
     "logs": cmd_logs,
+    "doctor": cmd_doctor,
     "_supervise": cmd_supervise,
 }
 

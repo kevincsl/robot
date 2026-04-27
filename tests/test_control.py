@@ -13,6 +13,7 @@ from robot.control import (
     _log_file,
     _migrate_legacy_root_logs,
     build_launch_spec,
+    cmd_doctor,
     create_parser,
     discover_configs,
     resolve_config,
@@ -122,6 +123,12 @@ class ControlTests(unittest.TestCase):
             parser.parse_args(["/h"])
         self.assertEqual(raised.exception.code, 0)
 
+    def test_parser_supports_doctor_command(self) -> None:
+        parser = create_parser()
+        args = parser.parse_args(["doctor"])
+        self.assertEqual(args.command, "doctor")
+        self.assertEqual(args.target, "all")
+
     def test_log_file_is_under_robot_state_logs(self) -> None:
         path = _log_file(self.root, "robot1")
         self.assertEqual(path, self.root / ".robot_state" / "logs" / "robot1.log")
@@ -140,6 +147,18 @@ class ControlTests(unittest.TestCase):
         completed = Mock(returncode=0, stdout='"python.exe","1234","Console","1","10,000 K"\n')
         with patch("robot.control.os.name", "nt"), patch("robot.control.subprocess.run", return_value=completed):
             self.assertTrue(_is_pid_running(1234))
+
+    def test_doctor_reports_issue_for_missing_token(self) -> None:
+        bad_path = self.root / ".robots" / "bad.env"
+        bad_path.write_text("TELEAPP_ALLOWED_USER_ID=9\n", encoding="utf-8")
+        args = type("Args", (), {"target": "bad"})()
+
+        with patch("sys.stdout", new_callable=StringIO) as output:
+            code = cmd_doctor(create_parser(), args, self.root)
+
+        self.assertEqual(code, 1)
+        self.assertIn("bad: ISSUE", output.getvalue())
+        self.assertIn("TELEAPP_TOKEN missing", output.getvalue())
 
 
 if __name__ == "__main__":
