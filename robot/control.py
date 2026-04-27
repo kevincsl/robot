@@ -135,12 +135,19 @@ def _read_state(path: Path) -> dict[str, Any]:
 
 def _write_state(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_suffix(path.suffix + ".tmp")
-    temp_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    temp_path.replace(path)
+    content = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+    temp_path = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
+    for attempt in range(8):
+        try:
+            temp_path.write_text(content, encoding="utf-8")
+            temp_path.replace(path)
+            return
+        except PermissionError:
+            if attempt >= 7:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+        finally:
+            temp_path.unlink(missing_ok=True)
 
 
 def _env_values(path: Path) -> dict[str, str]:
@@ -149,7 +156,10 @@ def _env_values(path: Path) -> dict[str, str]:
     for key, value in values.items():
         if key is None:
             continue
-        result[str(key)] = "" if value is None else str(value)
+        clean_key = str(key).lstrip("\ufeff").strip()
+        if not clean_key:
+            continue
+        result[clean_key] = "" if value is None else str(value)
     return result
 
 
@@ -539,6 +549,33 @@ def _spawn_background_supervisor(
         **kwargs,
     )
     return int(process.pid)
+
+
+def _wait_for_supervisor_boot(
+    root: Path,
+    config_name: str,
+    supervisor_pid: int,
+    *,
+    previous_updated_at: str = "",
+    timeout_seconds: float = 3.0,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + max(timeout_seconds, 0.0)
+    state_path = _state_file(root, config_name)
+    while time.monotonic() <= deadline:
+        state = _read_state(state_path)
+        current_updated_at = str(state.get("updated_at") or "")
+        if (
+            str(state.get("config_name") or "") == config_name
+            and current_updated_at
+            and current_updated_at != previous_updated_at
+        ):
+            return state
+        if int(state.get("supervisor_pid") or 0) == int(supervisor_pid):
+            return state
+        if not _is_pid_running(supervisor_pid):
+            return {}
+        time.sleep(0.2)
+    return {}
 
 
 def _request_stop(root: Path, config_name: str) -> None:
@@ -1117,8 +1154,17 @@ def cmd_run(_parser: argparse.ArgumentParser, args: argparse.Namespace, root: Pa
 def cmd_start(_parser: argparse.ArgumentParser, args: argparse.Namespace, root: Path) -> int:
     root = _repo_root(root)
     targets = _select_targets(root, args.target)
+    failed = False
     for config in targets:
+        try:
+            build_launch_spec(root, config)
+        except ControlError as exc:
+            failed = True
+            print(f"{config.name}: failed to start | {exc}")
+            continue
+
         state = _read_state(_state_file(root, config.name))
+        previous_updated_at = str(state.get("updated_at") or "")
         if state and _effective_state_name(state) in {"running", "starting", "stopping", "orphaned"}:
             if not args.force:
                 print(f"{config.name}: already running, skipped.")
@@ -1131,10 +1177,20 @@ def cmd_start(_parser: argparse.ArgumentParser, args: argparse.Namespace, root: 
             restart_delay=args.restart_delay,
             max_restarts=args.max_restarts,
         )
+        boot_state = _wait_for_supervisor_boot(
+            root,
+            config.name,
+            pid,
+            previous_updated_at=previous_updated_at,
+        )
+        if not boot_state and not _is_pid_running(pid):
+            failed = True
+            print(f"{config.name}: failed to start (supervisor exited early).")
+            continue
         print(
             f"{config.name}: started in background | pid={pid} | log={_log_file(root, config.name)}"
         )
-    return 0
+    return 1 if failed else 0
 
 
 def cmd_stop(_parser: argparse.ArgumentParser, args: argparse.Namespace, root: Path) -> int:

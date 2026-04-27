@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from robot.control import (
+    _env_values,
     _is_pid_running,
     _log_file,
     _migrate_legacy_root_logs,
@@ -108,6 +109,12 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(spec.env["HTTP_PROXY"], "")
         self.assertTrue(spec.env["PYTHONPATH"].startswith(str(self.root)))
         self.assertEqual(spec.command[1:4], ["-m", "teleapp", "robot.py"])
+
+    def test_env_values_supports_utf8_bom(self) -> None:
+        path = self.root / ".robots" / "bom.env"
+        path.write_text("TELEAPP_TOKEN=bom-token\n", encoding="utf-8-sig")
+        values = _env_values(path)
+        self.assertEqual(values.get("TELEAPP_TOKEN"), "bom-token")
 
     def test_parser_accepts_slash_h_help(self) -> None:
         parser = create_parser()
