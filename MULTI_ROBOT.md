@@ -70,7 +70,7 @@ robotctl status
 robotctl logs robot1 -f
 ```
 
-這會自動掃描所有 `.robots/*.env` 檔案，並在背景程序中啟動每個 robot。所有輸出會記錄到 `.robot_state/<config>.log`。
+這會自動掃描所有 `.robots/*.env` 檔案，並在背景程序中啟動每個 robot。所有輸出會記錄到 `.robot_state/logs/<config>.log`。
 
 #### 3. 查看可用配置
 
@@ -247,7 +247,7 @@ coordinator.cleanup_old_messages(max_age_seconds=3600)
 1. **Bot Token**: 每個 robot 需要不同的 Telegram bot token，設定在各自的 `.robots/<name>.env` 檔案中
 2. **配置檔安全**: `.robots/*.env` 檔案包含敏感資訊，已加入 `.gitignore`，請勿提交到版本控制
 3. **Config Name vs ROBOT_ID**: 
-   - **Config name**（如 `robot1`）用於啟動腳本和日誌檔案（`.robot_state/robot1.log`）
+- **Config name**（如 `robot1`）用於啟動腳本和日誌檔案（`.robot_state/logs/robot1.log`）
    - **ROBOT_ID**（配置檔內設定）用於執行時狀態檔案（`.robot_state/robot_state_<ROBOT_ID>.json`）和 Telegram 指令
    - `robotctl` 使用 config name 來操作
 4. **單實例鎖**: 目前實作使用固定路徑 `.robot_state/robot.lock`。多 robot 並行執行依賴不同的 bot token 來區分實例。若遇到鎖衝突，請確認每個 robot 使用不同的 `TELEAPP_TOKEN`。

@@ -145,7 +145,6 @@ Security-related flags (default off):
 ## Hot Reload / Conflict Notes
 
 - Use `robotctl run <config>` or `robotctl start <config|all>` as the primary entrypoint.
-- Legacy `start_robot.*`, `manage_robots.*`, `start_all.*`, `stop_all.*`, `start_robot_bg.bat`, and `shutdown_robot.bat` are thin wrappers around `robotctl`.
 - Default mode is `TELEAPP_HOT_RELOAD=0` (stable mode, fewer process layers/conflicts).
 - If needed, temporarily enable hot reload with `set TELEAPP_HOT_RELOAD=1` before startup.
 - Each robot instance uses a single-instance lock based on its bot token to prevent polling conflicts.

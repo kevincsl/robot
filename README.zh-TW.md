@@ -145,7 +145,6 @@ robotctl logs robot1 -f
 ## Hot Reload / 衝突備註
 
 - 主要入口建議使用 `robotctl run <config>` 或 `robotctl start <config|all>`。
-- 舊的 `start_robot.*`、`manage_robots.*`、`start_all.*`、`stop_all.*`、`start_robot_bg.bat`、`shutdown_robot.bat` 都是 `robotctl` 的薄包裝。
 - 預設模式為 `TELEAPP_HOT_RELOAD=0`（穩定模式，較少程序層級衝突）。
 - 每個 robot 實例使用基於其 bot token 的單實例鎖來防止 polling 衝突。
 - 若仍發生 conflict crash，請確認同一 token 只有一個 bot 程序在跑。

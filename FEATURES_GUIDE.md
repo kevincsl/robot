@@ -33,18 +33,11 @@
 
 Shell 管理工具（用於背景執行的多 robot）：
 
-```bat
-# Windows
-manage_robots.bat status      # 查看所有運行中的 robot
-manage_robots.bat stop robot1 # 停止特定 robot
-manage_robots.bat stopall     # 停止所有 robot
-manage_robots.bat logs robot1 # 查看 robot 日誌
-
-# Linux/macOS
-./manage_robots.sh status
-./manage_robots.sh stop robot1
-./manage_robots.sh stopall
-./manage_robots.sh logs robot1
+```bash
+robotctl status
+robotctl stop robot1
+robotctl stop all
+robotctl logs robot1 -f
 ```
 
 詳細說明請參考 [MULTI_ROBOT.md](./MULTI_ROBOT.md)。

@@ -52,14 +52,14 @@ Windows:
 
 ```powershell
 bootstrap_robot.bat
-start_robot.bat
+robotctl run default
 ```
 
 Linux/macOS:
 
 ```bash
 ./bootstrap_robot.sh
-./start_robot.sh
+robotctl run default
 ```
 
 ## 2) Safe Rollback (preserve git history)

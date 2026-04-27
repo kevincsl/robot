@@ -7,7 +7,14 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from robot.control import build_launch_spec, create_parser, discover_configs, resolve_config
+from robot.control import (
+    _log_file,
+    _migrate_legacy_root_logs,
+    build_launch_spec,
+    create_parser,
+    discover_configs,
+    resolve_config,
+)
 
 
 class ControlTests(unittest.TestCase):
@@ -106,6 +113,20 @@ class ControlTests(unittest.TestCase):
         with patch("sys.stdout", StringIO()), self.assertRaises(SystemExit) as raised:
             parser.parse_args(["/h"])
         self.assertEqual(raised.exception.code, 0)
+
+    def test_log_file_is_under_robot_state_logs(self) -> None:
+        path = _log_file(self.root, "robot1")
+        self.assertEqual(path, self.root / ".robot_state" / "logs" / "robot1.log")
+
+    def test_legacy_root_logs_are_migrated(self) -> None:
+        source = self.root / "robot.stderr.log"
+        source.write_text("legacy\n", encoding="utf-8")
+
+        moved = _migrate_legacy_root_logs(self.root)
+
+        self.assertEqual(len(moved), 1)
+        self.assertFalse(source.exists())
+        self.assertTrue((self.root / ".robot_state" / "logs" / "legacy-root" / "robot.stderr.log").exists())
 
 
 if __name__ == "__main__":

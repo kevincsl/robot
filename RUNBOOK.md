@@ -26,11 +26,6 @@ robotctl restart robot1
 robotctl logs robot1 -f
 ```
 
-Legacy scripts:
-
-- `start_robot.*`, `manage_robots.*`, `start_all.*`, `stop_all.*`, `start_robot_bg.bat`, and `shutdown_robot.bat` are compatibility wrappers.
-- They now forward to `robotctl`, so you only need to remember one command family.
-
 Stop local process:
 
 - **Single robot**: Use terminal stop signal or `robotctl stop default`.

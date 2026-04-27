@@ -76,6 +76,12 @@ def _state_home(root: Path) -> Path:
     return path
 
 
+def _logs_home(root: Path) -> Path:
+    path = _state_home(root) / "logs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def _ctl_home(root: Path) -> Path:
     path = _state_home(root) / "ctl"
     path.mkdir(parents=True, exist_ok=True)
@@ -91,7 +97,32 @@ def _stop_file(root: Path, name: str) -> Path:
 
 
 def _log_file(root: Path, name: str) -> Path:
-    return _state_home(root) / f"{name}.log"
+    return _logs_home(root) / f"{name}.log"
+
+
+def _legacy_root_logs_home(root: Path) -> Path:
+    path = _logs_home(root) / "legacy-root"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _migrate_legacy_root_logs(root: Path) -> list[tuple[Path, Path]]:
+    moved: list[tuple[Path, Path]] = []
+    for source in sorted(root.glob("*.log")):
+        target = _legacy_root_logs_home(root) / source.name
+        if target.exists():
+            stem = target.stem
+            suffix = target.suffix
+            index = 1
+            while True:
+                candidate = target.with_name(f"{stem}.{index}{suffix}")
+                if not candidate.exists():
+                    target = candidate
+                    break
+                index += 1
+        source.replace(target)
+        moved.append((source, target))
+    return moved
 
 
 def _read_state(path: Path) -> dict[str, Any]:
@@ -1209,6 +1240,7 @@ COMMAND_HANDLERS = {
 
 def main(argv: list[str] | None = None) -> int:
     parser = create_parser()
+    _migrate_legacy_root_logs(ROOT)
     normalized_argv = _normalize_argv(list(sys.argv[1:] if argv is None else argv))
     if not normalized_argv:
         parser.print_help()

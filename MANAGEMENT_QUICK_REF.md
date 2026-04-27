@@ -45,7 +45,7 @@ robotctl logs robot1 -f
 - `robotctl` - 統一啟動 / 監看 / 停止 / 重啟 / 看 log CLI
 - `robotctl.py` - repo 內直接執行的 Python 入口
 - `start_robot.*`、`manage_robots.*`、`start_all.*`、`stop_all.*` - 舊 wrapper，相容保留
-- `.robot_state/*.log` - Robot 執行日誌
+- `.robot_state/logs/*.log` - Robot 執行日誌
 - `.robots/*.env` - 建議使用的 Robot 配置檔
 - `.robots/default.env` - 預設單機配置
 
