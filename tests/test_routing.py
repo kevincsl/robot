@@ -152,7 +152,7 @@ class RoutingTests(unittest.TestCase):
         body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
         self.assertIn("features guide", body)
         self.assertIn("FEATURES_GUIDE.md", body)
-        self.assertIn("/provider /model /project (/projects same)", body)
+        self.assertIn("/provider /model /project list", body)
 
     def test_status_shows_risk_mode_when_dangerous_flags_enabled(self) -> None:
         object.__setattr__(self.settings, "codex_bypass_approvals_and_sandbox", True)
@@ -1603,8 +1603,7 @@ class RoutingTests(unittest.TestCase):
         request = classify_request(MessageContext(chat_id=1, text="/projects list", command="projects"))
         body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
         self.assertIsInstance(body, str)
-        self.assertIn("Available projects:", body)
-        self.assertIn("1.", body)
+        self.assertIn("No registered projects.", body)
 
     def test_projects_command_with_payload_updates_state(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/projects 1", command="projects"))
@@ -1612,6 +1611,46 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("Project updated.", body)
         state = self.store.get_chat_state(1)
         self.assertTrue(str(state["project_key"]).startswith("proj-"))
+
+    def test_project_register_list_use_note_doctor_flow(self) -> None:
+        workspace = Path(self.tempdir.name) / "demo-project"
+        workspace.mkdir(parents=True, exist_ok=True)
+        (workspace / "README.md").write_text("# demo\n", encoding="utf-8")
+
+        register_request = classify_request(
+            MessageContext(chat_id=1, text=f"/project register demo {workspace}", command="project")
+        )
+        register_body = self.loop.run_until_complete(handle_command(1, register_request, self.settings, self.store, self.agents))
+        self.assertIn("Project registered.", register_body)
+        self.assertIn("name: demo", register_body)
+
+        list_request = classify_request(MessageContext(chat_id=1, text="/project list", command="project"))
+        list_body = self.loop.run_until_complete(handle_command(1, list_request, self.settings, self.store, self.agents))
+        self.assertIn("Registered projects: 1", list_body)
+        self.assertIn("demo", list_body)
+
+        use_request = classify_request(MessageContext(chat_id=1, text="/project use demo", command="project"))
+        use_body = self.loop.run_until_complete(handle_command(1, use_request, self.settings, self.store, self.agents))
+        self.assertIn("Project updated.", use_body)
+        self.assertEqual(self.store.get_chat_state(1)["project_name"], "demo")
+
+        info_request = classify_request(MessageContext(chat_id=1, text="/project info demo", command="project"))
+        info_body = self.loop.run_until_complete(handle_command(1, info_request, self.settings, self.store, self.agents))
+        self.assertIn("project info", info_body)
+        self.assertIn("name: demo", info_body)
+
+        note_request = classify_request(
+            MessageContext(chat_id=1, text="/project note demo hello world", command="project")
+        )
+        note_body = self.loop.run_until_complete(handle_command(1, note_request, self.settings, self.store, self.agents))
+        self.assertIn("Project note saved.", note_body)
+        note_path = self.settings.state_home / "projects" / "demo" / "notes.md"
+        self.assertTrue(note_path.exists())
+        self.assertIn("hello world", note_path.read_text(encoding="utf-8"))
+
+        doctor_request = classify_request(MessageContext(chat_id=1, text="/project doctor demo", command="project"))
+        doctor_body = self.loop.run_until_complete(handle_command(1, doctor_request, self.settings, self.store, self.agents))
+        self.assertIn("demo: ", doctor_body)
 
     def test_project_flow_updates_state_from_numeric_choice(self) -> None:
         open_menu = self.loop.run_until_complete(

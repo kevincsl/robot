@@ -58,6 +58,17 @@ from robot.google_calendar import (
     upsert_google_calendar_schedule_event,
 )
 from robot.projects import discover_project_workspaces, find_workspace, format_project_with_branch
+from robot.project_registry import (
+    active_project,
+    add_project_note,
+    get_project,
+    list_registered_projects,
+    project_doctor,
+    project_info,
+    project_status,
+    register_project,
+    use_project,
+)
 from robot.state import ChatStateStore
 
 COMMAND_REQUEST = "command"
@@ -874,8 +885,13 @@ def _help_text() -> str:
             "workspace:",
             "/provider [claude|codex|gemini]",
             "/model [name]  /models",
-            "/project [key-or-label]  (/projects same behavior)",
-            "/projects list",
+            "/project register [name] <path>",
+            "/project list",
+            "/project use <name|key>",
+            "/project info <name|key>",
+            "/project note <name|key> <text>",
+            "/project doctor <name|key|all>",
+            "/projects ... (legacy alias of /project ...)",
             "",
             "email (sendmail):",
             "/mailcli <sendmail-cli-args>",
@@ -926,8 +942,9 @@ def _quick_text() -> str:
             "- /menu (主選單)",
             "- /provider [claude|codex|gemini]",
             "- /model [name] /models",
-            "- /project [key-or-label] (/projects same)",
-            "- /projects list",
+            "- /project register [name] <path>",
+            "- /project list",
+            "- /project use <name|key>",
             "",
             "daily commands:",
             "- /status",
@@ -962,7 +979,8 @@ def _guide_text() -> str:
             "- /help",
             "- /menu",
             "- /contact list /contact add <key> <email> <name>",
-            "- /provider /model /project (/projects same)",
+            "- /provider /model /project list",
+            "- /project use <name|key>",
             "- /brain",
             "- /brainweb <url>",
             "- /brainbatchauto [limit]",
@@ -992,7 +1010,8 @@ def _menu_text(chat_id: int, store: ChatStateStore) -> str:
             "- /status",
             "- /provider claude",
             "- /model gpt-5.4",
-            "- /project <key-or-label>  (/projects same)",
+            "- /project list",
+            "- /project use <name|key>",
             "",
             "其他自然語言訊息不會被選單吃掉，會直接送進 AI。",
         ]
@@ -1566,6 +1585,178 @@ def _handle_project_selection(chat_id: int, payload: str, settings: Settings, st
     return (
         f"Project updated.\nproject: {_project_display(next_state['project_name'], next_state['project_path'])}\npath: {next_state['project_path']}"
     )
+
+
+def _render_project_registry_list(chat_id: int, settings: Settings, store: ChatStateStore) -> str:
+    state = store.get_chat_state(chat_id)
+    items, active_name = list_registered_projects(settings)
+    if not items:
+        return (
+            "No registered projects.\n"
+            "Use: /project register [name] <path>"
+        )
+    lines = [
+        f"Current context: {_project_display(state['project_name'], state['project_path'])}",
+        f"Registered projects: {len(items)}",
+    ]
+    for index, item in enumerate(items, start=1):
+        name = str(item.get("name") or "-")
+        key = str(item.get("key") or "-")
+        path = str(item.get("path") or "-")
+        status = project_status(item)
+        recent = str(item.get("last_activity_at") or item.get("last_used_at") or item.get("updated_at") or "-")
+        marker = "  *active" if name == active_name else ""
+        lines.append(f"{index}. {name} | {key} | {status} | recent={recent}{marker}")
+        lines.append(f"   {path}")
+    return "\n".join(lines)
+
+
+def _resolve_project_register_args(parts: list[str]) -> tuple[str, str] | None:
+    if len(parts) < 2:
+        return None
+    if len(parts) == 2:
+        candidate = Path(parts[1]).expanduser()
+        name = candidate.name.strip() or "project"
+        return name, parts[1]
+    return parts[1], parts[2]
+
+
+def _handle_project_command(chat_id: int, payload: str, settings: Settings, store: ChatStateStore) -> ButtonResponse | str:
+    parts = _split_payload_windows(payload)
+    if not parts:
+        return _projects_menu_response(chat_id, settings, store)
+
+    action = str(parts[0]).strip().lower()
+    if action in {"list", "ls"}:
+        store.clear_ui_flow(chat_id)
+        return _render_project_registry_list(chat_id, settings, store)
+
+    if action in {"register", "add"}:
+        resolved = _resolve_project_register_args(parts)
+        if resolved is None:
+            return "Usage: /project register [name] <path>"
+        name, path = resolved
+        try:
+            project = register_project(settings, name, path)
+        except ValueError as exc:
+            return f"Project register failed: {exc}"
+        return (
+            "Project registered.\n"
+            f"name: {project.get('name')}\n"
+            f"key: {project.get('key')}\n"
+            f"path: {project.get('path')}"
+        )
+
+    if action in {"use", "select"}:
+        if len(parts) != 2:
+            return "Usage: /project use <name|key>"
+        project = use_project(settings, parts[1])
+        if project is None:
+            return f"Project not found: {parts[1]}"
+        next_state = store.set_project(
+            chat_id,
+            str(project.get("key") or ""),
+            str(project.get("name") or ""),
+            str(project.get("path") or ""),
+        )
+        return (
+            "Project updated.\n"
+            f"project: {_project_display(next_state['project_name'], next_state['project_path'])}\n"
+            f"path: {next_state['project_path']}"
+        )
+
+    if action == "info":
+        if len(parts) != 2:
+            return "Usage: /project info <name|key>"
+        project = get_project(settings, parts[1])
+        if project is None:
+            return f"Project not found: {parts[1]}"
+        info = project_info(project)
+        return "\n".join(
+            [
+                "project info",
+                f"name: {info.get('name')}",
+                f"key: {info.get('key')}",
+                f"path: {info.get('path')}",
+                f"status: {info.get('status')}",
+                f"git_available: {info.get('git_available')}",
+                f"is_git_repo: {info.get('is_git_repo')}",
+                f"branch: {info.get('branch')}",
+                f"dirty: {info.get('dirty')}",
+                f"remote_origin: {info.get('remote_origin')}",
+            ]
+        )
+
+    if action == "note":
+        if len(parts) < 3:
+            return "Usage: /project note <name|key> <text>"
+        ref = parts[1]
+        text = " ".join(parts[2:]).strip()
+        try:
+            result = add_project_note(settings, ref, text)
+        except ValueError as exc:
+            return f"Project note failed: {exc}"
+        if result is None:
+            return f"Project not found: {ref}"
+        project, notes_path = result
+        return (
+            "Project note saved.\n"
+            f"name: {project.get('name')}\n"
+            f"path: {notes_path}"
+        )
+
+    if action == "doctor":
+        target = parts[1] if len(parts) >= 2 else "all"
+        if target.lower() == "all":
+            items, _active = list_registered_projects(settings)
+            if not items:
+                return "No registered projects."
+            lines: list[str] = []
+            has_issue = False
+            for index, item in enumerate(items):
+                if index:
+                    lines.append("")
+                report = project_doctor(item)
+                issues = report.get("issues") if isinstance(report.get("issues"), list) else []
+                checks = report.get("checks") if isinstance(report.get("checks"), list) else []
+                status = "ISSUE" if issues else "OK"
+                lines.append(f"{item.get('name')}: {status}")
+                for check in checks:
+                    lines.append(f"  - {check}")
+                for issue in issues:
+                    lines.append(f"  - issue: {issue}")
+                has_issue = has_issue or bool(issues)
+            if has_issue:
+                lines.append("")
+                lines.append("doctor summary: issues found")
+            return "\n".join(lines)
+
+        project = get_project(settings, target)
+        if project is None:
+            return f"Project not found: {target}"
+        report = project_doctor(project)
+        issues = report.get("issues") if isinstance(report.get("issues"), list) else []
+        checks = report.get("checks") if isinstance(report.get("checks"), list) else []
+        status = "ISSUE" if issues else "OK"
+        lines = [f"{project.get('name')}: {status}"]
+        for check in checks:
+            lines.append(f"  - {check}")
+        for issue in issues:
+            lines.append(f"  - issue: {issue}")
+        return "\n".join(lines)
+
+    if action == "current":
+        project = active_project(settings)
+        if project is None:
+            return "No active project in registry."
+        return (
+            "active project\n"
+            f"name: {project.get('name')}\n"
+            f"key: {project.get('key')}\n"
+            f"path: {project.get('path')}"
+        )
+
+    return _handle_project_selection(chat_id, payload, settings, store)
 
 
 async def _handle_menu_action(
@@ -2165,7 +2356,7 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         return f"Model updated.\nprovider: {next_state['provider']}\nmodel: {next_state['model']}"
 
     if request.command in {"project", "projects"}:
-        return _handle_project_selection(chat_id, request.payload, settings, store)
+        return _handle_project_command(chat_id, request.payload, settings, store)
 
     if request.command == "queue":
         return agents.queue_overview(chat_id)
