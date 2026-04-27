@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from robot.config import load_settings
+from robot.config import load_settings, normalize_model
 
 
 class ConfigTests(unittest.TestCase):
@@ -35,6 +35,10 @@ class ConfigTests(unittest.TestCase):
             settings = load_settings(self.root)
         self.assertTrue(settings.codex_bypass_approvals_and_sandbox)
         self.assertTrue(settings.codex_skip_git_repo_check)
+
+    def test_default_model_keyword_uses_provider_default(self) -> None:
+        self.assertEqual(normalize_model("claude", "default"), "claude-opus-4-7")
+        self.assertEqual(normalize_model("codex", "default"), "gpt-5.3-codex")
 
 
 if __name__ == "__main__":

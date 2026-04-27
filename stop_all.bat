@@ -1,3 +1,9 @@
 @echo off
-REM Quick shortcut to stop all robots
-call manage_robots.bat stopall
+setlocal
+cd /d "%~dp0"
+if not exist ".venv\Scripts\python.exe" (
+  echo Missing .venv. Run bootstrap_robot.bat first.
+  exit /b 1
+)
+".venv\Scripts\python.exe" robotctl.py stop all %*
+exit /b %ERRORLEVEL%

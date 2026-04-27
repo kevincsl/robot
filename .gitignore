@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .env
+.robots/*.env
 .venv/
 .robot_state/
 *.log

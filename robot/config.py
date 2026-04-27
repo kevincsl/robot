@@ -8,19 +8,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Use utf-8-sig so `.env` files saved with BOM still parse first key correctly.
-# Don't override existing environment variables (security best practice)
-load_dotenv(override=False, encoding="utf-8-sig")
+ENV_FILE = Path(os.getenv("ROBOT_ENV_FILE", ".robots/default.env") or ".robots/default.env")
 
-# Log warning if .env file would override existing vars
-if Path(".env").exists():
-    from dotenv import dotenv_values
-    env_vars = dotenv_values(".env")
-    for key in env_vars:
-        if key in os.environ:
-            logging.warning(f"Environment variable {key} already set, not overriding from .env")
+# Use utf-8-sig so env files saved with BOM still parse first key correctly.
+# override=True so that values from the per-robot env file always win over
+# any stale values that leaked in from the parent shell environment.
+load_dotenv(ENV_FILE, override=True, encoding="utf-8-sig")
 
-VERSION = "0.1.1"
+VERSION = "1.0.0"
 DEFAULT_GOOGLE_CALENDAR_SCOPES = ("https://www.googleapis.com/auth/calendar.readonly",)
 
 PROVIDER_LABELS = {
@@ -141,11 +136,15 @@ def normalize_provider(provider: str | None) -> str:
 def normalize_model(provider: str, model: str | None) -> str:
     normalized_provider = normalize_provider(provider)
     candidate = (model or "").strip()
-    if not candidate:
+    if not candidate or candidate.lower() == "default":
         return SUPPORTED_MODELS[normalized_provider][0]
     if candidate in SUPPORTED_MODELS.get(normalized_provider, []):
         return candidate
     return candidate
+
+
+def robot_lock_path(project_root: Path, robot_id: str) -> Path:
+    return project_root / ".robot_state" / f"robot_{robot_id}.lock"
 
 
 def _resolve_brain_vault_path(root: Path, configured_path: str | None, vault_name: str) -> Path | None:

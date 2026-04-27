@@ -20,6 +20,7 @@ class EntryTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         output = stderr.getvalue()
         self.assertIn("Use teleapp supervisor mode instead", output)
+        self.assertIn("robotctl run [config]", output)
         self.assertIn("teleapp robot.py", output)
 
     def test_standalone_mode_sets_env_and_calls_app_main(self) -> None:

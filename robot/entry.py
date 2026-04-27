@@ -25,8 +25,8 @@ def main() -> None:
         parser.print_usage(sys.stderr)
         sys.stderr.write(
             "Use teleapp supervisor mode instead:\n"
-            "- Windows: start_robot.bat\n"
-            "- Unix: ./start_robot.sh\n"
+            "- Foreground: robotctl run [config]\n"
+            "- Background: robotctl start <config|all>\n"
             "- Direct: teleapp robot.py\n"
             "Pass --standalone only for explicit dev/debug direct polling.\n"
         )

@@ -1237,7 +1237,7 @@ def fetch_webpage_text(url: str, *, timeout_seconds: float = 8.0, max_chars: int
     req = Request(
         url.strip(),
         headers={
-            "User-Agent": "Mozilla/5.0 (compatible; robot/0.1.1; +https://github.com/kevincsl/robot)",
+            "User-Agent": "Mozilla/5.0 (compatible; robot/1.0.0; +https://github.com/kevincsl/robot)",
             "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
         },
     )

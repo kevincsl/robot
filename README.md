@@ -39,7 +39,8 @@ pip install -e .
 2. Configure env file
 
 ```bash
-copy .env.example .env
+mkdir .robots
+copy .env.example .robots\default.env
 ```
 
 Fill at least:
@@ -51,18 +52,17 @@ Fill at least:
 
 3. Start bot
 
-### Single Robot
-
-Windows:
-
-```bat
-start_robot.bat
-```
-
-Linux/macOS:
+Preferred unified CLI:
 
 ```bash
-./start_robot.sh
+robotctl /h
+```
+
+### Single Robot
+
+```bash
+robotctl run default
+# or: python robotctl.py run default
 ```
 
 ### Multiple Robots (Background)
@@ -71,8 +71,8 @@ For running multiple robot instances with different configs:
 
 1. Create config files:
 ```bash
-copy .env.example .env.robot1
-copy .env.example .env.robot2
+copy .env.example .robots\robot1.env
+copy .env.example .robots\robot2.env
 ```
 
 2. Edit each config file and set unique:
@@ -80,29 +80,21 @@ copy .env.example .env.robot2
    - `TELEAPP_TOKEN` (different bot token for each)
    - Provider/model settings
 
-3. Start single robot:
-```bat
-start_robot.bat robot1
-```
-
-4. Start all robots in background:
-```bat
-start_all.bat
-# or
-start_robot.bat all
-```
-
-5. Manage running robots:
-```bat
-manage_robots.bat status      # Check running robots
-manage_robots.bat stop robot1 # Stop specific robot
-manage_robots.bat stopall     # Stop all robots
-manage_robots.bat logs robot1 # View robot logs
+3. Start / manage robots:
+```bash
+robotctl start robot1
+robotctl start all
+robotctl status
+robotctl stop robot1
+robotctl restart robot1
+robotctl logs robot1 -f
 ```
 
 See [MULTI_ROBOT.md](./MULTI_ROBOT.md) for detailed multi-robot setup.
 
-**Note**: Config name (e.g., `robot1`) is used for startup and log files. `ROBOT_ID` inside the config is used for runtime state files.
+**Note**: Config name maps directly to `.robots/<name>.env` (for example, `robot1` => `.robots/robot1.env`). `ROBOT_ID` inside the config is used for runtime state files.
+Legacy `start_robot.*`, `manage_robots.*`, `start_all.*`, and `stop_all.*` remain as compatibility wrappers and now forward to `robotctl`.
+Legacy config names like `.env` and `.env.<name>` are no longer supported; move them to `.robots/<name>.env`.
 
 ## Common Commands
 
@@ -152,9 +144,8 @@ Security-related flags (default off):
 
 ## Hot Reload / Conflict Notes
 
-- Use `start_robot.bat` / `start_robot.sh` as primary entrypoint.
-- For single-robot background mode on Windows, use `start_robot_bg.bat` / `shutdown_robot.bat`.
-- For multi-robot background mode, use `start_robot.bat all` and `manage_robots.bat`.
+- Use `robotctl run <config>` or `robotctl start <config|all>` as the primary entrypoint.
+- Legacy `start_robot.*`, `manage_robots.*`, `start_all.*`, `stop_all.*`, `start_robot_bg.bat`, and `shutdown_robot.bat` are thin wrappers around `robotctl`.
 - Default mode is `TELEAPP_HOT_RELOAD=0` (stable mode, fewer process layers/conflicts).
 - If needed, temporarily enable hot reload with `set TELEAPP_HOT_RELOAD=1` before startup.
 - Each robot instance uses a single-instance lock based on its bot token to prevent polling conflicts.
@@ -199,4 +190,4 @@ Google Calendar one-time auth:
 python scripts/google_calendar_auth.py
 ```
 
-Project version is defined in [robot/config.py](./robot/config.py) and `pyproject.toml` (currently `0.1.1`).
+Project version is defined in [robot/config.py](./robot/config.py) and `pyproject.toml` (currently `1.0.0`).

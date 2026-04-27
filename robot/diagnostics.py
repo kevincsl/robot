@@ -6,7 +6,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from robot.config import Settings
+from robot.config import Settings, robot_lock_path
 
 
 def _token_fingerprint(token: str) -> str:
@@ -118,7 +118,7 @@ def _robot_like_pids(processes: list[dict[str, str]]) -> list[str]:
 
 
 def build_doctor_report(settings: Settings) -> str:
-    lock_path = settings.project_root / ".robot_state" / "robot.lock"
+    lock_path = robot_lock_path(settings.project_root, settings.robot_id)
     lock_owner = _lock_owner_pid(lock_path)
     token_fingerprint = _token_fingerprint(os.getenv("TELEAPP_TOKEN", ""))
     all_python = _python_processes()

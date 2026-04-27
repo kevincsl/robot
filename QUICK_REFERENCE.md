@@ -47,16 +47,12 @@
 
 ### 多 Robot 管理（Shell）
 
-```bat
-# Windows
-manage_robots.bat status      # 查看運行中的 robot
-manage_robots.bat stopall     # 停止所有 robot
-manage_robots.bat logs robot1 # 查看日誌
-
-# Linux/macOS
-./manage_robots.sh status
-./manage_robots.sh stopall
-./manage_robots.sh logs robot1
+```bash
+robotctl /h
+robotctl status
+robotctl stop all
+robotctl restart robot1
+robotctl logs robot1 -f
 ```
 
 ## 5) 常見錯誤

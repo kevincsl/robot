@@ -4,68 +4,37 @@ Operational runbook for `robot`.
 
 ## 1) Start / Stop
 
-### Single Robot
-
-Windows:
+Canonical entrypoint:
 
 ```powershell
 bootstrap_robot.bat
-start_robot.bat              # Foreground
-start_robot_bg.bat           # Background (hidden window)
-shutdown_robot.bat           # Stop background robot
-```
-
-Linux/macOS:
-
-```bash
-./bootstrap_robot.sh
-./start_robot.sh
+robotctl /h
+robotctl run default         # Foreground
+robotctl start default       # Background
+robotctl stop default
 ```
 
 ### Multiple Robots
 
-Windows:
-
-```bat
-# Start specific robot with config
-start_robot.bat robot1
-
-# Start all robots in background
-start_all.bat
-# or
-start_robot.bat all
-
-# Manage running robots
-manage_robots.bat status      # Check all running robots
-manage_robots.bat stop robot1 # Stop specific robot
-manage_robots.bat stopall     # Stop all robots
-manage_robots.bat logs robot1 # View robot logs
-```
-
-Linux/macOS:
-
 ```bash
-./start_robot.sh robot1       # Start specific robot
-./start_all.sh                # Start all robots in background
-./manage_robots.sh status     # Check running robots
-./manage_robots.sh stop robot1
-./manage_robots.sh stopall
-./manage_robots.sh logs robot1
+robotctl start robot1
+robotctl start all
+robotctl status
+robotctl stop robot1
+robotctl stop all
+robotctl restart robot1
+robotctl logs robot1 -f
 ```
 
-Start script behavior:
+Legacy scripts:
 
-- `start_robot.bat` runs `%CD%\.venv\Scripts\python.exe -m teleapp` with explicit `--python`.
-- `start_robot.bat <config>` loads `.env.<config>` and starts that robot instance.
-- `start_robot.bat all` scans all `.env.robot*` files and starts each in background with logs to `.robot_state/<config>.log`.
-- `start_robot_bg.bat` runs single robot in hidden background mode with logs to `robot.bg.stderr.log` / `robot.bg.stdout.log`.
-- `start_robot.sh` runs `.venv/bin/python -m teleapp robot.py --python .venv/bin/python` with default `TELEAPP_HOT_RELOAD=0`.
-- Both scripts clear proxy env vars and prepend repo root to `PYTHONPATH`.
+- `start_robot.*`, `manage_robots.*`, `start_all.*`, `stop_all.*`, `start_robot_bg.bat`, and `shutdown_robot.bat` are compatibility wrappers.
+- They now forward to `robotctl`, so you only need to remember one command family.
 
 Stop local process:
 
-- **Single robot**: Use terminal stop signal, or `shutdown_robot.bat` on Windows.
-- **Multi-robot**: Use `manage_robots.bat stopall` or `manage_robots.bat stop <config>`.
+- **Single robot**: Use terminal stop signal or `robotctl stop default`.
+- **Multi-robot**: Use `robotctl stop all` or `robotctl stop <config>`.
 - Telegram-side restart command: `/restart` (managed by `teleapp` supervisor).
 - Avoid direct `python -m robot`/`robot` unless `--standalone` is explicitly intended for local debug.
 

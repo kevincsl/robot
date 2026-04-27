@@ -4,6 +4,8 @@
 
 本專案已升級為支援多 robot 並發執行的架構。每個 robot instance 擁有獨立的 state file，並可透過檔案系統進行相互通訊與監看。
 
+> 目前建議只記一套指令：`robotctl`。舊的 `start_robot.*`、`manage_robots.*`、`start_all.*`、`stop_all.*` 都只是相容 wrapper。
+
 ## 核心改動
 
 ### 1. 獨立 State 管理
@@ -35,10 +37,10 @@
 每個 robot 需要獨立的配置檔：
 
 ```bash
-# 複製範例配置檔
-copy .env.robot1.example .env.robot1
-copy .env.robot2.example .env.robot2
-copy .env.robot3.example .env.robot3
+mkdir .robots
+copy .env.example .robots\robot1.env
+copy .env.example .robots\robot2.env
+copy .env.example .robots\robot3.env
 ```
 
 編輯每個配置檔，至少設定：
@@ -49,60 +51,40 @@ copy .env.robot3.example .env.robot3
 
 ### 啟動方式
 
-使用統一的 `start_robot` 腳本，支援三種模式：
+使用統一的 `robotctl` CLI：
 
 #### 1. 啟動單一 Robot
 
-Windows:
-```bat
-start_robot.bat robot1   # 讀取 .env.robot1
-start_robot.bat robot2   # 讀取 .env.robot2
-start_robot.bat mybot    # 讀取 .env.mybot
-```
-
-Linux/macOS:
 ```bash
-./start_robot.sh robot1
-./start_robot.sh robot2
-./start_robot.sh mybot
+robotctl run robot1
+robotctl run robot2
+robotctl run mybot
 ```
 
 #### 2. 啟動所有 Robot（背景執行）
 
-Windows:
-```bat
-start_robot.bat all      # 自動掃描並在背景啟動所有 .env.robot* 配置
-# 或使用快捷腳本
-start_all.bat
-```
-
-Linux/macOS:
 ```bash
-./start_robot.sh all     # 自動掃描並在背景啟動所有 .env.robot* 配置
-# 或使用快捷腳本
-./start_all.sh
+robotctl start robot1
+robotctl start all
+robotctl status
+robotctl logs robot1 -f
 ```
 
-這會自動掃描所有 `.env.robot*` 檔案（排除 `.example` 檔案），並在背景程序中啟動每個 robot。所有輸出會記錄到 `.robot_state/<robot_id>.log`。
+這會自動掃描所有 `.robots/*.env` 檔案，並在背景程序中啟動每個 robot。所有輸出會記錄到 `.robot_state/<config>.log`。
 
 #### 3. 查看可用配置
 
-Windows:
-```bat
-start_robot.bat          # 無參數時顯示說明和可用配置
-```
-
-Linux/macOS:
 ```bash
-./start_robot.sh         # 無參數時顯示說明和可用配置
+robotctl list
+robotctl /h
 ```
 
 ### 擴展性
 
 這個設計支援任意數量的 robot：
-- 需要 5 個 robot？建立 `.env.robot1` 到 `.env.robot5`
-- 需要 10 個？建立 `.env.robot1` 到 `.env.robot10`
-- 配置檔可以任意命名：`.env.prod`、`.env.dev`、`.env.backup` 等
+- 需要 5 個 robot？建立 `.robots/robot1.env` 到 `.robots/robot5.env`
+- 需要 10 個？建立 `.robots/robot1.env` 到 `.robots/robot10.env`
+- 配置檔可以任意命名：`.robots/prod.env`、`.robots/dev.env`、`.robots/backup.env` 等
 
 **安全提示**: 所有敏感資訊（bot token、API keys）都存放在配置檔中，不透過命令列參數傳遞，避免在 process list 或 shell history 中洩漏。
 
@@ -110,66 +92,40 @@ Linux/macOS:
 
 ### 查看運行狀態
 
-Windows:
-```bat
-manage_robots.bat status
-```
-
-Linux/macOS:
 ```bash
-./manage_robots.sh status
+robotctl status
 ```
 
 顯示所有運行中的 robot 程序和狀態檔案。
 
 ### 停止特定 Robot
 
-Windows:
-```bat
-manage_robots.bat stop robot1
-```
-
-Linux/macOS:
 ```bash
-./manage_robots.sh stop robot1
+robotctl stop robot1
 ```
 
 ### 停止所有 Robot
 
-Windows:
-```bat
-manage_robots.bat stopall
-# 或使用快捷腳本
-stop_all.bat
-```
-
-Linux/macOS:
 ```bash
-./manage_robots.sh stopall
-# 或使用快捷腳本
-./stop_all.sh
+robotctl stop all
 ```
 
 ### 查看 Robot 日誌
 
-Windows:
-```bat
-manage_robots.bat logs robot1
-```
-
-Linux/macOS:
 ```bash
-./manage_robots.sh logs robot1
+robotctl logs robot1 -f
 ```
 
 顯示特定 robot 的最近日誌（最後 100 行）。
 
-### 快捷腳本
+### 相容 Wrapper
 
-為了方便使用，提供了以下快捷腳本：
+為了向後相容，仍保留以下 wrapper，但都會直接轉呼叫 `robotctl`：
 
-- `start_all.bat` / `start_all.sh` - 啟動所有 robot
-- `stop_all.bat` / `stop_all.sh` - 停止所有 robot
+- `start_robot.*`
+- `manage_robots.*`
+- `start_all.*`
+- `stop_all.*`
 
 ## State 檔案結構
 
@@ -288,26 +244,22 @@ coordinator.cleanup_old_messages(max_age_seconds=3600)
 
 ## 注意事項
 
-1. **Bot Token**: 每個 robot 需要不同的 Telegram bot token，設定在各自的 `.env.robot{N}` 檔案中
-2. **配置檔安全**: `.env.robot*` 檔案包含敏感資訊，已加入 `.gitignore`，請勿提交到版本控制
+1. **Bot Token**: 每個 robot 需要不同的 Telegram bot token，設定在各自的 `.robots/<name>.env` 檔案中
+2. **配置檔安全**: `.robots/*.env` 檔案包含敏感資訊，已加入 `.gitignore`，請勿提交到版本控制
 3. **Config Name vs ROBOT_ID**: 
    - **Config name**（如 `robot1`）用於啟動腳本和日誌檔案（`.robot_state/robot1.log`）
    - **ROBOT_ID**（配置檔內設定）用於執行時狀態檔案（`.robot_state/robot_state_<ROBOT_ID>.json`）和 Telegram 指令
-   - 管理工具 `manage_robots` 使用 config name 來操作
+   - `robotctl` 使用 config name 來操作
 4. **單實例鎖**: 目前實作使用固定路徑 `.robot_state/robot.lock`。多 robot 並行執行依賴不同的 bot token 來區分實例。若遇到鎖衝突，請確認每個 robot 使用不同的 `TELEAPP_TOKEN`。
 5. **State 隔離**: 每個 robot 的 chat state 完全獨立
 6. **Address Book**: 通訊錄在所有 robot 間共享
 
 ## 向後相容
 
-原有的啟動方式仍然可用：
+原有的啟動方式仍然可用，但只是相容 wrapper：
 
 ```bat
-# Windows
-start_robot.bat
-
-# Linux/macOS
-./start_robot.sh
+robotctl run default
 ```
 
 這會使用預設的 robot ID（基於 bot token 的 hash）。

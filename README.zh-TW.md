@@ -39,7 +39,8 @@ pip install -e .
 2. 建立設定檔
 
 ```bash
-copy .env.example .env
+mkdir .robots
+copy .env.example .robots\default.env
 ```
 
 至少填入：
@@ -51,18 +52,17 @@ copy .env.example .env
 
 3. 啟動 bot
 
-### 單一 Robot
-
-Windows:
-
-```bat
-start_robot.bat
-```
-
-Linux/macOS:
+建議統一使用：
 
 ```bash
-./start_robot.sh
+robotctl /h
+```
+
+### 單一 Robot
+
+```bash
+robotctl run default
+# 或：python robotctl.py run default
 ```
 
 ### 多個 Robot（背景執行）
@@ -71,8 +71,8 @@ Linux/macOS:
 
 1. 建立配置檔：
 ```bash
-copy .env.example .env.robot1
-copy .env.example .env.robot2
+copy .env.example .robots\robot1.env
+copy .env.example .robots\robot2.env
 ```
 
 2. 編輯每個配置檔，設定不同的：
@@ -80,29 +80,21 @@ copy .env.example .env.robot2
    - `TELEAPP_TOKEN`（每個 robot 使用不同的 bot token）
    - Provider/model 設定
 
-3. 啟動單一 robot：
-```bat
-start_robot.bat robot1
-```
-
-4. 背景啟動所有 robot：
-```bat
-start_all.bat
-# 或
-start_robot.bat all
-```
-
-5. 管理運行中的 robot：
-```bat
-manage_robots.bat status      # 查看運行中的 robot
-manage_robots.bat stop robot1 # 停止特定 robot
-manage_robots.bat stopall     # 停止所有 robot
-manage_robots.bat logs robot1 # 查看 robot 日誌
+3. 啟動 / 管理 robot：
+```bash
+robotctl start robot1
+robotctl start all
+robotctl status
+robotctl stop robot1
+robotctl restart robot1
+robotctl logs robot1 -f
 ```
 
 詳細的多 robot 設定請參考 [MULTI_ROBOT.md](./MULTI_ROBOT.md)。
 
-**注意**：配置名稱（如 `robot1`）用於啟動和日誌檔案。配置檔內的 `ROBOT_ID` 用於執行時的狀態檔案。
+**注意**：配置名稱會直接對應 `.robots/<name>.env`（例如 `robot1` => `.robots/robot1.env`）。配置檔內的 `ROBOT_ID` 用於執行時的狀態檔案。
+舊的 `start_robot.*`、`manage_robots.*`、`start_all.*`、`stop_all.*` 仍可用，但現在都只是轉呼叫 `robotctl` 的相容 wrapper。
+舊的設定檔命名如 `.env`、`.env.<name>` 已不再支援；請改成 `.robots/<name>.env`。
 
 ## 常用指令
 
@@ -152,10 +144,8 @@ manage_robots.bat logs robot1 # 查看 robot 日誌
 
 ## Hot Reload / 衝突備註
 
-- 主要入口建議使用 `start_robot.bat` / `start_robot.sh`。
-- 單 robot 背景模式（Windows）：使用 `start_robot_bg.bat` / `shutdown_robot.bat`。
-- 多 robot 背景模式：使用 `start_robot.bat all` 與 `manage_robots.bat`。
-- `start_robot.bat` 預設 `TELEAPP_WATCH_MODE=app-file-only`，可降低重啟衝突。
+- 主要入口建議使用 `robotctl run <config>` 或 `robotctl start <config|all>`。
+- 舊的 `start_robot.*`、`manage_robots.*`、`start_all.*`、`stop_all.*`、`start_robot_bg.bat`、`shutdown_robot.bat` 都是 `robotctl` 的薄包裝。
 - 預設模式為 `TELEAPP_HOT_RELOAD=0`（穩定模式，較少程序層級衝突）。
 - 每個 robot 實例使用基於其 bot token 的單實例鎖來防止 polling 衝突。
 - 若仍發生 conflict crash，請確認同一 token 只有一個 bot 程序在跑。
@@ -199,4 +189,4 @@ Google Calendar 一次性授權：
 python scripts/google_calendar_auth.py
 ```
 
-專案版本定義於 [robot/config.py](./robot/config.py) 與 `pyproject.toml`（目前 `0.1.1`）。
+專案版本定義於 [robot/config.py](./robot/config.py) 與 `pyproject.toml`（目前 `1.0.0`）。

@@ -13,7 +13,7 @@ from teleapp import TeleApp
 from teleapp.protocol import AppEvent
 
 from robot.agents import AgentCoordinator
-from robot.config import load_settings
+from robot.config import load_settings, robot_lock_path
 from robot.projects import format_project_with_branch
 from robot.routing import AGENT_REQUEST, classify_request, handle_request, heartbeat_status_key
 from robot.state import ChatStateStore
@@ -169,12 +169,13 @@ def main() -> None:
     if os.getenv("ROBOT_ALLOW_DIRECT_POLLING", "").strip().lower() not in {"1", "true", "yes", "on"}:
         raise RuntimeError(
             "Direct polling mode is disabled by default. "
-            "Use `teleapp robot.py` (or start_robot.bat/start_robot.sh). "
+            "Use `robotctl run [config]` / `robotctl start <config|all>` "
+            "(or `teleapp robot.py`). "
             "For explicit dev/debug direct polling, run `robot --standalone`."
         )
     configure_stdio_utf8()
     application = app.build_application()
     application.add_error_handler(_telegram_error_handler)
-    lock_path = SETTINGS.project_root / ".robot_state" / "robot.lock"
+    lock_path = robot_lock_path(SETTINGS.project_root, SETTINGS.robot_id)
     with _single_instance_lock(lock_path):
         application.run_polling(drop_pending_updates=False)
