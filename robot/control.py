@@ -1361,8 +1361,106 @@ def _doctor_checks(root: Path, config: RobotConfigRef) -> tuple[list[str], list[
     return infos, issues
 
 
+def _windows_process_rows() -> list[dict[str, str]]:
+    command = [
+        "powershell",
+        "-NoProfile",
+        "-Command",
+        (
+            "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
+            "Get-CimInstance Win32_Process | "
+            "Select-Object ProcessId,ParentProcessId,Name,CommandLine | "
+            "ConvertTo-Json -Depth 2 -Compress"
+        ),
+    ]
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        timeout=10,
+    )
+    if completed.returncode != 0:
+        return []
+    text = (completed.stdout or "").strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(parsed, dict):
+        parsed = [parsed]
+    if not isinstance(parsed, list):
+        return []
+    rows: list[dict[str, str]] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            {
+                "pid": str(item.get("ProcessId") or ""),
+                "ppid": str(item.get("ParentProcessId") or ""),
+                "name": str(item.get("Name") or ""),
+                "cmd": str(item.get("CommandLine") or ""),
+            }
+        )
+    return rows
+
+
+def _doctor_windows() -> int:
+    if os.name != "nt":
+        print("doctor windows is only supported on Windows.")
+        return 1
+
+    rows = _windows_process_rows()
+    if not rows:
+        print("doctor windows: failed to read process list.")
+        return 1
+
+    by_pid: dict[str, dict[str, str]] = {row["pid"]: row for row in rows if row.get("pid")}
+    focus_names = {"cmd.exe", "powershell.exe", "python.exe", "pythonw.exe"}
+    focus: list[dict[str, str]] = []
+    for row in rows:
+        name = row.get("name", "").lower()
+        cmd = row.get("cmd", "")
+        if name in focus_names and ("robot" in cmd.lower() or "teleapp" in cmd.lower() or name == "cmd.exe"):
+            focus.append(row)
+
+    if not focus:
+        print("doctor windows: no relevant cmd/powershell/python processes found.")
+        return 0
+
+    print(f"doctor windows: relevant processes={len(focus)}")
+    for row in sorted(focus, key=lambda item: int(item.get("pid") or "0")):
+        pid = row.get("pid") or "-"
+        ppid = row.get("ppid") or "-"
+        name = row.get("name") or "-"
+        cmd = row.get("cmd") or "-"
+        print(f"\nPID={pid} PPID={ppid} NAME={name}")
+        print(f"  CMD={cmd}")
+        walk_pid = ppid
+        for depth in range(4):
+            parent = by_pid.get(str(walk_pid))
+            if parent is None:
+                break
+            parent_pid = parent.get("pid") or "-"
+            parent_name = parent.get("name") or "-"
+            parent_ppid = parent.get("ppid") or "-"
+            parent_cmd = parent.get("cmd") or "-"
+            print(f"  <- depth{depth + 1} PID={parent_pid} NAME={parent_name} PPID={parent_ppid}")
+            print(f"     CMD={parent_cmd}")
+            walk_pid = parent_ppid
+    return 0
+
+
 def cmd_doctor(_parser: argparse.ArgumentParser, args: argparse.Namespace, root: Path) -> int:
     root = _repo_root(root)
+    raw_target = str(args.target or "").strip().lower()
+    if raw_target == "windows":
+        return _doctor_windows()
     targets = _select_targets(root, args.target)
     has_issue = False
     for index, config in enumerate(targets):

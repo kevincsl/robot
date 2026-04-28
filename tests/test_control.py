@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from robot.control import (
+    _doctor_windows,
     _background_supervisor_command,
     _env_values,
     _is_pid_running,
@@ -163,6 +164,19 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("bad: ISSUE", output.getvalue())
         self.assertIn("TELEAPP_TOKEN missing", output.getvalue())
+
+    def test_doctor_windows_rejects_non_windows(self) -> None:
+        with patch("robot.control.os.name", "posix"), patch("sys.stdout", new_callable=StringIO) as output:
+            code = _doctor_windows()
+        self.assertEqual(code, 1)
+        self.assertIn("only supported on Windows", output.getvalue())
+
+    def test_cmd_doctor_windows_path(self) -> None:
+        args = type("Args", (), {"target": "windows"})()
+        with patch("robot.control._doctor_windows", return_value=0) as doctor_windows:
+            code = cmd_doctor(create_parser(), args, self.root)
+        self.assertEqual(code, 0)
+        doctor_windows.assert_called_once()
 
     def test_spawn_background_supervisor_uses_no_window_flags_on_windows(self) -> None:
         captured: dict[str, object] = {}
