@@ -179,6 +179,11 @@ def _venv_python(root: Path) -> Path:
     )
 
 
+def _windows_pythonw(root: Path) -> Path:
+    candidate = root / ".venv" / "Scripts" / "pythonw.exe"
+    return candidate if candidate.exists() else _venv_python(root)
+
+
 def _iter_config_candidates(root: Path) -> dict[str, Path]:
     results: dict[str, Path] = {}
 
@@ -532,8 +537,9 @@ def _spawn_background_supervisor(
         "close_fds": True,
     }
     if os.name == "nt":
+        no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         kwargs["creationflags"] = (
-            subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+            subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS | no_window
         )
     else:
         kwargs["start_new_session"] = True
@@ -997,6 +1003,18 @@ def _run_supervisor(
     root = _repo_root(root)
     config = resolve_config(root, config_name)
     spec = build_launch_spec(root, config)
+    child_env = dict(spec.env)
+    child_command = list(spec.command)
+    child_python = spec.python_path
+    if mode == "background" and os.name == "nt":
+        child_python = _windows_pythonw(root)
+        child_env["TELEAPP_PYTHON"] = str(child_python)
+        if child_command:
+            child_command[0] = str(child_python)
+        if "--python" in child_command:
+            python_arg_index = child_command.index("--python") + 1
+            if python_arg_index < len(child_command):
+                child_command[python_arg_index] = str(child_python)
     state_path = _state_file(root, config.name)
     stop_path = _stop_file(root, config.name)
     log_path = _log_file(root, config.name)
@@ -1028,7 +1046,7 @@ def _run_supervisor(
             "provider": spec.provider,
             "model": spec.model,
             "teleapp_app": spec.teleapp_app,
-            "command": _join_command(spec.command),
+            "command": _join_command(child_command),
             "restart_policy": restart_policy,
             "restart_delay": restart_delay,
             "max_restarts": max_restarts,
@@ -1056,17 +1074,20 @@ def _run_supervisor(
 
             child_kwargs: dict[str, Any] = {
                 "cwd": str(root),
-                "env": spec.env,
+                "env": child_env,
                 "stdin": subprocess.DEVNULL,
                 "stdout": stdout_target,
                 "stderr": stderr_target,
             }
             if os.name == "nt":
-                child_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+                no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                child_kwargs["creationflags"] = (
+                    subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS | no_window
+                )
             else:
                 child_kwargs["start_new_session"] = True
 
-            child = subprocess.Popen(spec.command, **child_kwargs)
+            child = subprocess.Popen(child_command, **child_kwargs)
         except OSError as exc:
             exit_code = 127
             failure_state = dict(base_state)

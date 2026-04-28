@@ -8,10 +8,12 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from robot.control import (
+    _background_supervisor_command,
     _env_values,
     _is_pid_running,
     _log_file,
     _migrate_legacy_root_logs,
+    _spawn_background_supervisor,
     build_launch_spec,
     cmd_doctor,
     create_parser,
@@ -62,6 +64,8 @@ class ControlTests(unittest.TestCase):
         windows_python = self.root / ".venv" / "Scripts" / "python.exe"
         windows_python.parent.mkdir(parents=True, exist_ok=True)
         windows_python.write_text("", encoding="utf-8")
+        windows_pythonw = self.root / ".venv" / "Scripts" / "pythonw.exe"
+        windows_pythonw.write_text("", encoding="utf-8")
 
         posix_python = self.root / ".venv" / "bin" / "python"
         posix_python.parent.mkdir(parents=True, exist_ok=True)
@@ -159,6 +163,44 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("bad: ISSUE", output.getvalue())
         self.assertIn("TELEAPP_TOKEN missing", output.getvalue())
+
+    def test_spawn_background_supervisor_uses_no_window_flags_on_windows(self) -> None:
+        captured: dict[str, object] = {}
+
+        class DummyProcess:
+            pid = 43210
+
+        def fake_popen(*args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return DummyProcess()
+
+        with patch("robot.control.os.name", "nt"), patch("robot.control.subprocess.CREATE_NO_WINDOW", 0x08000000), patch(
+            "robot.control.subprocess.Popen",
+            side_effect=fake_popen,
+        ):
+            pid = _spawn_background_supervisor(
+                self.root,
+                "default",
+                restart_policy="on-failure",
+                restart_delay=3.0,
+                max_restarts=0,
+            )
+
+        self.assertEqual(pid, 43210)
+        creationflags = int(captured["kwargs"]["creationflags"])  # type: ignore[index]
+        self.assertTrue(creationflags & 0x08000000)
+
+    def test_background_supervisor_command_uses_python_on_windows(self) -> None:
+        with patch("robot.control.os.name", "nt"):
+            command = _background_supervisor_command(
+                self.root,
+                "default",
+                restart_policy="on-failure",
+                restart_delay=3.0,
+                max_restarts=0,
+            )
+        self.assertTrue(command[0].lower().endswith("python.exe"))
 
 
 if __name__ == "__main__":
