@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -78,6 +79,12 @@ def _clip(text: str, limit: int = 3900) -> str:
 
 def _safe_text(text: str | None) -> str:
     return normalize_text(text)
+
+
+def _windows_creationflags_no_window() -> int:
+    if os.name != "nt":
+        return 0
+    return int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
 def _extract_text_candidates(payload: Any) -> list[str]:
@@ -489,15 +496,21 @@ async def _run_process(
         safe_prompt = _safe_text(prompt)
         if invocation is not None:
             invocation.set_phase("process: starting")
+        popen_kwargs: dict[str, Any] = {
+            "stdin": subprocess.PIPE,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
+            "cwd": str(workdir),
+        }
+        no_window = _windows_creationflags_no_window()
+        if no_window:
+            popen_kwargs["creationflags"] = no_window
         process = subprocess.Popen(
             command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            cwd=str(workdir),
+            **popen_kwargs,
         )
         if invocation is not None:
             invocation.set_process(process)

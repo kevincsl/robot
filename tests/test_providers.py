@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from robot.config import load_settings
-from robot.providers import _run_codex
+from robot.providers import _run_codex, _run_process
 
 
 class ProvidersTests(unittest.TestCase):
@@ -227,6 +227,40 @@ class ProvidersTests(unittest.TestCase):
         self.assertEqual(result.return_code, 0)
         self.assertEqual(result.thread_id, "thread-fresh-1")
         self.assertIn("fresh thread success", result.final_text)
+
+    def test_run_process_uses_create_no_window_on_windows(self) -> None:
+        captured: dict[str, object] = {}
+
+        class DummyProcess:
+            returncode = 0
+
+            def communicate(self, _input: str):
+                return ("ok", "")
+
+            def poll(self):
+                return 0
+
+        def fake_popen(*args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return DummyProcess()
+
+        with patch("robot.providers.os.name", "nt"), patch("robot.providers.subprocess.CREATE_NO_WINDOW", 0x08000000), patch(
+            "robot.providers.subprocess.Popen",
+            side_effect=fake_popen,
+        ):
+            completed = asyncio.run(
+                _run_process(
+                    ["cmd", "/c", "echo", "ok"],
+                    prompt="",
+                    workdir=self.workdir,
+                    invocation=None,
+                )
+            )
+
+        self.assertEqual(completed.returncode, 0)
+        creationflags = int(captured["kwargs"]["creationflags"])  # type: ignore[index]
+        self.assertTrue(creationflags & 0x08000000)
 
 
 if __name__ == "__main__":
