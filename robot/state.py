@@ -202,9 +202,14 @@ class ChatStateStore:
     def set_project(self, chat_id: int, key: str, name: str, path: str) -> dict[str, Any]:
         with self._lock:
             bucket = self._bucket(chat_id)
+            provider = bucket["provider"]
+            prev_key = str(bucket.get("project_key") or "")
+            prev_path = str(bucket.get("project_path") or "")
             bucket["project_key"] = key
             bucket["project_name"] = name
             bucket["project_path"] = path
+            if prev_key != str(key or "") or prev_path != str(path or ""):
+                bucket["threads"][provider] = None
             self._save()
             return self.get_chat_state(chat_id)
 

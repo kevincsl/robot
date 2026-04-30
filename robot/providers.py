@@ -293,6 +293,13 @@ def _is_claude_permission_denied(detail: str) -> bool:
     return "permission denied" in text or "not allowed to use" in text
 
 
+def _is_claude_session_not_found(detail: str) -> bool:
+    text = (detail or "").strip().lower()
+    if not text:
+        return False
+    return "no conversation found with session id" in text
+
+
 def _build_codex_command(
     *,
     settings: Settings,
@@ -493,6 +500,10 @@ async def _run_process(
     invocation: RunningInvocation | None,
 ) -> subprocess.CompletedProcess[str]:
     def _invoke() -> subprocess.CompletedProcess[str]:
+        if not workdir.exists():
+            return subprocess.CompletedProcess(
+                command, 1, "", f"workdir does not exist: {workdir}"
+            )
         safe_prompt = _safe_text(prompt)
         if invocation is not None:
             invocation.set_phase("process: starting")
@@ -703,6 +714,31 @@ async def _run_claude(
         completed = retry_completed
         if retry_session_id:
             next_session_id = retry_session_id
+        assistant_text = retry_assistant_text
+        latest_detail = retry_detail
+
+    if (
+        completed.returncode != 0
+        and not cancelled
+        and session_id is not None
+        and _is_claude_session_not_found(latest_detail)
+    ):
+        if invocation is not None:
+            invocation.set_phase("claude: retrying with fresh session")
+        fresh_command = _build_claude_command(
+            settings=settings,
+            model=model,
+            session_id=None,
+            prompt=prompt,
+        )
+        retry_completed = await _run_process(fresh_command, prompt="", workdir=workdir, invocation=invocation)
+        retry_session_id, retry_assistant_text, retry_detail = _parse_claude_stream(
+            stdout=retry_completed.stdout or "",
+            stderr=retry_completed.stderr or "",
+            base_session_id=None,
+        )
+        completed = retry_completed
+        next_session_id = retry_session_id
         assistant_text = retry_assistant_text
         latest_detail = retry_detail
 

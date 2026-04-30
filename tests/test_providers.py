@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from robot.config import load_settings
-from robot.providers import _run_codex, _run_process
+from robot.providers import _run_claude, _run_codex, _run_process
 
 
 class ProvidersTests(unittest.TestCase):
@@ -227,6 +227,51 @@ class ProvidersTests(unittest.TestCase):
         self.assertEqual(result.return_code, 0)
         self.assertEqual(result.thread_id, "thread-fresh-1")
         self.assertIn("fresh thread success", result.final_text)
+
+    def test_run_claude_retries_with_fresh_session_when_resume_session_missing(self) -> None:
+        first = subprocess.CompletedProcess(
+            ["claude"],
+            1,
+            '{"type":"result","subtype":"error","error":"No conversation found with session ID: 9037c46d-8a4d-48e8-a15b-175c4a1d6611"}',
+            "",
+        )
+        second = subprocess.CompletedProcess(
+            ["claude"],
+            0,
+            '\n'.join(
+                [
+                    '{"type":"system","subtype":"init","session_id":"session-fresh-1"}',
+                    '{"type":"assistant","message":{"content":[{"type":"text","text":"你好"}]}}',
+                ]
+            ),
+            "",
+        )
+        seen_commands: list[list[str]] = []
+
+        async def fake_run_process(command, *args, **kwargs):
+            seen_commands.append(list(command))
+            call_count = len(seen_commands)
+            return first if call_count == 1 else second
+
+        with patch("robot.providers._run_process", side_effect=fake_run_process):
+            result = asyncio.run(
+                _run_claude(
+                    self.settings,
+                    model="claude-opus-4-7",
+                    prompt="Hello",
+                    session_id="session-stale-0",
+                    workdir=self.workdir,
+                    project_label="taxi",
+                    invocation=None,
+                )
+            )
+
+        self.assertEqual(len(seen_commands), 2)
+        self.assertIn("--resume", seen_commands[0])
+        self.assertNotIn("--resume", seen_commands[1])
+        self.assertEqual(result.return_code, 0)
+        self.assertEqual(result.thread_id, "session-fresh-1")
+        self.assertIn("你好", result.final_text)
 
     def test_run_process_uses_create_no_window_on_windows(self) -> None:
         captured: dict[str, object] = {}
