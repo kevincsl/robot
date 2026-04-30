@@ -814,7 +814,7 @@ class AgentCoordinator:
                 request_id=str(job.get("request_id") or "").strip() or None,
                 raw={"status_key": str(job.get("status_key") or "heartbeat"), "replace": True},
             )
-            await asyncio.sleep(1)
+            await asyncio.sleep(5)
 
     @staticmethod
     def _format_elapsed(seconds: int) -> str:
