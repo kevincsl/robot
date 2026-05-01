@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}登入 | House Agent{% endblock %}
+{% block content %}
+<div class="grid gap-5 lg:grid-cols-2">
+  <section class="card">
+    <h1 class="mb-3 text-2xl font-bold">登入或切換帳號</h1>
+    {% if error %}
+    <div class="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{{ error }}</div>
+    {% endif %}
+
+    {% if google_oauth_enabled or github_oauth_enabled %}
+    <div class="mb-4 space-y-3">
+      {% if google_oauth_enabled %}
+      <a href="/auth/google/start" class="btn-google block w-full">使用 Google 登入</a>
+      {% endif %}
+      {% if github_oauth_enabled %}
+      <a href="/auth/github/start" class="btn-secondary block w-full">使用 GitHub 登入</a>
+      {% endif %}
+      <p class="text-xs text-slate-500">一般使用者建議優先使用第三方登入；本機帳號保留給管理者與備援使用。</p>
+    </div>
+    <div class="mb-4 flex items-center gap-3">
+      <div class="h-px flex-1 bg-slate-200"></div>
+      <span class="text-xs text-slate-400">或使用本機帳號</span>
+      <div class="h-px flex-1 bg-slate-200"></div>
+    </div>
+    {% else %}
+    <div class="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+      Google / GitHub OAuth 尚未設定，目前使用本機帳號登入。
+    </div>
+    {% endif %}
+
+    <form method="post" action="/login" class="space-y-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div>
+        <label class="mb-1 block text-sm font-medium">帳號</label>
+        <input name="username" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" required>
+      </div>
+      <div>
+        <label class="mb-1 block text-sm font-medium">密碼</label>
+        <input type="password" name="password" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" required>
+      </div>
+      <button class="btn-primary" type="submit">本機登入</button>
+    </form>
+    <div class="mt-4 text-xs text-slate-500">
+      目前系統共有 {{ users|length }} 個使用者。未登入時會以 `Guest` 身分瀏覽，測驗紀錄只會寫入目前登入帳號。
+    </div>
+  </section>
+
+  <section class="card">
+    <h2 class="mb-3 text-2xl font-bold">建立本機帳號</h2>
+    <p class="mb-3 text-sm text-slate-500">本機帳號適合管理後台、緊急備援與測試用途。正式對外可優先使用 Google 或 GitHub。</p>
+    <form method="post" action="/register" class="space-y-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div>
+        <label class="mb-1 block text-sm font-medium">帳號</label>
+        <input name="username" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" required>
+      </div>
+      <div>
+        <label class="mb-1 block text-sm font-medium">顯示名稱</label>
+        <input name="display_name" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" required>
+      </div>
+      <div>
+        <label class="mb-1 block text-sm font-medium">密碼</label>
+        <input type="password" name="password" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" required>
+      </div>
+      <button class="btn-green" type="submit">註冊並登入</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

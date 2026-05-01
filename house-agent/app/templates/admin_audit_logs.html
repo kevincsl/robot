@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}審計紀錄 | House Agent{% endblock %}
+{% block content %}
+<div class="mb-5 flex items-center justify-between">
+  <div>
+    <h1 class="text-2xl font-bold">審計紀錄</h1>
+    <div class="text-sm text-slate-500">查詢管理者對帳號權限、狀態與登入策略的變更紀錄。</div>
+  </div>
+  <a href="/admin/users" class="btn-secondary">返回使用者管理</a>
+</div>
+
+<section class="card mb-5">
+  <form method="get" action="/admin/audit-logs" class="grid gap-3 md:grid-cols-4">
+    <div class="md:col-span-3">
+      <label class="mb-1 block text-sm font-medium text-slate-700">搜尋</label>
+      <input
+        type="text"
+        name="q"
+        value="{{ filters.q }}"
+        placeholder="操作者、目標、動作"
+        class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+      >
+    </div>
+    <div>
+      <label class="mb-1 block text-sm font-medium text-slate-700">動作</label>
+      <select name="action" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+        <option value="">全部</option>
+        <option value="toggle_admin" {% if filters.action == "toggle_admin" %}selected{% endif %}>toggle_admin</option>
+        <option value="toggle_status" {% if filters.action == "toggle_status" %}selected{% endif %}>toggle_status</option>
+        <option value="toggle_login_policy" {% if filters.action == "toggle_login_policy" %}selected{% endif %}>toggle_login_policy</option>
+      </select>
+    </div>
+    <div class="flex items-end gap-2 md:col-span-4">
+      <button type="submit" class="btn-primary">搜尋</button>
+      <a href="/admin/audit-logs" class="btn-secondary">清除條件</a>
+      <span class="ml-auto text-sm text-slate-500">共 {{ total_logs }} 筆，第 {{ page }} / {{ total_pages }} 頁</span>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <div class="overflow-x-auto">
+    <table class="min-w-full text-sm">
+      <thead>
+        <tr class="border-b text-left text-slate-500">
+          <th class="py-2 pr-3">時間</th>
+          <th class="py-2 pr-3">操作者</th>
+          <th class="py-2 pr-3">目標</th>
+          <th class="py-2 pr-3">動作</th>
+          <th class="py-2 pr-3">明細</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in audit_rows %}
+        <tr class="border-b border-slate-100">
+          <td class="py-2 pr-3">{{ row.log.created_at.strftime('%Y-%m-%d %H:%M:%S') if row.log.created_at else "" }}</td>
+          <td class="py-2 pr-3">{{ row.actor_name }}</td>
+          <td class="py-2 pr-3">{{ row.target_name }}</td>
+          <td class="py-2 pr-3">{{ row.log.action }}</td>
+          <td class="py-2 pr-3 text-slate-600">
+            {% if row.log.details %}
+            {{ row.log.details.get("before", "") }} → {{ row.log.details.get("after", "") }}
+            {% else %}
+            -
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="5" class="py-8 text-center text-slate-500">沒有符合條件的審計紀錄。</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="mt-4 flex items-center justify-between">
+    <a href="/admin/audit-logs?q={{ filters.q }}&action={{ filters.action }}&page={{ page - 1 if page > 1 else 1 }}" class="btn-secondary {% if page <= 1 %}pointer-events-none opacity-50{% endif %}">上一頁</a>
+    <span class="text-sm text-slate-500">第 {{ page }} / {{ total_pages }} 頁</span>
+    <a href="/admin/audit-logs?q={{ filters.q }}&action={{ filters.action }}&page={{ page + 1 if page < total_pages else total_pages }}" class="btn-secondary {% if page >= total_pages %}pointer-events-none opacity-50{% endif %}">下一頁</a>
+  </div>
+</section>
+{% endblock %}

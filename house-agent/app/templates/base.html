@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}House Agent{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    body { background: #f8fafc; color: #0f172a; }
+    .card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+      padding: 1.25rem;
+    }
+    .nav-link {
+      display: inline-block;
+      color: #475569;
+      font-size: 0.95rem;
+      padding: 0.35rem 0.65rem;
+      border-radius: 0.6rem;
+      transition: 0.15s ease;
+    }
+    .nav-link:hover { color: #2563eb; background: #eff6ff; }
+    .nav-link.active { color: #1d4ed8; background: #dbeafe; font-weight: 600; }
+    .btn-primary, .btn-secondary, .btn-green, .btn-google {
+      display: inline-block;
+      border-radius: 0.7rem;
+      padding: 0.6rem 1rem;
+      font-size: 0.92rem;
+      font-weight: 600;
+      transition: 0.15s ease;
+      text-align: center;
+    }
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-secondary { background: #e2e8f0; color: #334155; }
+    .btn-secondary:hover { background: #cbd5e1; }
+    .btn-green { background: #059669; color: #fff; }
+    .btn-green:hover { background: #047857; }
+    .btn-google { background: #fff; color: #0f172a; border: 1px solid #cbd5e1; }
+    .btn-google:hover { background: #f8fafc; border-color: #94a3b8; }
+    .badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 0.2rem 0.55rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body class="min-h-screen">
+  <nav class="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur shadow-sm">
+    <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-1 px-4 py-3">
+      <a href="/" class="mr-3 text-lg font-bold text-blue-700">House Agent</a>
+      <a href="/" class="nav-link {% if request.url.path == '/' %}active{% endif %}">首頁</a>
+      <a href="/quiz" class="nav-link {% if request.url.path.startswith('/quiz') %}active{% endif %}">題庫練習</a>
+      <a href="/mock-exam" class="nav-link {% if request.url.path.startswith('/mock-exam') %}active{% endif %}">模擬考</a>
+      <a href="/essay" class="nav-link {% if request.url.path.startswith('/essay') %}active{% endif %}">申論題</a>
+      <a href="/exam-papers" class="nav-link {% if request.url.path.startswith('/exam-papers') %}active{% endif %}">歷屆試題</a>
+      <a href="/laws" class="nav-link {% if request.url.path.startswith('/laws') %}active{% endif %}">法條重點</a>
+      <a href="/wrong" class="nav-link {% if request.url.path.startswith('/wrong') %}active{% endif %}">錯題複習</a>
+      {% if current_user.is_admin %}
+      <a href="/admin" class="nav-link {% if request.url.path.startswith('/admin') %}active{% endif %}">管理後台</a>
+      {% endif %}
+      <div class="ml-auto flex items-center gap-2">
+        <span class="text-xs text-slate-500">目前使用者：{{ current_user.display_name }}</span>
+        <a href="/login" class="btn-secondary px-3 py-1.5 text-xs">登入 / 切換</a>
+        <form method="post" action="/logout" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="btn-secondary px-3 py-1.5 text-xs">登出</button>
+        </form>
+      </div>
+    </div>
+  </nav>
+  <main class="mx-auto max-w-6xl px-4 py-6">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

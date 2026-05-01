@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+data/house_agent.db
+data/raw/
+.env
+.pytest_cache/
+*.egg-info/
+dist/
+app/static/.gitkeep

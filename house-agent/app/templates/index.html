@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}首頁 | House Agent{% endblock %}
+{% block content %}
+<div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+  <div>
+    <h1 class="text-2xl font-bold">House Agent 首頁</h1>
+    <div class="text-sm text-slate-500">不動產經紀人考試的教學、複習、模擬考與歷屆試題整合平台。</div>
+  </div>
+  <div class="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+    目前以 {{ current_user.display_name }} 身分使用，統計資料只會顯示這個帳號的學習狀態。
+  </div>
+</div>
+
+<section class="mb-6 grid gap-4 sm:grid-cols-2">
+  {% for c in coverage %}
+  <div class="card">
+    <div class="mb-2 flex items-center justify-between">
+      <h3 class="text-sm font-semibold">{{ c.subject }}</h3>
+      <span class="badge {% if c.coverage >= 0.8 %}bg-green-100 text-green-700{% elif c.coverage >= 0.4 %}bg-yellow-100 text-yellow-700{% else %}bg-slate-100 text-slate-600{% endif %}">
+        {{ (c.coverage * 100)|round(1) }}%
+      </span>
+    </div>
+    <div class="mb-2 h-2 overflow-hidden rounded-full bg-slate-100">
+      <div class="h-2 rounded-full bg-blue-500 transition-all" style="width: {{ [c.coverage * 100, 100]|min }}%"></div>
+    </div>
+    <p class="mb-3 text-xs text-slate-500">已看 {{ c.seen }} / {{ c.total }} 題</p>
+    <a href="/quiz?subject_id={{ c.subject_id }}" class="btn-primary px-3 py-1.5 text-xs">前往練習</a>
+  </div>
+  {% else %}
+  <div class="card col-span-2 py-12 text-center text-slate-500">
+    <div class="mb-3 text-4xl">-</div>
+    <p>目前尚未建立可統計的練習資料。</p>
+  </div>
+  {% endfor %}
+</section>
+
+{% if weekly %}
+<section class="mb-6 grid gap-4 sm:grid-cols-2">
+  <div class="card">
+    <h3 class="mb-3 text-sm font-semibold">最近 90 天週正確率</h3>
+    <canvas id="weeklyChart" height="160"></canvas>
+  </div>
+  <div class="card">
+    <h3 class="mb-3 text-sm font-semibold">最近一年月正確率</h3>
+    <canvas id="monthlyChart" height="160"></canvas>
+  </div>
+</section>
+{% endif %}
+
+<section class="flex flex-wrap gap-3">
+  <a href="/quiz" class="btn-primary">題庫練習</a>
+  <a href="/mock-exam" class="btn-green">開始模擬考</a>
+  <a href="/essay" class="btn-green">申論題練習</a>
+  <a href="/exam-papers" class="btn-secondary">歷屆試題</a>
+  <a href="/wrong" class="btn-secondary">錯題複習</a>
+  <a href="/laws" class="btn-secondary">法條重點</a>
+</section>
+
+{% if weekly %}
+<script>
+const weeklyData = {{ weekly | tojson }};
+const monthlyData = {{ monthly | tojson }};
+function makeChart(id, data, label) {
+  const labels = Object.keys(data);
+  const values = Object.values(data).map(v => Math.round(v * 100));
+  const ctx = document.getElementById(id).getContext('2d');
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label,
+        data: values,
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59,130,246,0.08)',
+        borderWidth: 2,
+        pointRadius: 3,
+        tension: 0.3,
+        fill: true
+      }]
+    },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { min: 0, max: 100, ticks: { callback: v => v + '%', font: { size: 10 } }, grid: { color: '#f1f5f9' } },
+        x: { ticks: { font: { size: 9 }, maxRotation: 45 }, grid: { display: false } }
+      }
+    }
+  });
+}
+makeChart('weeklyChart', weeklyData, '週正確率');
+makeChart('monthlyChart', monthlyData, '月正確率');
+</script>
+{% endif %}
+{% endblock %}
