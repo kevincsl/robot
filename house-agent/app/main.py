@@ -16,7 +16,7 @@ from app.law_catalog import LAW_CATALOG_BY_NAME
 from app.models import AuditLog, Attempt, Chapter, ExamPaper, Law, Question, QuestionType, Subject, User, UserIdentity
 from app.schemas import ChoiceSubmit, EssaySubmit, GradingOut
 from app.services import exam_papers, grading, mock_exam, quiz
-from app.services.admin_laws import audit_laws, refresh_all_laws
+from app.services.admin_laws import audit_laws, refresh_all_laws, trigger_relink
 from app.services.auth import (
     LOGIN_POLICY_LOCAL_OR_OAUTH,
     LOGIN_POLICY_OAUTH_ONLY,
@@ -429,7 +429,15 @@ def admin_dashboard(request: Request, db: Session = Depends(get_session)):
 async def admin_refresh_laws(request: Request, db: Session = Depends(get_session)):
     await validate_csrf(request)
     require_admin_user(db, request)
-    refresh_all_laws()
+    refresh_all_laws(db)
+    return RedirectResponse(url="/admin", status_code=303)
+
+
+@app.post("/admin/laws/relink")
+async def admin_relink_laws(request: Request, db: Session = Depends(get_session)):
+    await validate_csrf(request)
+    require_admin_user(db, request)
+    trigger_relink(db, trigger_type="admin_manual")
     return RedirectResponse(url="/admin", status_code=303)
 
 

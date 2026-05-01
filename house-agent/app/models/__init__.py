@@ -273,3 +273,57 @@ class ExamPaperFile(Base):
 
     exam_paper: Mapped[ExamPaper] = relationship(back_populates="files")
     subject_row: Mapped[ExamPaperSubject | None] = relationship(back_populates="files")
+
+
+class LawSnapshotRun(Base):
+    __tablename__ = "law_snapshot_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    trigger_type: Mapped[str] = mapped_column(String(32), default="manual", index=True)
+    triggered_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    catalog_hash: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(String(16), default="running", index=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class QuestionLawRelinkRun(Base):
+    __tablename__ = "question_law_relink_runs"
+    __table_args__ = (UniqueConstraint("idempotency_key", name="uq_question_law_relink_runs_idempotency_key"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    snapshot_run_id: Mapped[int | None] = mapped_column(ForeignKey("law_snapshot_runs.id"), nullable=True, index=True)
+    scope: Mapped[str] = mapped_column(String(32), default="all", index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="running", index=True)
+    stats_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class QuestionLawRelinkResult(Base):
+    __tablename__ = "question_law_relink_results"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("question_law_relink_runs.id"), index=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), index=True)
+    old_refs: Mapped[list] = mapped_column(JSON, default=list)
+    new_refs: Mapped[list] = mapped_column(JSON, default=list)
+    changed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class QuestionLawRelinkDiff(Base):
+    __tablename__ = "question_law_relink_diffs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("question_law_relink_runs.id"), index=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), index=True)
+    diff_type: Mapped[str] = mapped_column(String(32), index=True)
+    flip_type: Mapped[str] = mapped_column(String(32), default="link_only_changed", index=True)
+    old_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evidence: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

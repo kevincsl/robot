@@ -8,8 +8,9 @@ from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 
 from app.law_catalog import LAW_CATALOG, LAW_CATALOG_BY_NAME, expected_law_names
-from app.models import Law, QuestionLawArticleRef
+from app.models import Law, Question, QuestionLawArticleRef
 from app.services.law_links import relink_question_law_article_ids
+from app.services.law_relink_runs import latest_relink_run, run_relink, run_to_view, start_snapshot_run
 from scripts.fetch_laws import fetch_law
 
 REVISION_DATE_RE = re.compile(
@@ -17,10 +18,21 @@ REVISION_DATE_RE = re.compile(
 )
 
 
-def refresh_all_laws() -> dict[str, int]:
+def refresh_all_laws(db: Session) -> dict[str, int]:
+    snapshot = start_snapshot_run(db, trigger_type="admin_refresh")
     for entry in LAW_CATALOG:
         fetch_law(entry.code, dry_run=False, from_cache=False)
-    return {"catalog_laws": len(LAW_CATALOG)}
+    run = run_relink(
+        db,
+        snapshot_run_id=snapshot.id,
+        scope="all",
+        idempotency_key=f"admin-refresh-{snapshot.id}",
+        source="admin_refresh",
+    )
+    return {
+        "catalog_laws": len(LAW_CATALOG),
+        "relink_run_id": run.id,
+    }
 
 
 def _official_revision_date(url: str) -> str:
@@ -34,6 +46,18 @@ def _official_revision_date(url: str) -> str:
         return "unknown"
     roc_year, month, day = match.groups()
     return f"ROC {roc_year}-{int(month):02d}-{int(day):02d}"
+
+
+def trigger_relink(db: Session, *, trigger_type: str = "admin_manual") -> dict[str, int]:
+    snapshot = start_snapshot_run(db, trigger_type=trigger_type)
+    run = run_relink(
+        db,
+        snapshot_run_id=snapshot.id,
+        scope="all",
+        idempotency_key=f"{trigger_type}-{snapshot.id}",
+        source=trigger_type,
+    )
+    return {"run_id": run.id}
 
 
 def audit_laws(db: Session) -> dict:
@@ -55,6 +79,21 @@ def audit_laws(db: Session) -> dict:
                 "article_count": len(law.articles),
             }
         )
+    latest_run = run_to_view(latest_relink_run(db))
+    high_risk_questions: list[dict] = []
+    if latest_run is not None:
+        stats = latest_run.get("stats") or {}
+        for question_id in stats.get("high_risk_question_ids", [])[:10]:
+            question = db.get(Question, int(question_id))
+            if question is None:
+                continue
+            high_risk_questions.append(
+                {
+                    "id": question.id,
+                    "body": question.body,
+                    "source": question.source,
+                }
+            )
     return {
         "catalog_laws": len(LAW_CATALOG),
         "expected_laws": len(expected),
@@ -63,5 +102,6 @@ def audit_laws(db: Session) -> dict:
         "extra_loaded": sorted(actual_names - expected),
         "unbound_question_article_refs": db.query(QuestionLawArticleRef).filter(QuestionLawArticleRef.law_article_id.is_(None)).count(),
         "relink_stats": relink_stats,
+        "latest_relink_run": latest_run,
         "rows": rows,
     }

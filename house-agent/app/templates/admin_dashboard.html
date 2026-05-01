@@ -20,9 +20,9 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit" class="btn-primary">更新法條</button>
       </form>
-      <form method="post" action="/admin/laws/audit">
+      <form method="post" action="/admin/laws/relink">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button type="submit" class="btn-secondary">執行稽核</button>
+        <button type="submit" class="btn-secondary">重新關聯重算</button>
       </form>
     </div>
   </div>
@@ -75,6 +75,50 @@
       </tbody>
     </table>
   </div>
+</section>
+
+<section class="card mb-5">
+  <h2 class="mb-3 text-lg font-semibold">重關聯重評摘要</h2>
+  {% set run = audit.latest_relink_run %}
+  {% if run %}
+    {% set stats = run.stats or {} %}
+    {% set flips = stats.flip_counts or {} %}
+    <div class="mb-4 grid gap-3 text-sm md:grid-cols-4">
+      <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+        <div class="text-slate-500">最新批次 ID</div>
+        <div class="text-xl font-semibold">#{{ run.id }}</div>
+      </div>
+      <div class="rounded-lg border border-rose-100 bg-rose-50 p-3">
+        <div class="text-rose-700">對 → 錯</div>
+        <div class="text-xl font-semibold">{{ flips.correct_to_incorrect or 0 }}</div>
+      </div>
+      <div class="rounded-lg border border-emerald-100 bg-emerald-50 p-3">
+        <div class="text-emerald-700">錯 → 對</div>
+        <div class="text-xl font-semibold">{{ flips.incorrect_to_correct or 0 }}</div>
+      </div>
+      <div class="rounded-lg border border-blue-100 bg-blue-50 p-3">
+        <div class="text-blue-700">僅關聯變更</div>
+        <div class="text-xl font-semibold">{{ flips.link_only_changed or 0 }}</div>
+      </div>
+    </div>
+    {% if audit.high_risk_questions %}
+      <div class="rounded-lg border border-amber-200 bg-amber-50 p-3">
+        <div class="mb-2 text-sm font-semibold text-amber-800">高風險題目（對 → 錯）</div>
+        <ul class="space-y-2 text-sm">
+          {% for item in audit.high_risk_questions %}
+          <li class="rounded border border-amber-100 bg-white p-2">
+            <div class="font-medium">#{{ item.id }} · {{ item.source or "未知來源" }}</div>
+            <div class="text-slate-600">{{ item.body }}</div>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% else %}
+      <div class="text-sm text-slate-500">目前沒有高風險翻轉題目。</div>
+    {% endif %}
+  {% else %}
+    <div class="text-sm text-slate-500">尚無重關聯重評批次紀錄。</div>
+  {% endif %}
 </section>
 
 <section class="card">

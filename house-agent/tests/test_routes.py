@@ -292,7 +292,7 @@ class TestLaws:
         assert "更新法條" not in r.text
         assert "執行稽核" not in r.text
         assert "/admin/laws/refresh" not in r.text
-        assert "/admin/laws/audit" not in r.text
+        assert "/admin/laws/relink" not in r.text
 
     def test_law_detail_shows_linked_questions(self, client, db, seeded_db):
         qid = seeded_db["question"].id

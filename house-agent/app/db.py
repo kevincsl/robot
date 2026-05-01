@@ -48,6 +48,24 @@ def _migrate_legacy_schema() -> None:
             conn.execute(text("ALTER TABLE user_identities ADD COLUMN avatar_url VARCHAR(512)"))
         if inspector.has_table("audit_logs") and "details" not in audit_log_columns:
             conn.execute(text("ALTER TABLE audit_logs ADD COLUMN details JSON"))
+        conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_question_law_relink_runs_idempotency_key "
+                "ON question_law_relink_runs (idempotency_key)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_question_law_relink_results_run_question "
+                "ON question_law_relink_results (run_id, question_id)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_question_law_relink_diffs_run_question "
+                "ON question_law_relink_diffs (run_id, question_id)"
+            )
+        )
     db = SessionLocal()
     try:
         default_user = get_or_create_default_user(db)
