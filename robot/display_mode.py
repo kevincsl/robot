@@ -411,8 +411,10 @@ def _is_footer_line(line: str) -> bool:
 def _format_user_progress(*, project: str, elapsed: str) -> str:
     seconds = _elapsed_to_seconds(elapsed)
     state = "已接收訊息" if seconds <= 0 else "處理中"
-    lines = [f"{_format_project_tag(project)} {state}"]
-    return lines[0]
+    tag = _format_project_tag(project)
+    if seconds > 0:
+        return f"{tag} {state} {_elapsed_to_user_value(elapsed)}"
+    return f"{tag} {state}"
 
 
 def _elapsed_history_lines(elapsed: str) -> list[str]:

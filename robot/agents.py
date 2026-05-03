@@ -903,7 +903,7 @@ class AgentCoordinator:
             current_project = str(job.get("project_display") or job.get("project_name") or "-")
             phase = invocation.get_phase()
             display_mode = self._store.get_display_mode(chat_id)
-            if self._should_emit_live_status(chat_id) and normalize_display_mode(display_mode) != DISPLAY_MODE_USER:
+            if self._should_emit_live_status(chat_id):
                 await self._emit(
                     chat_id,
                     format_heartbeat(
