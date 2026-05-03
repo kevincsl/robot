@@ -38,7 +38,10 @@ class ConfigTests(unittest.TestCase):
 
     def test_default_model_keyword_uses_provider_default(self) -> None:
         self.assertEqual(normalize_model("claude", "default"), "claude-opus-4-7")
-        self.assertEqual(normalize_model("codex", "default"), "gpt-5.3-codex")
+        self.assertEqual(normalize_model("codex", "default"), "gpt-5.4")
+
+    def test_legacy_codex_model_normalizes_to_current_default(self) -> None:
+        self.assertEqual(normalize_model("codex", "gpt-5.3-codex"), "gpt-5.4")
 
 
 if __name__ == "__main__":

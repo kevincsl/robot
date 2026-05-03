@@ -2,27 +2,185 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import threading
+import time
 import traceback
+from contextlib import suppress
 from dataclasses import asdict
 
+from telegram import Bot
+from telegram.error import RetryAfter
 from teleapp.context import DocumentInput, MessageContext
 from teleapp.protocol import AppEvent
 from teleapp.response import coerce_response
 
 from robot.agents import AgentCoordinator
 from robot.config import load_settings
-from robot.routing import handle_request
+from robot.routing import AGENT_REQUEST, classify_request, handle_request
 from robot.state import ChatStateStore
 from robot.text import configure_stdio_utf8, normalize_text
 
 
+_TYPING_ERROR_INTERVAL_SECONDS = 10.0
+_TYPING_BACKOFF_SECONDS = 30.0
+
+
+def _typing_min_interval_seconds() -> float:
+    raw = os.getenv("ROBOT_TYPING_INTERVAL_SECONDS", "4").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        return 4.0
+    return min(60.0, max(3.0, value))
+
+
+def _event_typing_state(event: AppEvent) -> bool | None:
+    if str(getattr(event, "type", "") or "").strip().lower() != "status":
+        return None
+    raw = event.raw if isinstance(event.raw, dict) else {}
+    typing = str(raw.get("typing") or "").strip().lower()
+    if typing in {"active", "start", "on", "true", "1"}:
+        return True
+    if typing in {"stop", "done", "off", "false", "0"}:
+        return False
+    return None
+
+
+def _should_send_typing(event: AppEvent) -> bool:
+    return _event_typing_state(event) is True
+
+
+def _should_stop_typing(event: AppEvent) -> bool:
+    event_type = str(getattr(event, "type", "") or "").strip().lower()
+    if event_type == "noop":
+        return False
+    typing_state = _event_typing_state(event)
+    if typing_state is not None:
+        return typing_state is False
+    if event_type == "status":
+        return False
+    return True
+
+
+class _TelegramTypingClient:
+    def __init__(self, token: str) -> None:
+        clean = str(token or "").strip()
+        self._bot = Bot(clean) if clean else None
+        self._initialized = False
+
+    @property
+    def enabled(self) -> bool:
+        return self._bot is not None
+
+    async def send(self, chat_id: int) -> None:
+        if self._bot is None:
+            return
+        if not self._initialized:
+            await self._bot.initialize()
+            self._initialized = True
+        await self._bot.send_chat_action(chat_id=chat_id, action="typing")
+
+    async def close(self) -> None:
+        if self._bot is None or not self._initialized:
+            return
+        await self._bot.shutdown()
+        self._initialized = False
+
+
+class _TypingController:
+    def __init__(self, client: _TelegramTypingClient | None) -> None:
+        self._client = client if client is not None and client.enabled else None
+        self._last_sent_at: dict[int, float] = {}
+        self._backoff_until: dict[int, float] = {}
+        self._tasks: dict[int, asyncio.Task[None]] = {}
+
+    @property
+    def enabled(self) -> bool:
+        return self._client is not None
+
+    def observe(self, event: AppEvent) -> None:
+        if not self.enabled:
+            return
+        chat_id = event.chat_id
+        if not isinstance(chat_id, int):
+            return
+        if _should_send_typing(event):
+            self.start(chat_id)
+            return
+        if _should_stop_typing(event):
+            self.stop(chat_id)
+
+    def start(self, chat_id: int) -> None:
+        if not self.enabled:
+            return
+        task = self._tasks.get(chat_id)
+        if task is not None and not task.done():
+            return
+        self._tasks[chat_id] = asyncio.create_task(self._typing_loop(chat_id))
+
+    def stop(self, chat_id: int) -> None:
+        task = self._tasks.pop(chat_id, None)
+        if task is None:
+            return
+        task.cancel()
+
+    async def maybe_send(self, chat_id: int, *, now: float | None = None) -> None:
+        if self._client is None:
+            return
+        current = time.monotonic() if now is None else float(now)
+        backoff_until = self._backoff_until.get(chat_id, 0.0)
+        if current < backoff_until:
+            return
+        last = self._last_sent_at.get(chat_id, 0.0)
+        if current - last < _typing_min_interval_seconds():
+            return
+        try:
+            await self._client.send(chat_id)
+        except RetryAfter as exc:
+            retry_after_raw = getattr(exc, "retry_after", 0) or 0
+            if hasattr(retry_after_raw, "total_seconds"):
+                retry_after = float(retry_after_raw.total_seconds())
+            else:
+                retry_after = float(retry_after_raw)
+            wait_seconds = max(_TYPING_BACKOFF_SECONDS, retry_after)
+            self._backoff_until[chat_id] = current + wait_seconds
+            self._last_sent_at[chat_id] = current
+            return
+        except Exception:
+            self._backoff_until[chat_id] = current + _TYPING_ERROR_INTERVAL_SECONDS
+            self._last_sent_at[chat_id] = current
+            return
+        self._last_sent_at[chat_id] = current
+
+    async def shutdown(self) -> None:
+        tasks = list(self._tasks.values())
+        for chat_id in list(self._tasks.keys()):
+            self.stop(chat_id)
+        for task in tasks:
+            with suppress(asyncio.CancelledError):
+                await task
+        if self._client is not None:
+            with suppress(Exception):
+                await self._client.close()
+
+    async def _typing_loop(self, chat_id: int) -> None:
+        while True:
+            await self.maybe_send(chat_id)
+            await asyncio.sleep(_typing_min_interval_seconds())
+
+
 class _StdoutEventQueue:
-    def __init__(self) -> None:
+    def __init__(self, typing_controller: _TypingController | None = None) -> None:
         self._lock = threading.Lock()
+        self._typing_controller = typing_controller
 
     def put_nowait(self, event: AppEvent) -> None:
+        if self._typing_controller is not None:
+            self._typing_controller.observe(event)
+        if _should_suppress_event(event):
+            return
         payload = _sanitize_surrogates(asdict(event))
         line = json.dumps(payload, ensure_ascii=False)
         with self._lock:
@@ -31,8 +189,8 @@ class _StdoutEventQueue:
 
 
 class _SupervisorProxy:
-    def __init__(self) -> None:
-        self._event_queue = _StdoutEventQueue()
+    def __init__(self, typing_controller: _TypingController | None = None) -> None:
+        self._event_queue = _StdoutEventQueue(typing_controller)
 
 
 def _emit(type_: str, text: str, *, chat_id: int | None, request_id: str | None) -> None:
@@ -42,7 +200,15 @@ def _emit(type_: str, text: str, *, chat_id: int | None, request_id: str | None)
     sys.stdout.flush()
 
 
-def _emit_event(event: AppEvent) -> None:
+def _should_suppress_event(event: AppEvent) -> bool:
+    return str(getattr(event, "type", "") or "").strip().lower() == "noop"
+
+
+def _emit_event(event: AppEvent, typing_controller: _TypingController | None = None) -> None:
+    if typing_controller is not None:
+        typing_controller.observe(event)
+    if _should_suppress_event(event):
+        return
     line = json.dumps(_sanitize_surrogates(asdict(event)), ensure_ascii=False)
     sys.stdout.write(line + "\n")
     sys.stdout.flush()
@@ -63,7 +229,8 @@ async def _run() -> None:
     settings = load_settings()
     store = ChatStateStore(settings)
     agents = AgentCoordinator(settings, store)
-    agents.attach_supervisor(_SupervisorProxy())
+    typing_controller = _TypingController(_TelegramTypingClient(os.getenv("TELEAPP_TOKEN", "")))
+    agents.attach_supervisor(_SupervisorProxy(typing_controller))
     agents.start()
 
     from robot.coordinator import RobotCoordinator
@@ -135,15 +302,21 @@ async def _run() -> None:
                 document=document,
             )
             try:
+                request = classify_request(ctx)
+                if request.kind == AGENT_REQUEST and request.payload.strip():
+                    typing_controller.start(chat_id)
+                    asyncio.create_task(typing_controller.maybe_send(chat_id))
                 body = await handle_request(ctx, settings, store, agents)
                 event = coerce_response(body, ctx)
-                _emit_event(event)
+                _emit_event(event, typing_controller)
             except Exception as exc:
+                typing_controller.stop(chat_id)
                 traceback.print_exc(file=sys.stderr)
                 _emit("error", str(exc), chat_id=chat_id, request_id=request_id)
     finally:
         heartbeat_task.cancel()
         coordinator.update_status(status="stopped")
+        await typing_controller.shutdown()
         await agents.shutdown()
 
 

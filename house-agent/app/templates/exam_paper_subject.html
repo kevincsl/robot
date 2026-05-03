@@ -2,7 +2,7 @@
 {% block title %}{{ subject_row.subject }} | 歷屆試題{% endblock %}
 {% block content %}
 <div class="mb-6">
-  <a href="/exam-papers" class="text-sm text-blue-700 hover:text-blue-800">← 返回歷屆試題</a>
+  <a href="/exam-papers" class="text-sm text-blue-700 hover:text-blue-800">返回歷屆試題</a>
   <div class="mt-3 text-xs font-medium text-blue-700">民國 {{ paper.roc_year }} 年 / {{ paper.year }}</div>
   <h1 class="text-2xl font-bold mt-1">{{ subject_row.subject }}</h1>
   <p class="text-sm text-slate-500 mt-1">{{ paper.exam_title }}</p>
@@ -43,7 +43,7 @@
       {% endif %}
       {% endfor %}
       {% if item.source_url %}
-      <a href="{{ item.source_url }}" class="badge bg-blue-100 text-blue-700 hover:bg-blue-200">回到科目頁</a>
+      <a href="{{ item.source_url }}" class="badge bg-blue-100 text-blue-700 hover:bg-blue-200">查看本科題目</a>
       {% endif %}
     </div>
   </section>
@@ -51,7 +51,7 @@
 </div>
 {% else %}
 <div class="card text-slate-500">
-  <p>這個科目尚未匯入解析題目。</p>
+  <p>目前尚未匯入這個科目的題目。</p>
   <code class="text-xs bg-slate-100 px-2 py-1 rounded mt-2 inline-block">python scripts/import_exam_questions.py</code>
 </div>
 {% endif %}

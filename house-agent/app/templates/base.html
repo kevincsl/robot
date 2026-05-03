@@ -68,7 +68,7 @@
       {% endif %}
       <div class="ml-auto flex items-center gap-2">
         <span class="text-xs text-slate-500">目前使用者：{{ current_user.display_name }}</span>
-        <a href="/login" class="btn-secondary px-3 py-1.5 text-xs">登入 / 切換</a>
+        <a href="/login" class="btn-secondary px-3 py-1.5 text-xs">登入 / 註冊</a>
         <form method="post" action="/logout" class="inline">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <button type="submit" class="btn-secondary px-3 py-1.5 text-xs">登出</button>

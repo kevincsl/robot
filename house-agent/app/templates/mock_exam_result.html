@@ -6,12 +6,12 @@
     <div class="flex items-center justify-between gap-3 flex-wrap">
       <div>
         <h1 class="text-2xl font-bold">模擬考結果</h1>
-        <p class="text-sm text-slate-500 mt-1">本結果採原始答對率計分，不套用法條權重。</p>
+        <p class="text-sm text-slate-500 mt-1">以下為本次作答的整體成績與各科分析。</p>
       </div>
       <div class="text-right">
         <div class="text-3xl font-bold {% if passed %}text-emerald-600{% else %}text-rose-600{% endif %}">{{ score }}</div>
         <div class="text-sm {% if passed %}text-emerald-700{% else %}text-rose-700{% endif %}">
-          {% if passed %}及格{% else %}未達及格{% endif %} / 標準 60 分
+          {% if passed %}已達及格{% else %}未達及格{% endif %} / 及格線 60 分
         </div>
       </div>
     </div>
@@ -51,13 +51,13 @@
 </section>
 
 <section class="card mb-5">
-  <h2 class="text-lg font-semibold mb-3">學習重點建議</h2>
+  <h2 class="text-lg font-semibold mb-3">複習建議</h2>
   <p class="text-sm text-slate-500 mb-4">
-    下列排序依據錯題涉及法條的出題頻率與重要度，只用於複習優先順序，不影響本次模擬考分數。
+    系統依各科錯題與法條權重排序，方便你優先處理最影響成績的內容。法條權重只用於複習排序，不影響本次模擬考分數。
   </p>
   {% if not study_recommendations %}
   <div class="text-sm text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg p-3">
-    本次沒有錯題，暫時沒有需要加權排序的複習項目。
+    本次沒有錯題，維持目前節奏即可。
   </div>
   {% else %}
   <div class="space-y-4">
@@ -71,7 +71,7 @@
         {% for wrong in item.wrong_questions[:5] %}
         <div class="rounded-lg bg-white border border-amber-100 p-3">
           <div class="text-sm text-slate-500 mb-1">
-            你的答案 {{ wrong.user_answer or "未作答" }} / 正解 {{ wrong.correct_answer }}
+            你的答案 {{ wrong.user_answer or "未作答" }} / 正確答案 {{ wrong.correct_answer }}
           </div>
           <div class="font-medium leading-relaxed">{{ wrong.question.body }}</div>
           <div class="mt-2 flex gap-2 flex-wrap text-xs">

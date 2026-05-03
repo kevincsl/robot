@@ -20,9 +20,21 @@ from robot.brain import (
     get_active_or_next_schedule,
 )
 from robot.config import Settings
+from robot.display_mode import (
+    DISPLAY_MODE_USER,
+    format_heartbeat,
+    format_output_text,
+    format_queue_waiting,
+    format_recovered_run,
+    format_run_finished,
+    format_run_stopped,
+    format_worker_started,
+    normalize_display_mode,
+)
 from robot.google_calendar import sync_schedule_jobs_with_google
 from robot.projects import format_project_with_branch
 from robot.providers import (
+    AgentRunResult,
     RunningInvocation,
     list_auto_dev_profiles,
     run_agent_request,
@@ -92,27 +104,31 @@ class AgentCoordinator:
         self._queue_watchdogs: dict[int, asyncio.Task[None]] = {}
         self._gcal_schedule_sync_interval_seconds = 300
         self._gcal_schedule_last_sync_at: dict[int, datetime] = {}
+        self._last_status_event_by_chat: dict[int, tuple[str, str]] = {}
+        self._shutting_down = False
 
     def attach_supervisor(self, supervisor) -> None:
         self._supervisor = supervisor
 
+    def _should_emit_live_status(self, chat_id: int) -> bool:
+        return True
+
     def start(self) -> None:
+        self._shutting_down = False
         if self._scheduler_task is None or self._scheduler_task.done():
             self._scheduler_task = asyncio.create_task(self._scheduler_loop())
         for chat_id in self._store.list_chat_ids():
             recovered = self._store.recover_agent_current_run(chat_id)
-            if recovered is not None:
+            if recovered is not None and self._should_emit_live_status(chat_id):
                 asyncio.create_task(
                     self._emit(
                         chat_id,
-                        "\n".join(
-                            [
-                                "Recovered interrupted run after restart.",
-                                f"kind: {recovered.get('kind') or 'provider'}",
-                                f"doing: {recovered.get('goal') or '<resume>'}",
-                                f"project: {recovered.get('project_display') or recovered.get('project_name') or '-'}",
-                                f"path: {recovered.get('project_path') or '-'}",
-                            ]
+                        format_recovered_run(
+                            self._store.get_display_mode(chat_id),
+                            kind=str(recovered.get("kind") or "provider"),
+                            goal=str(recovered.get("goal") or "<resume>"),
+                            project=str(recovered.get("project_display") or recovered.get("project_name") or "-"),
+                            path=str(recovered.get("project_path") or "-"),
                         ),
                         event_type="status",
                         raw={"status_key": "heartbeat", "replace": True},
@@ -122,6 +138,7 @@ class AgentCoordinator:
                 self.ensure_worker(chat_id)
 
     async def shutdown(self) -> None:
+        self._shutting_down = True
         active_invocations = list(self._active_invocations.values())
         for invocation in active_invocations:
             invocation.cancel()
@@ -129,21 +146,24 @@ class AgentCoordinator:
         for task in list(self._worker_tasks.values()):
             task.cancel()
         for task in list(self._worker_tasks.values()):
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            await self._await_background_task(task)
         self._worker_tasks.clear()
         for task in list(self._queue_watchdogs.values()):
             task.cancel()
         for task in list(self._queue_watchdogs.values()):
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            await self._await_background_task(task)
         self._queue_watchdogs.clear()
 
         if self._scheduler_task is not None:
             self._scheduler_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._scheduler_task
+            await self._await_background_task(self._scheduler_task)
             self._scheduler_task = None
+
+    async def _await_background_task(self, task: asyncio.Task[None] | None) -> None:
+        if task is None:
+            return
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
 
     async def _wait_invocations_exit(self, invocations: list[RunningInvocation]) -> None:
         for invocation in invocations:
@@ -191,25 +211,39 @@ class AgentCoordinator:
                 return
             next_job = queue[0]
             elapsed = int(monotonic() - started)
-            await self._emit(
-                chat_id,
-                "\n".join(
-                    [
-                        "排隊中 ...",
-                        f"kind: {next_job.get('kind') or 'provider'}",
-                        f"doing: {next_job.get('goal') or '<resume>'}",
-                        f"project: {next_job.get('project_display') or next_job.get('project_name') or '-'}",
-                        f"path: {next_job.get('project_path') or '-'}",
-                        "phase: queue: waiting for worker",
-                        f"queue_pending: {len(queue)}",
-                        f"elapsed: {self._format_elapsed(elapsed)}",
-                    ]
-                ),
-                event_type="status",
-                request_id=str(next_job.get("request_id") or "").strip() or None,
-                raw={"status_key": str(next_job.get("status_key") or "heartbeat"), "replace": True},
-            )
+            display_mode = self._store.get_display_mode(chat_id)
+            if self._should_emit_live_status(chat_id):
+                await self._emit(
+                    chat_id,
+                    format_queue_waiting(
+                        display_mode,
+                        kind=str(next_job.get("kind") or "provider"),
+                        goal=str(next_job.get("goal") or "<resume>"),
+                        project=str(next_job.get("project_display") or next_job.get("project_name") or "-"),
+                        path=str(next_job.get("project_path") or "-"),
+                        queue_pending=len(queue),
+                        elapsed=self._format_elapsed(elapsed),
+                    ),
+                    event_type="status",
+                    request_id=str(next_job.get("request_id") or "").strip() or None,
+                    raw={"status_key": str(next_job.get("status_key") or "heartbeat"), "replace": True},
+                )
             await asyncio.sleep(1)
+
+    def _find_inflight_request(self, chat_id: int, request_id: str) -> tuple[str, int, bool] | None:
+        clean = str(request_id or "").strip()
+        if not clean:
+            return None
+
+        current = self._store.get_chat_state(chat_id).get("agent_current_run")
+        if isinstance(current, dict) and str(current.get("request_id") or "").strip() == clean:
+            return str(current.get("job_id") or ""), 1, self.is_running(chat_id)
+
+        queue = self._store.get_agent_queue(chat_id)
+        for index, item in enumerate(queue, start=1):
+            if isinstance(item, dict) and str(item.get("request_id") or "").strip() == clean:
+                return str(item.get("job_id") or ""), index, False
+        return None
 
     def enqueue(
         self,
@@ -220,6 +254,13 @@ class AgentCoordinator:
         request_id: str | None = None,
         status_key: str | None = None,
     ) -> tuple[str, int, bool]:
+        clean_request_id = str(request_id or "").strip()
+        if clean_request_id:
+            existing = self._find_inflight_request(chat_id, clean_request_id)
+            if existing is not None:
+                job_id, position, running = existing
+                return job_id, position, running
+
         state = self._store.get_chat_state(chat_id)
         project_display = format_project_with_branch(
             str(state["project_name"]),
@@ -236,13 +277,14 @@ class AgentCoordinator:
             model=str(state["model"]),
             thread_id=state["thread_id"],
             source=source,
-            request_id=request_id,
+            request_id=clean_request_id or None,
             status_key=status_key,
         )
         position = self._store.enqueue_agent_job(chat_id, job.to_dict())
         started = position == 1 and not self.is_running(chat_id)
         self.ensure_worker(chat_id)
         return job.job_id, position, started
+
 
     def enqueue_auto_dev(
         self,
@@ -466,34 +508,39 @@ class AgentCoordinator:
         while True:
             now = datetime.now().replace(second=0, microsecond=0)
             for chat_id in self._store.list_chat_ids():
-                await self._process_brain_automation(chat_id, now)
-                await self._maybe_sync_google_schedules(chat_id, now)
-                schedules = self._store.get_agent_schedules(chat_id)
-                due: list[dict[str, Any]] = []
-                keep: list[dict[str, Any]] = []
-                for job in schedules:
-                    run_at = str(job.get("run_at") or "").strip()
-                    if not run_at:
-                        keep.append(job)
-                        continue
-                    try:
-                        when = datetime.fromisoformat(run_at).replace(second=0, microsecond=0)
-                    except ValueError:
-                        keep.append(job)
-                        continue
-                    if when <= now:
-                        due.append(job)
-                    else:
-                        keep.append(job)
+                try:
+                    await self._process_brain_automation(chat_id, now)
+                    await self._maybe_sync_google_schedules(chat_id, now)
+                    schedules = self._store.get_agent_schedules(chat_id)
+                    due: list[dict[str, Any]] = []
+                    keep: list[dict[str, Any]] = []
+                    for job in schedules:
+                        run_at = str(job.get("run_at") or "").strip()
+                        if not run_at:
+                            keep.append(job)
+                            continue
+                        try:
+                            when = datetime.fromisoformat(run_at).replace(second=0, microsecond=0)
+                        except ValueError:
+                            keep.append(job)
+                            continue
+                        if when <= now:
+                            due.append(job)
+                        else:
+                            keep.append(job)
 
-                if not due:
+                    if not due:
+                        continue
+
+                    self._store.set_agent_schedules(chat_id, keep)
+                    for job in due:
+                        self._store.enqueue_agent_job(chat_id, job)
+                    await self._emit(chat_id, f"Scheduled run moved to queue.\ncount: {len(due)}")
+                    self.ensure_worker(chat_id)
+                except Exception:
+                    if self._shutting_down:
+                        raise
                     continue
-
-                self._store.set_agent_schedules(chat_id, keep)
-                for job in due:
-                    self._store.enqueue_agent_job(chat_id, job)
-                await self._emit(chat_id, f"Scheduled run moved to queue.\ncount: {len(due)}")
-                self.ensure_worker(chat_id)
 
             await asyncio.sleep(15)
 
@@ -542,8 +589,13 @@ class AgentCoordinator:
         current_date = now.strftime("%Y-%m-%d")
         daily_time = str(automation.get("daily_time") or "21:00").strip()
         if daily_time == now.strftime("%H:%M") and str(automation.get("last_daily_date") or "") != current_date:
-            text = build_daily_brief(self._settings)
-            reminders = collect_brain_reminders(self._settings, limit=5)
+            try:
+                text = build_daily_brief(self._settings)
+                reminders = collect_brain_reminders(self._settings, limit=5)
+            except RuntimeError as exc:
+                if self._is_brain_vault_unconfigured(exc):
+                    return
+                raise
             payload = "\n".join([text, "", "提醒：", *reminders])
             await self._emit(chat_id, payload)
             self._store.update_brain_automation(chat_id, last_daily_date=current_date)
@@ -552,12 +604,22 @@ class AgentCoordinator:
         weekly_time = str(automation.get("weekly_time") or "09:00").strip()
         week_key = now.strftime("%G-W%V")
         if now.weekday() == weekly_day and weekly_time == now.strftime("%H:%M") and str(automation.get("last_weekly_key") or "") != week_key:
-            payload = build_weekly_brief(self._settings, limit=10)
+            try:
+                payload = build_weekly_brief(self._settings, limit=10)
+            except RuntimeError as exc:
+                if self._is_brain_vault_unconfigured(exc):
+                    return
+                raise
             await self._emit(chat_id, payload)
             self._store.update_brain_automation(chat_id, last_weekly_key=week_key)
 
         lookahead_minutes = self._coerce_schedule_window(automation.get("schedule_alert_window_minutes"))
-        schedule = get_active_or_next_schedule(self._settings, now=now, lookahead_minutes=lookahead_minutes)
+        try:
+            schedule = get_active_or_next_schedule(self._settings, now=now, lookahead_minutes=lookahead_minutes)
+        except RuntimeError as exc:
+            if self._is_brain_vault_unconfigured(exc):
+                return
+            raise
         last_schedule_key = str(automation.get("last_schedule_alert_key") or "")
         if schedule is None:
             if last_schedule_key:
@@ -568,11 +630,20 @@ class AgentCoordinator:
         if schedule_key == last_schedule_key:
             return
 
-        payload = build_schedule_alert(self._settings, now=now)
+        try:
+            payload = build_schedule_alert(self._settings, now=now)
+        except RuntimeError as exc:
+            if self._is_brain_vault_unconfigured(exc):
+                return
+            raise
         if payload is None:
             return
         await self._emit(chat_id, payload)
         self._store.update_brain_automation(chat_id, last_schedule_alert_key=schedule_key)
+
+    @staticmethod
+    def _is_brain_vault_unconfigured(exc: RuntimeError) -> bool:
+        return "Brain vault path is not configured." in str(exc)
 
     @staticmethod
     def _coerce_schedule_window(value: Any) -> int:
@@ -623,28 +694,31 @@ class AgentCoordinator:
             invocation = RunningInvocation()
             invocation.set_phase("agent: starting")
             self._active_invocations[chat_id] = invocation
-            await self._emit(
-                chat_id,
-                "\n".join(
-                    [
-                        "Agent run started.",
-                        f"kind: {job.get('kind') or 'provider'}",
-                        f"goal: {job.get('goal') or '<resume>'}",
-                        f"project: {job.get('project_display') or job.get('project_name')}",
-                        f"path: {job.get('project_path')}",
-                        f"provider: {job.get('provider')}",
-                        f"model/profile: {job.get('model')}",
-                        f"phase: {invocation.get_phase()}",
-                        f"queue_pending: {len(self._store.get_agent_queue(chat_id))}",
-                        f"progress: {self._build_heartbeat_progress(0)}",
-                        f"elapsed: {self._format_elapsed(0)}",
-                        "heartbeat: active",
-                    ]
-                ),
-                event_type="status",
-                request_id=str(job.get("request_id") or "").strip() or None,
-                raw={"status_key": str(job.get("status_key") or "heartbeat"), "replace": True},
-            )
+            display_mode = self._store.get_display_mode(chat_id)
+            if self._should_emit_live_status(chat_id):
+                await self._emit(
+                    chat_id,
+                    format_worker_started(
+                        display_mode,
+                        kind=str(job.get("kind") or "provider"),
+                        goal=str(job.get("goal") or "<resume>"),
+                        project=str(job.get("project_display") or job.get("project_name") or "-"),
+                        path=str(job.get("project_path") or "-"),
+                        provider=str(job.get("provider") or "-"),
+                        model=str(job.get("model") or "-"),
+                        phase=str(invocation.get_phase()),
+                        queue_pending=len(self._store.get_agent_queue(chat_id)),
+                        progress=self._build_heartbeat_progress(0),
+                        elapsed=self._format_elapsed(0),
+                    ),
+                    event_type="status",
+                    request_id=str(job.get("request_id") or "").strip() or None,
+                    raw={
+                        "status_key": str(job.get("status_key") or "heartbeat"),
+                        "replace": True,
+                        "typing": "active",
+                    },
+                )
 
             heartbeat_task = asyncio.create_task(self._heartbeat_loop(chat_id, job, invocation))
             started = datetime.now()
@@ -693,6 +767,16 @@ class AgentCoordinator:
                 cancelled_by_shutdown = True
                 invocation.cancel()
                 result = None
+            except Exception as exc:
+                result = AgentRunResult(
+                    provider=str(job.get("provider") or "codex"),
+                    model=str(job.get("model") or ""),
+                    final_text=f"Agent run failed before execution completed.\nerror: {exc.__class__.__name__}: {exc}",
+                    thread_id=job.get("thread_id") if isinstance(job.get("thread_id"), str) else None,
+                    return_code=1,
+                    elapsed_seconds=int((datetime.now() - started).total_seconds()),
+                    cancelled=False,
+                )
             finally:
                 heartbeat_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -722,19 +806,25 @@ class AgentCoordinator:
                         "return_code": 130,
                     },
                 )
-                await self._emit(
-                    chat_id,
-                    "\n".join(
-                        [
-                            "Agent run stopped during shutdown.",
-                            f"kind: {job.get('kind') or 'provider'}",
-                            f"goal: {job.get('goal') or '<resume>'}",
-                        ]
-                    ),
-                    event_type="status",
-                    request_id=str(job.get("request_id") or "").strip() or None,
-                    raw={"status_key": str(job.get("status_key") or "heartbeat"), "replace": True},
-                )
+                if self._should_emit_live_status(chat_id):
+                    await self._emit(
+                        chat_id,
+                        format_run_stopped(
+                            self._store.get_display_mode(chat_id),
+                            kind=str(job.get("kind") or "provider"),
+                            goal=str(job.get("goal") or "<resume>"),
+                            project=str(job.get("project_display") or job.get("project_name") or "-"),
+                            path=str(job.get("project_path") or "-"),
+                            elapsed=self._format_elapsed(elapsed_seconds),
+                        ),
+                        event_type="status",
+                        request_id=str(job.get("request_id") or "").strip() or None,
+                        raw={
+                            "status_key": str(job.get("status_key") or "heartbeat"),
+                            "replace": True,
+                            "typing": "stop",
+                        },
+                    )
                 self._worker_tasks.pop(chat_id, None)
                 return
 
@@ -763,25 +853,42 @@ class AgentCoordinator:
                 },
             )
             status_label = "stopped" if result.cancelled else ("ok" if result.return_code == 0 else "failed")
+            display_mode = self._store.get_display_mode(chat_id)
+            if self._should_emit_live_status(chat_id):
+                await self._emit(
+                    chat_id,
+                    format_run_finished(
+                        display_mode,
+                        kind=str(job.get("kind") or "provider"),
+                        goal=str(job.get("goal") or "<resume>"),
+                        project=str(job.get("project_display") or job.get("project_name") or "-"),
+                        path=str(job.get("project_path") or "-"),
+                        queue_pending=len(self._store.get_agent_queue(chat_id)),
+                        status=status_label,
+                        elapsed=self._format_elapsed(int(result.elapsed_seconds)),
+                    ),
+                    event_type="status",
+                    request_id=str(job.get("request_id") or "").strip() or None,
+                    raw={
+                        "status_key": str(job.get("status_key") or "heartbeat"),
+                        "replace": True,
+                        "typing": "stop",
+                    },
+                )
             await self._emit(
                 chat_id,
-                "\n".join(
-                    [
-                        "Agent run finished.",
-                        f"kind: {job.get('kind') or 'provider'}",
-                        f"goal: {job.get('goal') or '<resume>'}",
-                        f"project: {job.get('project_display') or job.get('project_name')}",
-                        f"path: {job.get('project_path')}",
-                        f"queue_pending: {len(self._store.get_agent_queue(chat_id))}",
-                        f"status: {status_label}",
-                        f"elapsed: {self._format_elapsed(int(result.elapsed_seconds))}",
-                    ]
+                format_output_text(
+                    display_mode,
+                    kind=str(job.get("kind") or "provider"),
+                    text=result.final_text,
+                    model=str(result.model or job.get("model") or "-"),
+                    success=(not result.cancelled and result.return_code == 0),
+                    project=str(job.get("project_display") or job.get("project_name") or "-"),
+                    elapsed=self._format_elapsed(int(result.elapsed_seconds)),
+                    cancelled=bool(result.cancelled),
                 ),
-                event_type="status",
-                request_id=str(job.get("request_id") or "").strip() or None,
-                raw={"status_key": str(job.get("status_key") or "heartbeat"), "replace": True},
+                event_type="output",
             )
-            await self._emit(chat_id, result.final_text, event_type="output")
 
     async def _heartbeat_loop(
         self,
@@ -795,25 +902,29 @@ class AgentCoordinator:
             current_goal = str(job.get("goal") or "").strip() or "<resume>"
             current_project = str(job.get("project_display") or job.get("project_name") or "-")
             phase = invocation.get_phase()
-            await self._emit(
-                chat_id,
-                "\n".join(
-                    [
-                        "執行中 ...",
-                        f"kind: {job.get('kind') or 'provider'}",
-                        f"doing: {current_goal}",
-                        f"project: {current_project}",
-                        f"path: {job.get('project_path') or '-'}",
-                        f"phase: {phase}",
-                        f"queue_pending: {len(self._store.get_agent_queue(chat_id))}",
-                        f"progress: {self._build_heartbeat_progress(elapsed)}",
-                        f"elapsed: {self._format_elapsed(elapsed)}",
-                    ]
-                ),
-                event_type="status",
-                request_id=str(job.get("request_id") or "").strip() or None,
-                raw={"status_key": str(job.get("status_key") or "heartbeat"), "replace": True},
-            )
+            display_mode = self._store.get_display_mode(chat_id)
+            if self._should_emit_live_status(chat_id) and normalize_display_mode(display_mode) != DISPLAY_MODE_USER:
+                await self._emit(
+                    chat_id,
+                    format_heartbeat(
+                        display_mode,
+                        kind=str(job.get("kind") or "provider"),
+                        goal=current_goal,
+                        project=current_project,
+                        path=str(job.get("project_path") or "-"),
+                        phase=phase,
+                        queue_pending=len(self._store.get_agent_queue(chat_id)),
+                        progress=self._build_heartbeat_progress(elapsed),
+                        elapsed=self._format_elapsed(elapsed),
+                    ),
+                    event_type="status",
+                    request_id=str(job.get("request_id") or "").strip() or None,
+                    raw={
+                        "status_key": str(job.get("status_key") or "heartbeat"),
+                        "replace": True,
+                        "typing": "active",
+                    },
+                )
             await asyncio.sleep(5)
 
     @staticmethod
@@ -855,6 +966,18 @@ class AgentCoordinator:
         queue = getattr(self._supervisor, "_event_queue", None)
         if queue is None:
             return
+        normalized_event_type = str(event_type or "").strip().lower()
+        status_key = ""
+        if normalized_event_type == "status" and isinstance(raw, dict):
+            status_key = str(raw.get("status_key") or "").strip()
+            if status_key:
+                previous = self._last_status_event_by_chat.get(chat_id)
+                current = (status_key, text)
+                if previous == current:
+                    return
+                self._last_status_event_by_chat[chat_id] = current
+        elif normalized_event_type != "status":
+            self._last_status_event_by_chat.pop(chat_id, None)
         queue.put_nowait(
             AppEvent(
                 type=event_type,

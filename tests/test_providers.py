@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from robot.config import load_settings
-from robot.providers import _run_claude, _run_codex, _run_process
+from robot.providers import _run_claude, _run_codex, _run_process, run_agent_request
 
 
 class ProvidersTests(unittest.TestCase):
@@ -121,10 +121,11 @@ class ProvidersTests(unittest.TestCase):
         self.assertEqual(result.thread_id, "thread-data")
         self.assertIn("hello data", result.final_text)
 
-    def test_run_codex_extracts_message_item_without_agent_message_type(self) -> None:
+    def test_run_codex_deduplicates_repeated_identical_assistant_output(self) -> None:
         stdout = "\n".join(
             [
-                '{"type":"item.completed","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"assistant via message item"}]}}',
+                '{"type":"response.output_text.delta","delta":"hello"}',
+                '{"type":"response.output_text.delta","delta":"hello"}',
             ]
         )
         completed = subprocess.CompletedProcess(["codex"], 0, stdout, "")
@@ -145,7 +146,8 @@ class ProvidersTests(unittest.TestCase):
                 )
             )
 
-        self.assertIn("assistant via message item", result.final_text)
+        self.assertEqual(result.return_code, 0)
+        self.assertEqual(result.final_text.count("hello"), 1)
 
     def test_run_codex_retries_once_on_stream_disconnect_without_text(self) -> None:
         first = subprocess.CompletedProcess(
@@ -273,7 +275,53 @@ class ProvidersTests(unittest.TestCase):
         self.assertEqual(result.thread_id, "session-fresh-1")
         self.assertIn("你好", result.final_text)
 
-    def test_run_process_uses_create_no_window_on_windows(self) -> None:
+    def test_run_agent_request_rejects_missing_claude_catalog_model(self) -> None:
+        result = asyncio.run(
+            run_agent_request(
+                self.settings,
+                provider="claude",
+                model="claude-not-real",
+                prompt="hello",
+                thread_id=None,
+                workdir=self.workdir,
+                project_label="robot",
+                invocation=None,
+            )
+        )
+
+        self.assertEqual(result.return_code, 1)
+        self.assertIn("Model not available for claude", result.final_text)
+
+    def test_run_agent_request_keeps_codex_custom_model_path(self) -> None:
+        async def fake_run_codex(*args, **kwargs):
+            return type("Result", (), {
+                "provider": "codex",
+                "model": "gpt-unknown-custom",
+                "final_text": "ok",
+                "thread_id": None,
+                "return_code": 0,
+                "elapsed_seconds": 1,
+                "cancelled": False,
+            })()
+
+        with patch("robot.providers._run_codex", side_effect=fake_run_codex) as mock_run:
+            result = asyncio.run(
+                run_agent_request(
+                    self.settings,
+                    provider="codex",
+                    model="gpt-unknown-custom",
+                    prompt="hello",
+                    thread_id=None,
+                    workdir=self.workdir,
+                    project_label="robot",
+                    invocation=None,
+                )
+            )
+
+        mock_run.assert_called_once()
+        self.assertEqual(result.return_code, 0)
+        self.assertEqual(result.final_text, "ok")
+
         captured: dict[str, object] = {}
 
         class DummyProcess:

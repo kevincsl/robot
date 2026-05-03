@@ -11,15 +11,36 @@ from telegram.error import Conflict
 from telegram.ext import ContextTypes
 from teleapp import TeleApp
 from teleapp.protocol import AppEvent
+from teleapp.telegram_gateway import TelegramGateway
 
 from robot.agents import AgentCoordinator
 from robot.config import load_settings, robot_lock_path
+from robot.display_mode import DISPLAY_MODE_USER, normalize_display_mode
 from robot.projects import format_project_with_branch
 from robot.routing import AGENT_REQUEST, classify_request, handle_request, heartbeat_status_key
 from robot.state import ChatStateStore
 from robot.text import configure_stdio_utf8
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _patch_teleapp_noop_event() -> None:
+    if getattr(TelegramGateway, "_robot_noop_event_patch", False):
+        return
+
+    original_send_event = TelegramGateway._send_event
+
+    async def _send_event_with_noop(self, app, chat_id: int, event: AppEvent) -> None:
+        event_type = str(getattr(event, "type", "") or "").strip().lower()
+        if event_type == "noop":
+            return
+        await original_send_event(self, app, chat_id, event)
+
+    TelegramGateway._send_event = _send_event_with_noop
+    setattr(TelegramGateway, "_robot_noop_event_patch", True)
+
+
+_patch_teleapp_noop_event()
 
 SETTINGS = load_settings()
 STORE = ChatStateStore(SETTINGS)
@@ -76,6 +97,9 @@ async def on_message(ctx):
         queue = getattr(app.supervisor, "_event_queue", None)
         if queue is not None:
             state = STORE.get_chat_state(ctx.chat_id)
+            display_mode = normalize_display_mode(str(state.get("display_mode") or "developer"))
+            if display_mode == DISPLAY_MODE_USER:
+                return await handle_request(ctx, SETTINGS, STORE, AGENTS)
             queue_pending = len(STORE.get_agent_queue(ctx.chat_id))
             project_display = format_project_with_branch(
                 str(state["project_name"]),
@@ -97,7 +121,10 @@ async def on_message(ctx):
                     chat_id=ctx.chat_id,
                     request_id=ctx.request_id,
                     stream="inprocess",
-                    raw={"status_key": heartbeat_status_key(ctx.request_id), "replace": False},
+                    raw={
+                        "status_key": heartbeat_status_key(ctx.request_id),
+                        "replace": False,
+                    },
                 )
             )
     return await handle_request(ctx, SETTINGS, STORE, AGENTS)

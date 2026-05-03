@@ -93,6 +93,8 @@ def _resolve_path(settings: Settings, raw_path: str) -> Path:
         candidate = (settings.project_root / candidate).resolve()
     else:
         candidate = candidate.resolve()
+    if not candidate.exists():
+        raise ValueError(f"project path does not exist: {candidate}")
     return candidate
 
 

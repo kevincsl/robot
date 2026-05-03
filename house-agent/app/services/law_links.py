@@ -253,7 +253,7 @@ def question_law_ids_map(
 
     structured = db.query(QuestionLawArticleRef).all()
     for ref in structured:
-        if question_ids is not None and ref.question_id not in mapping:
+        if ref.question_id not in mapping:
             continue
         mapping.setdefault(ref.question_id, set()).add(ref.law_id)
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -62,6 +64,9 @@ ADMIN_AUDIT_LOGS_PAGE_SIZE = 20
 LOGIN_RATE_LIMIT = (5, 60)
 OAUTH_START_RATE_LIMIT = (10, 300)
 OAUTH_CALLBACK_RATE_LIMIT = (10, 300)
+
+# Load local environment variables (e.g. OAuth client id/secret) before handling requests.
+load_dotenv()
 
 
 def _render(request: Request, template_name: str, context: dict, current_user) -> HTMLResponse:
@@ -298,6 +303,14 @@ def login_page(request: Request, db: Session = Depends(get_session)):
     )
 
 
+@app.get("/health/oauth")
+def oauth_health():
+    return {
+        "google_oauth_enabled": google_oauth_enabled(),
+        "github_oauth_enabled": github_oauth_enabled(),
+    }
+
+
 @app.post("/login")
 async def login_submit(request: Request, db: Session = Depends(get_session)):
     await validate_csrf(request)
@@ -341,16 +354,27 @@ def google_oauth_callback(request: Request, code: str = "", state: str = "", db:
         limit=OAUTH_CALLBACK_RATE_LIMIT[0],
         window_seconds=OAUTH_CALLBACK_RATE_LIMIT[1],
     )
-    validate_oauth_state(request, state)
-    profile = exchange_google_code_for_profile(request, code)
-    user = get_or_create_oauth_user(
-        db,
-        provider=GOOGLE_PROVIDER,
-        provider_user_id=str(profile.get("sub") or ""),
-        email=str(profile.get("email") or "").strip() or None,
-        display_name=str(profile.get("name") or "").strip() or None,
-        avatar_url=str(profile.get("picture") or "").strip() or None,
-    )
+    try:
+        validate_oauth_state(request, state)
+        profile = exchange_google_code_for_profile(request, code)
+        user = get_or_create_oauth_user(
+            db,
+            provider=GOOGLE_PROVIDER,
+            provider_user_id=str(profile.get("sub") or ""),
+            email=str(profile.get("email") or "").strip() or None,
+            display_name=str(profile.get("name") or "").strip() or None,
+            avatar_url=str(profile.get("picture") or "").strip() or None,
+        )
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            raise
+        response = RedirectResponse(url="/login?error=google_oauth_failed", status_code=303)
+        clear_oauth_state_cookie(response, request)
+        return response
+    except (httpx.HTTPError, ValueError):
+        response = RedirectResponse(url="/login?error=google_oauth_failed", status_code=303)
+        clear_oauth_state_cookie(response, request)
+        return response
     response = RedirectResponse(url="/", status_code=303)
     clear_oauth_state_cookie(response, request)
     set_login_cookie(response, user, request)
@@ -379,17 +403,28 @@ def github_oauth_callback(request: Request, code: str = "", state: str = "", db:
         limit=OAUTH_CALLBACK_RATE_LIMIT[0],
         window_seconds=OAUTH_CALLBACK_RATE_LIMIT[1],
     )
-    validate_oauth_state(request, state)
-    profile = exchange_github_code_for_profile(request, code)
-    user = get_or_create_oauth_user(
-        db,
-        provider=GITHUB_PROVIDER,
-        provider_user_id=str(profile.get("id") or ""),
-        email=str(profile.get("email") or "").strip() or None,
-        display_name=str(profile.get("name") or "").strip() or None,
-        avatar_url=str(profile.get("avatar_url") or "").strip() or None,
-        fallback_username=str(profile.get("login") or "").strip() or None,
-    )
+    try:
+        validate_oauth_state(request, state)
+        profile = exchange_github_code_for_profile(request, code)
+        user = get_or_create_oauth_user(
+            db,
+            provider=GITHUB_PROVIDER,
+            provider_user_id=str(profile.get("id") or ""),
+            email=str(profile.get("email") or "").strip() or None,
+            display_name=str(profile.get("name") or "").strip() or None,
+            avatar_url=str(profile.get("avatar_url") or "").strip() or None,
+            fallback_username=str(profile.get("login") or "").strip() or None,
+        )
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            raise
+        response = RedirectResponse(url="/login?error=github_oauth_failed", status_code=303)
+        clear_oauth_state_cookie(response, request)
+        return response
+    except (httpx.HTTPError, ValueError):
+        response = RedirectResponse(url="/login?error=github_oauth_failed", status_code=303)
+        clear_oauth_state_cookie(response, request)
+        return response
     response = RedirectResponse(url="/", status_code=303)
     clear_oauth_state_cookie(response, request)
     set_login_cookie(response, user, request)

@@ -12,6 +12,7 @@ import threading
 from typing import Any
 
 from robot.config import Settings, normalize_provider
+from robot.model_catalog import validate_selected_model
 from robot.text import normalize_text
 
 
@@ -126,6 +127,20 @@ def _merge_assistant_text(delta_text: str, snapshot_text: str) -> str:
     return delta_clean or snapshot_clean
 
 
+def _collapse_repeated_text(text: str) -> str:
+    clean = _safe_text(text).strip()
+    if not clean:
+        return ""
+    length = len(clean)
+    for unit in range(1, (length // 2) + 1):
+        if length % unit != 0:
+            continue
+        piece = clean[:unit]
+        if piece * (length // unit) == clean:
+            return piece
+    return clean
+
+
 def _parse_json_event_line(line: str) -> dict[str, Any] | None:
     candidate = line.strip()
     if not candidate:
@@ -207,7 +222,7 @@ def _parse_codex_stream(
         if event_type == "error":
             latest_detail = str(event.get("message") or "").strip() or latest_detail
 
-    assistant_text = _merge_assistant_text("".join(assistant_delta_chunks), assistant_snapshot)
+    assistant_text = _collapse_repeated_text(_merge_assistant_text("".join(assistant_delta_chunks), assistant_snapshot))
     detail = latest_detail or stderr_text
     return next_thread_id, assistant_text, detail
 
@@ -373,6 +388,17 @@ async def run_agent_request(
     invocation: RunningInvocation | None = None,
 ) -> AgentRunResult:
     normalized = normalize_provider(provider)
+    _is_catalog_model, validation_error = validate_selected_model(settings, normalized, model)
+    if validation_error:
+        return AgentRunResult(
+            provider=normalized,
+            model=model,
+            final_text=validation_error,
+            thread_id=thread_id,
+            return_code=1,
+            elapsed_seconds=0,
+            cancelled=False,
+        )
     if normalized == "codex":
         return await _run_codex(
             settings,

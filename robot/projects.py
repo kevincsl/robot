@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,7 +56,7 @@ def discover_project_workspaces(settings: Settings) -> list[ProjectWorkspace]:
     workspaces: list[ProjectWorkspace] = []
     seen: set[str] = set()
 
-    for root in settings.projects_roots:
+    for root in _effective_projects_roots(settings):
         if not root.exists() or not root.is_dir():
             continue
 
@@ -84,6 +85,81 @@ def discover_project_workspaces(settings: Settings) -> list[ProjectWorkspace]:
 
     workspaces.sort(key=lambda item: item.label.lower())
     return workspaces
+
+
+def _projects_roots_state_path(settings: Settings) -> Path:
+    return settings.state_home / "projects_roots.json"
+
+
+def _normalize_root(path: str | Path) -> Path:
+    return Path(path).expanduser().resolve()
+
+
+def _read_projects_roots_state(settings: Settings) -> dict[str, list[str]]:
+    path = _projects_roots_state_path(settings)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {"roots": []}
+    if not isinstance(raw, dict):
+        return {"roots": []}
+    roots = raw.get("roots")
+    if not isinstance(roots, list):
+        return {"roots": []}
+    clean_roots = [str(item).strip() for item in roots if str(item).strip()]
+    return {"roots": clean_roots}
+
+
+def _write_projects_roots_state(settings: Settings, roots: list[Path]) -> None:
+    path = _projects_roots_state_path(settings)
+    payload = {"roots": [str(item) for item in roots]}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _effective_projects_roots(settings: Settings) -> list[Path]:
+    configured = [_normalize_root(path) for path in settings.projects_roots]
+    state = _read_projects_roots_state(settings)
+    dynamic = [_normalize_root(path) for path in state.get("roots", [])]
+    merged: list[Path] = []
+    seen: set[str] = set()
+    for item in [*configured, *dynamic]:
+        marker = str(item)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        merged.append(item)
+    return merged
+
+
+def list_projects_roots(settings: Settings) -> list[Path]:
+    return _effective_projects_roots(settings)
+
+
+def add_projects_root(settings: Settings, path: str) -> list[Path]:
+    candidate = _normalize_root(path)
+    state = _read_projects_roots_state(settings)
+    current = [_normalize_root(item) for item in state.get("roots", [])]
+    merged: list[Path] = []
+    seen: set[str] = set()
+    for item in [*current, candidate]:
+        marker = str(item)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        merged.append(item)
+    _write_projects_roots_state(settings, merged)
+    return _effective_projects_roots(settings)
+
+
+def remove_projects_root(settings: Settings, path: str) -> tuple[bool, list[Path]]:
+    candidate = _normalize_root(path)
+    state = _read_projects_roots_state(settings)
+    current = [_normalize_root(item) for item in state.get("roots", [])]
+    next_roots = [item for item in current if item != candidate]
+    removed = len(next_roots) != len(current)
+    _write_projects_roots_state(settings, next_roots)
+    return removed, _effective_projects_roots(settings)
 
 
 def get_default_workspace(settings: Settings) -> ProjectWorkspace:

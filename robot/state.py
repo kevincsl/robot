@@ -6,6 +6,7 @@ import threading
 from typing import Any
 
 from robot.config import Settings, normalize_model, normalize_provider
+from robot.display_mode import DISPLAY_MODE_DEVELOPER, normalize_display_mode
 from robot.projects import get_default_workspace
 from robot.text import normalize_text
 
@@ -132,6 +133,7 @@ class ChatStateStore:
 
         models[provider] = normalize_model(provider, models.get(provider) or self._settings.default_model)
         bucket["provider"] = provider
+        bucket["display_mode"] = normalize_display_mode(bucket.get("display_mode") or DISPLAY_MODE_DEVELOPER)
         bucket.setdefault("project_key", default_workspace.key)
         bucket.setdefault("project_name", default_workspace.label)
         bucket.setdefault("project_path", str(default_workspace.path))
@@ -174,6 +176,7 @@ class ChatStateStore:
                 "project_key": bucket.get("project_key") or None,
                 "project_name": bucket.get("project_name") or None,
                 "project_path": bucket.get("project_path") or None,
+                "display_mode": normalize_display_mode(bucket.get("display_mode")),
                 "agent_current_run": bucket.get("agent_current_run"),
                 "agent_last_run": bucket.get("agent_last_run"),
                 "last_provider_timing": bucket.get("last_provider_timing") if isinstance(bucket.get("last_provider_timing"), dict) else {},
@@ -196,6 +199,18 @@ class ChatStateStore:
             bucket = self._bucket(chat_id)
             provider = bucket["provider"]
             bucket["models"][provider] = normalize_model(provider, model)
+            self._save()
+            return self.get_chat_state(chat_id)
+
+    def get_display_mode(self, chat_id: int) -> str:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            return normalize_display_mode(bucket.get("display_mode"))
+
+    def set_display_mode(self, chat_id: int, mode: str) -> dict[str, Any]:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            bucket["display_mode"] = normalize_display_mode(mode)
             self._save()
             return self.get_chat_state(chat_id)
 
@@ -421,7 +436,7 @@ class ChatStateStore:
 
     def list_chat_ids(self) -> list[int]:
         with self._lock:
-            chats = self._state.setdefault("chats", {})
+            chats = self._robot_chats()
             result: list[int] = []
             for raw in chats.keys():
                 try:

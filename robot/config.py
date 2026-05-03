@@ -26,9 +26,11 @@ PROVIDER_LABELS = {
 
 SUPPORTED_MODELS = {
     "codex": [
-        "gpt-5.3-codex",
         "gpt-5.4",
+        "gpt-5.5",
+        "gpt-5.3-codex",
         "gpt-5.4-mini",
+        "gpt-5.2",
         "custom",
     ],
     "claude": [
@@ -47,8 +49,10 @@ SUPPORTED_MODELS = {
 MODEL_CHOICES = {
     "codex": [
         ("gpt-5.3-codex", "gpt-5.3-codex | coding"),
+        ("gpt-5.5", "gpt-5.5 | frontier"),
         ("gpt-5.4", "gpt-5.4 | strong general"),
         ("gpt-5.4-mini", "gpt-5.4-mini | fast general"),
+        ("gpt-5.2", "gpt-5.2 | long-running agents"),
         ("custom", "custom | specify any model"),
     ],
     "claude": [
@@ -66,9 +70,11 @@ MODEL_CHOICES = {
 
 MODEL_DESCRIPTIONS = {
     "codex": {
-        "gpt-5.3-codex": "Latest frontier agentic coding model.",
-        "gpt-5.4": "Latest frontier agentic coding model.",
-        "gpt-5.4-mini": "Fast and cost-efficient GPT-5.4 variant.",
+        "gpt-5.3-codex": "Coding-optimized model.",
+        "gpt-5.5": "Frontier model for complex coding, research, and real-world work.",
+        "gpt-5.4": "Strong model for everyday coding.",
+        "gpt-5.4-mini": "Small, fast, and cost-efficient model for simpler coding tasks.",
+        "gpt-5.2": "Optimized for professional work and long-running agents.",
         "custom": "Use any model (e.g. deepseek-chat, qwen-turbo).",
     },
     "claude": {
@@ -136,6 +142,8 @@ def normalize_provider(provider: str | None) -> str:
 def normalize_model(provider: str, model: str | None) -> str:
     normalized_provider = normalize_provider(provider)
     candidate = (model or "").strip()
+    if normalized_provider == "codex" and candidate == "gpt-5.3-codex":
+        candidate = "gpt-5.4"
     if not candidate or candidate.lower() == "default":
         return SUPPORTED_MODELS[normalized_provider][0]
     if candidate in SUPPORTED_MODELS.get(normalized_provider, []):
@@ -192,7 +200,7 @@ def load_settings(project_root: Path | None = None) -> Settings:
         robot_id = f"robot-{hash(token) % 100000:05d}" if token else "robot-unknown"
 
     default_provider = normalize_provider(os.getenv("ROBOT_DEFAULT_PROVIDER", "codex"))
-    default_model = normalize_model(default_provider, os.getenv("ROBOT_DEFAULT_MODEL", "gpt-5.3-codex"))
+    default_model = normalize_model(default_provider, os.getenv("ROBOT_DEFAULT_MODEL", "gpt-5.4"))
 
     commands = {
         "codex": _split_command(os.getenv("ROBOT_CODEX_CMD", "codex")),

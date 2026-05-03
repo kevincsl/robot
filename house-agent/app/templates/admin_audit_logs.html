@@ -1,10 +1,18 @@
 {% extends "base.html" %}
 {% block title %}審計紀錄 | House Agent{% endblock %}
 {% block content %}
+{% macro audit_value_label(value) -%}
+  {%- if value == "active" -%}啟用中
+  {%- elif value == "disabled" -%}已停用
+  {%- elif value == "local_or_oauth" -%}本機或 OAuth
+  {%- elif value == "oauth_only" -%}僅限 OAuth
+  {%- else -%}{{ value }}
+  {%- endif -%}
+{%- endmacro %}
 <div class="mb-5 flex items-center justify-between">
   <div>
     <h1 class="text-2xl font-bold">審計紀錄</h1>
-    <div class="text-sm text-slate-500">查詢管理者對帳號權限、狀態與登入策略的變更紀錄。</div>
+    <div class="text-sm text-slate-500">追蹤後台操作、帳號狀態切換與登入政策變更。</div>
   </div>
   <a href="/admin/users" class="btn-secondary">返回使用者管理</a>
 </div>
@@ -32,7 +40,7 @@
     </div>
     <div class="flex items-end gap-2 md:col-span-4">
       <button type="submit" class="btn-primary">搜尋</button>
-      <a href="/admin/audit-logs" class="btn-secondary">清除條件</a>
+      <a href="/admin/audit-logs" class="btn-secondary">重設篩選</a>
       <span class="ml-auto text-sm text-slate-500">共 {{ total_logs }} 筆，第 {{ page }} / {{ total_pages }} 頁</span>
     </div>
   </form>
@@ -47,7 +55,7 @@
           <th class="py-2 pr-3">操作者</th>
           <th class="py-2 pr-3">目標</th>
           <th class="py-2 pr-3">動作</th>
-          <th class="py-2 pr-3">明細</th>
+          <th class="py-2 pr-3">變更內容</th>
         </tr>
       </thead>
       <tbody>
@@ -59,7 +67,8 @@
           <td class="py-2 pr-3">{{ row.log.action }}</td>
           <td class="py-2 pr-3 text-slate-600">
             {% if row.log.details %}
-            {{ row.log.details.get("before", "") }} → {{ row.log.details.get("after", "") }}
+            {{ audit_value_label(row.log.details.get("before", "")) }} → {{ audit_value_label(row.log.details.get("after", "")) }}
+            <span class="sr-only">{{ row.log.details.get("before", "") }} {{ row.log.details.get("after", "") }}</span>
             {% else %}
             -
             {% endif %}
@@ -67,7 +76,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="5" class="py-8 text-center text-slate-500">沒有符合條件的審計紀錄。</td>
+          <td colspan="5" class="py-8 text-center text-slate-500">找不到符合條件的稽核紀錄。</td>
         </tr>
         {% endfor %}
       </tbody>

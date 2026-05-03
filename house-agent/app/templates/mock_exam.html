@@ -3,23 +3,23 @@
 {% block content %}
 <div class="flex flex-wrap items-center gap-3 mb-5">
   <div>
-    <h1 class="text-2xl font-bold">正式模擬考</h1>
+    <h1 class="text-2xl font-bold">開始模擬考</h1>
     <p class="text-sm text-slate-500 mt-1">
-      本卷採原始作答計分，不使用法條權重調整分數。及格標準固定為 60 分。
+      系統會依各科題庫自動組卷，完成後立即評分。及格門檻為 60 分。
     </p>
   </div>
   <div class="ml-auto flex gap-2 flex-wrap text-sm">
     <span class="badge bg-blue-50 text-blue-700">{{ subject_count }} 科</span>
     <span class="badge bg-slate-100 text-slate-700">{{ total_questions }} 題</span>
-    <span class="badge bg-amber-50 text-amber-700">每科目標 {{ paper.per_subject_target }} 題</span>
+    <span class="badge bg-amber-50 text-amber-700">每科上限 {{ paper.per_subject_target }} 題</span>
   </div>
 </div>
 
 {% if not paper.questions %}
 <div class="card text-center text-slate-500 py-16">
-  <div class="text-5xl mb-4">?</div>
-  <p class="font-medium">目前沒有可組卷的選擇題</p>
-  <p class="text-sm mt-1">請先確認題庫已匯入，且題目包含標準答案。</p>
+  <div class="text-5xl mb-4">0</div>
+  <p class="font-medium">目前沒有可用的選擇題。</p>
+  <p class="text-sm mt-1">請先匯入題庫資料，再回來建立模擬考。</p>
 </div>
 {% else %}
 <form method="post" action="/mock-exam" class="space-y-5">
@@ -47,7 +47,7 @@
   <div class="sticky bottom-4">
     <div class="card flex items-center justify-between gap-3 flex-wrap border-blue-100">
       <div class="text-sm text-slate-600">
-        送出後會保留原始分數與各科結果，法條權重只會用於學習重點建議。
+        送出後會立即計分，並依各科錯題與法條權重提供複習建議。
       </div>
       <button type="submit" class="btn-primary">交卷</button>
     </div>

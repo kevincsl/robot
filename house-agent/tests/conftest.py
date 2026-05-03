@@ -97,10 +97,10 @@ def seeded_db(db):
         year=111,
         body="試說明不動產物權登記之效力。",
         answer="重點：登記生效主義（民法§758）",
-        law_refs=["民法 §758"],
+        law_refs=[],
     )
     db.add(essay)
-    law = Law(code="B0000001", name="瘞?")
+    law = Law(code="B0000001", name="民法")
     db.add(law)
     db.flush()
     article = LawArticle(law_id=law.id, article_no="758", body="Sample law article body.")

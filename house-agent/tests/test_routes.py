@@ -234,6 +234,29 @@ class TestMockExam:
         assert "60.0" in r.text
         assert "及格" in r.text
 
+    def test_mock_exam_page_sanitizes_private_use_glyphs(self, client, db):
+        from app.models import Question, QuestionType, Subject
+
+        subject = Subject(code="sanitized_mock_exam", name="模擬測試科目")
+        db.add(subject)
+        db.flush()
+        question = Question(
+            subject_id=subject.id,
+            type=QuestionType.CHOICE,
+            body="題目\ue18c內容",
+            options=[{"key": "A", "text": "選項\ue18e內容"}, {"key": "B", "text": "一般選項"}],
+            answer="A",
+        )
+        db.add(question)
+        db.commit()
+
+        r = client.get("/mock-exam")
+        assert r.status_code == 200
+        assert "\ue18c" not in r.text
+        assert "\ue18e" not in r.text
+        assert "題目A. 內容" in r.text
+        assert "選項C. 內容" in r.text
+
 
 class TestWrong:
     def test_wrong_page_loads(self, client, seeded_db):

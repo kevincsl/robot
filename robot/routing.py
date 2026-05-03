@@ -50,14 +50,33 @@ from robot.brain import (
     search_vault,
     update_schedule_note,
 )
-from robot.config import MODEL_CHOICES, MODEL_DESCRIPTIONS, PROVIDER_LABELS, SUPPORTED_MODELS, Settings, VERSION
+from robot.config import PROVIDER_LABELS, Settings, VERSION, normalize_model
 from robot.diagnostics import build_doctor_report
+from robot.display_mode import (
+    DISPLAY_MODE_DEVELOPER,
+    DISPLAY_MODE_USER,
+    display_mode_label,
+    format_display_mode_changed,
+    format_display_mode_status,
+    format_run_queued,
+    format_run_started,
+    normalize_display_mode,
+    resolve_display_mode_switch_text,
+)
 from robot.google_calendar import (
     delete_google_calendar_schedule_event,
     sync_schedule_jobs_with_google,
     upsert_google_calendar_schedule_event,
 )
-from robot.projects import discover_project_workspaces, find_workspace, format_project_with_branch
+from robot.model_catalog import get_model_catalog, validate_selected_model
+from robot.projects import (
+    add_projects_root,
+    discover_project_workspaces,
+    find_workspace,
+    format_project_with_branch,
+    list_projects_roots,
+    remove_projects_root,
+)
 from robot.project_registry import (
     active_project,
     add_project_note,
@@ -74,6 +93,13 @@ from robot.state import ChatStateStore
 COMMAND_REQUEST = "command"
 CONTROL_REQUEST = "control"
 AGENT_REQUEST = "agent"
+
+
+@dataclass(frozen=True)
+class _SelectableModelOption:
+    value: str
+    description: str | None = None
+    section: str = "provider"
 
 COMMAND_NAMES = {
     "start",
@@ -92,6 +118,10 @@ COMMAND_NAMES = {
     "provider",
     "model",
     "models",
+    "mode",
+    "usermode",
+    "devmode",
+    "developermode",
     "project",
     "projects",
     "queue",
@@ -140,8 +170,8 @@ CONTROL_NAMES = {
 
 MENU_COMMAND_PREFIX = "menu:"
 BRAIN_COMMAND_PREFIX = "brain:"
-UI_BUILD_TAG = "ui-build:2026-04-10-b"
-HOSTED_BUILD_TAG = "hosted-build:2026-04-10-c"
+UI_BUILD_TAG = "ui-build:2026-05-01-a"
+HOSTED_BUILD_TAG = "hosted-build:2026-05-01-a"
 FLOW_AWAIT_MODEL = "await_model"
 FLOW_AWAIT_PROVIDER = "await_provider"
 FLOW_AWAIT_PROJECT = "await_project"
@@ -384,14 +414,52 @@ def _status_event(
     status_key: str = "heartbeat",
     replace: bool = False,
     request_id: str | None = None,
+    typing: str | None = None,
 ) -> AppEvent:
+    raw = {"status_key": status_key, "replace": replace}
+    if typing is not None:
+        raw["typing"] = typing
     return AppEvent(
         type="status",
         text=text,
         chat_id=chat_id,
         request_id=request_id,
         stream="inprocess",
-        raw={"status_key": status_key, "replace": replace},
+        raw=raw,
+    )
+
+
+def _noop_event(chat_id: int, *, request_id: str | None = None) -> AppEvent:
+    return AppEvent(
+        type="noop",
+        text="",
+        chat_id=chat_id,
+        request_id=request_id,
+        stream="inprocess",
+        raw={},
+    )
+
+
+def _parse_display_mode_selection(text: str | None) -> str | None:
+    normalized = resolve_display_mode_switch_text(text)
+    if normalized is not None:
+        return normalized
+    raw = str(text or "").strip().lower()
+    if raw == "user":
+        return DISPLAY_MODE_USER
+    if raw in {"developer", "dev"}:
+        return DISPLAY_MODE_DEVELOPER
+    return None
+
+
+def _set_display_mode_response(chat_id: int, store: ChatStateStore, mode: str) -> str:
+    next_state = store.set_display_mode(chat_id, mode)
+    normalized = normalize_display_mode(str(next_state.get("display_mode") or mode))
+    return "\n".join(
+        [
+            format_display_mode_changed(normalized),
+            f"目前模式: {display_mode_label(normalized)}",
+        ]
     )
 
 
@@ -416,6 +484,8 @@ def _command_payload(text: str) -> str:
 def _resolved_payload(text: str, command: str | None) -> str:
     stripped = (text or "").strip()
     if command:
+        if stripped.lower() == command.lower():
+            return ""
         if stripped.startswith("/"):
             return _command_payload(stripped)
         return stripped
@@ -833,6 +903,7 @@ def _status_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str
     current_run = state["agent_current_run"] if isinstance(state["agent_current_run"], dict) else None
     last_run = state["agent_last_run"] if isinstance(state["agent_last_run"], dict) else None
     provider_timing = state.get("last_provider_timing") if isinstance(state.get("last_provider_timing"), dict) else {}
+    runtime_model = provider_timing.get("model") or "not_run_yet"
     teleapp_status_edit = "enabled"
     teleapp_raw_status = "enabled"
     risk_mode = bool(settings.codex_bypass_approvals_and_sandbox or settings.codex_skip_git_repo_check)
@@ -840,8 +911,10 @@ def _status_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str
         [
             "robot status",
             f"version: {VERSION}",
+            f"display_mode: {state.get('display_mode') or DISPLAY_MODE_DEVELOPER}",
             f"provider: {state['provider']}",
             f"model: {state['model']}",
+            f"runtime_model: {runtime_model}",
             f"project: {_project_display(state['project_name'], state['project_path'])}",
             f"path: {state['project_path']}",
             f"thread_id: {state['thread_id'] or '-'}",
@@ -885,12 +958,14 @@ def _help_text() -> str:
             "workspace:",
             "/provider [claude|codex|gemini]",
             "/model [name]  /models",
+            "/mode [user|developer]",
             "/project register [name] <path>",
             "/project list",
             "/project use <name|key>",
             "/project info <name|key>",
             "/project note <name|key> <text>",
             "/project doctor <name|key|all>",
+            "/project roots list|add <path>|remove <path>",
             "/projects ... (legacy alias of /project ...)",
             "",
             "email (sendmail):",
@@ -942,9 +1017,11 @@ def _quick_text() -> str:
             "- /menu (主選單)",
             "- /provider [claude|codex|gemini]",
             "- /model [name] /models",
+            "- /mode [user|developer]",
             "- /project register [name] <path>",
             "- /project list",
             "- /project use <name|key>",
+            "- /project roots list|add <path>|remove <path>",
             "",
             "daily commands:",
             "- /status",
@@ -978,6 +1055,7 @@ def _guide_text() -> str:
             "- /quick",
             "- /help",
             "- /menu",
+            "- /mode [user|developer]",
             "- /contact list /contact add <key> <email> <name>",
             "- /provider /model /project list",
             "- /project use <name|key>",
@@ -1405,46 +1483,48 @@ def _provider_menu_response(chat_id: int, store: ChatStateStore) -> str:
     return "\n".join(lines)
 
 
+def _invalid_model_message(provider: str, model: str) -> str:
+    return (
+        f"Model not available for {provider}: {model}\n"
+        "Use /models to view available models, then choose again with /model <name>."
+    )
+
+
 def _model_menu_response(chat_id: int, store: ChatStateStore, settings: Settings) -> ButtonResponse:
     state = store.get_chat_state(chat_id)
     provider = str(state["provider"])
-    models = SUPPORTED_MODELS.get(provider, [])
-    choices = MODEL_CHOICES.get(provider, [(item, item) for item in models])
-    default_model = models[0] if models else ""
-    descriptions = MODEL_DESCRIPTIONS.get(provider, {})
-    custom_models = settings.custom_models
+    catalog = get_model_catalog(settings, provider)
+    default_model = _default_model_name(provider, settings)
+    options = _selectable_model_options(settings, provider, catalog)
     store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_MODEL})
     lines = [
         "Select Model",
         UI_BUILD_TAG,
         f"provider: {provider}",
+        f"source: {catalog.source}",
         "",
         "按按鈕直接切換。",
         "",
     ]
+    if catalog.note:
+        lines.extend([f"note: {catalog.note}", ""])
     buttons: list[Button] = []
-    # Build menu items: built-in choices + custom models
-    menu_items: list[tuple[str, str]] = list(choices)
-    if custom_models:
-        menu_items.append(("---", "---"))  # separator
-        for cm in custom_models:
-            menu_items.append((cm, cm))
-    for index, (item, label) in enumerate(menu_items, start=1):
-        if item == "---":
+    current_section = "provider"
+    for index, option in enumerate(options, start=1):
+        if option.section != current_section:
             lines.append("--- custom models ---")
-            continue
+            current_section = option.section
         tags: list[str] = []
-        if item == default_model:
+        if option.value == default_model:
             tags.append("default")
-        if item == state["model"]:
+        if option.value == state["model"]:
             tags.append("current")
         marker = f" ({', '.join(tags)})" if tags else ""
-        description = descriptions.get(item)
-        if description:
-            lines.append(f"{index}. {item}{marker}  {description}")
+        if option.description:
+            lines.append(f"{index}. {option.value}{marker}  {option.description}")
         else:
-            lines.append(f"{index}. {item}{marker}")
-        buttons.append(Button(label, f"menu:set_model:{item}"))
+            lines.append(f"{index}. {option.value}{marker}")
+        buttons.append(Button(option.value, f"menu:set_model:{option.value}"))
     lines.extend(
         [
             "",
@@ -1455,20 +1535,50 @@ def _model_menu_response(chat_id: int, store: ChatStateStore, settings: Settings
     return ButtonResponse("\n".join(lines), buttons=buttons)
 
 
-def _resolve_model_selection(provider: str, text: str) -> str | None:
+def _default_model_name(provider: str, settings: Settings) -> str:
+    if provider == settings.default_provider:
+        return normalize_model(provider, settings.default_model)
+    return normalize_model(provider, None)
+
+
+def _selectable_model_options(
+    settings: Settings,
+    provider: str,
+    catalog=None,
+) -> list[_SelectableModelOption]:
+    resolved_catalog = catalog or get_model_catalog(settings, provider)
+    options = [
+        _SelectableModelOption(value=item.name, description=item.description, section="provider")
+        for item in resolved_catalog.items
+    ]
+    options.append(
+        _SelectableModelOption(
+            value="custom",
+            description="手動輸入任意模型名稱。",
+            section="provider",
+        )
+    )
+    options.extend(
+        _SelectableModelOption(value=item, description=None, section="custom")
+        for item in settings.custom_models
+    )
+    return options
+
+
+def _resolve_model_selection(provider: str, text: str, settings: Settings) -> str | None:
     normalized = text.strip()
     if not normalized:
         return None
     if normalized.lower().startswith("model "):
         normalized = normalized[6:].strip()
-    models = SUPPORTED_MODELS.get(provider, [])
+    models = _selectable_model_options(settings, provider)
     if normalized.isdigit():
         index = int(normalized)
-        if 1 <= index <= len(models[:8]):
-            return models[index - 1]
+        if 1 <= index <= len(models):
+            return models[index - 1].value
         return None
     lowered = normalized.lower()
-    lookup = {item.lower(): item for item in models}
+    lookup = {item.value.lower(): item.value for item in models}
     if lowered in lookup:
         return lookup[lowered]
     # Allow any text to pass through as model name (for custom/Chinese models like deepseek-chat, qwen-turbo, etc.)
@@ -1501,24 +1611,68 @@ def _projects_menu_response(chat_id: int, settings: Settings, store: ChatStateSt
         store.clear_ui_flow(chat_id)
         return "No projects discovered."
 
+    registered_items, _active_name = list_registered_projects(settings)
+    registered_by_key: dict[str, str] = {}
+    registered_by_path: dict[str, str] = {}
+    for item in registered_items:
+        name = str(item.get("name") or "").strip()
+        key = str(item.get("key") or "").strip()
+        path = str(item.get("path") or "").strip()
+        if key and name:
+            registered_by_key[key] = name
+        if path and name:
+            registered_by_path[path] = name
+
     store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_PROJECT})
+    status_lines: list[str] = []
+    registered_count = 0
     lines = [
         f"Current project: {_project_display(state['project_name'], state['project_path'])}",
         f"Available projects: {len(workspaces)}",
     ]
     buttons: list[Button] = []
     for workspace in workspaces:
-        buttons.append(Button(f"{workspace.label} | {workspace.key}", workspace.key))
+        workspace_path = str(workspace.path)
+        registered_name = registered_by_key.get(workspace.key) or registered_by_path.get(workspace_path)
+        if registered_name:
+            registered_count += 1
+            status_lines.append(f"- {workspace.label} | {workspace.key} | registered ({registered_name})")
+        else:
+            status_lines.append(f"- {workspace.label} | {workspace.key} | unregistered")
+        buttons.append(Button(f"Use: {workspace.label}", workspace.key))
+        if not registered_name:
+            buttons.append(Button(f"Register: {workspace.label}", f"menu:projects:register:{workspace.key}"))
+    lines.append(f"Registered in list: {registered_count}/{len(workspaces)}")
+    lines.extend(["", *status_lines])
     lines.extend(
         [
             "",
-            "可直接點藍色 project key 按鈕切換。",
+            "點 Use 切換專案，點 Register 註冊專案。",
+            "標示為 registered 的項目代表已納入 /project list 管理。",
             "可直接輸入編號、project key 或 label，或用 /project <key-or-label>。",
             "輸入 /menu 返回主選單。",
             "其他自然語言會直接送進 AI。",
         ]
     )
     return ButtonResponse("\n".join(lines), buttons=buttons)
+
+
+def _project_matches_chat_context(item: dict[str, object], state: dict[str, object]) -> bool:
+    state_key = str(state.get("project_key") or "").strip()
+    state_path = str(state.get("project_path") or "").strip()
+    state_name = str(state.get("project_name") or "").strip()
+
+    item_key = str(item.get("key") or "").strip()
+    item_path = str(item.get("path") or "").strip()
+    item_name = str(item.get("name") or "").strip()
+
+    if state_key and item_key and item_key == state_key:
+        return True
+    if state_path and item_path and item_path == state_path:
+        return True
+    if state_name and item_name and item_name == state_name:
+        return True
+    return False
 
 
 def _project_management_menu_response(chat_id: int, settings: Settings, store: ChatStateStore) -> ButtonResponse:
@@ -1533,18 +1687,24 @@ def _project_management_menu_response(chat_id: int, settings: Settings, store: C
         "1) /project register [name] <path>",
         "2) /project use <name|key>",
         "3) /project info <name|key>",
+        "4) /project roots add <path> / remove <path>",
         "",
         "可用按鈕：List / Discover / Back",
     ]
     buttons: list[Button] = [
         Button("List", "menu:projects:list"),
         Button("Discover", "menu:projects:discover"),
+        Button("Roots", "menu:projects:roots"),
     ]
+    has_chat_project = bool(state.get("project_key") or state.get("project_path") or state.get("project_name"))
     for item in items[:5]:
         name = str(item.get("name") or "").strip()
         if not name:
             continue
-        marker = " *" if name == active_name else ""
+        is_active = _project_matches_chat_context(item, state)
+        if not is_active and not has_chat_project:
+            is_active = name == active_name
+        marker = " *" if is_active else ""
         buttons.append(Button(f"Use {name}{marker}", f"menu:projects:use:{name}"))
     buttons.append(Button("Back", "menu:open"))
     return ButtonResponse("\n".join(lines), buttons=buttons)
@@ -1628,13 +1788,17 @@ def _render_project_registry_list(chat_id: int, settings: Settings, store: ChatS
         f"Current context: {_project_display(state['project_name'], state['project_path'])}",
         f"Registered projects: {len(items)}",
     ]
+    has_chat_project = bool(state.get("project_key") or state.get("project_path") or state.get("project_name"))
     for index, item in enumerate(items, start=1):
         name = str(item.get("name") or "-")
         key = str(item.get("key") or "-")
         path = str(item.get("path") or "-")
         status = project_status(item)
         recent = str(item.get("last_activity_at") or item.get("last_used_at") or item.get("updated_at") or "-")
-        marker = "  *active" if name == active_name else ""
+        is_active = _project_matches_chat_context(item, state)
+        if not is_active and not has_chat_project:
+            is_active = name == active_name
+        marker = "  *active" if is_active else ""
         lines.append(f"{index}. {name} | {key} | {status} | recent={recent}{marker}")
         lines.append(f"   {path}")
     return "\n".join(lines)
@@ -1656,9 +1820,49 @@ def _handle_project_command(chat_id: int, payload: str, settings: Settings, stor
         return _projects_menu_response(chat_id, settings, store)
 
     action = str(parts[0]).strip().lower()
+    if action in {"discover", "scan"}:
+        return _projects_menu_response(chat_id, settings, store)
+
     if action in {"list", "ls"}:
         store.clear_ui_flow(chat_id)
         return _render_project_registry_list(chat_id, settings, store)
+
+    if action == "roots":
+        if len(parts) < 2:
+            return "Usage: /project roots list|add <path>|remove <path>"
+        roots_action = str(parts[1]).strip().lower()
+        if roots_action in {"list", "ls"}:
+            roots = list_projects_roots(settings)
+            if not roots:
+                return "No scan roots configured."
+            lines = [f"Scan roots: {len(roots)}"]
+            for index, root in enumerate(roots, start=1):
+                lines.append(f"{index}. {root}")
+            return "\n".join(lines)
+        if roots_action in {"add", "register"}:
+            if len(parts) < 3:
+                return "Usage: /project roots add <path>"
+            roots = add_projects_root(settings, parts[2])
+            return "\n".join(
+                [
+                    "Scan root added.",
+                    f"path: {Path(parts[2]).expanduser().resolve()}",
+                    f"total_roots: {len(roots)}",
+                ]
+            )
+        if roots_action in {"remove", "rm", "delete"}:
+            if len(parts) < 3:
+                return "Usage: /project roots remove <path>"
+            removed, roots = remove_projects_root(settings, parts[2])
+            status = "Scan root removed." if removed else "Scan root not found in dynamic roots."
+            return "\n".join(
+                [
+                    status,
+                    f"path: {Path(parts[2]).expanduser().resolve()}",
+                    f"total_roots: {len(roots)}",
+                ]
+            )
+        return "Usage: /project roots list|add <path>|remove <path>"
 
     if action in {"register", "add"}:
         resolved = _resolve_project_register_args(parts)
@@ -1775,6 +1979,17 @@ def _handle_project_command(chat_id: int, payload: str, settings: Settings, stor
         return "\n".join(lines)
 
     if action == "current":
+        state = store.get_chat_state(chat_id)
+        current_name = str(state.get("project_name") or "").strip()
+        current_key = str(state.get("project_key") or "").strip()
+        current_path = str(state.get("project_path") or "").strip()
+        if current_name or current_key or current_path:
+            return (
+                "active project\n"
+                f"name: {current_name or '-'}\n"
+                f"key: {current_key or '-'}\n"
+                f"path: {current_path or '-'}"
+            )
         project = active_project(settings)
         if project is None:
             return "No active project in registry."
@@ -1836,6 +2051,10 @@ async def _handle_menu_action(
                 "例如: /model deepseek-chat, /model qwen-turbo, /model gpt-4o\n\n"
                 "輸入 /menu 可回到主選單。"
             )
+        provider = str(store.get_chat_state(chat_id)["provider"])
+        _is_catalog_model, validation_error = validate_selected_model(settings, provider, model)
+        if validation_error:
+            return validation_error
         next_state = store.set_model(chat_id, model)
         store.clear_ui_flow(chat_id)
         return (
@@ -1871,12 +2090,33 @@ async def _handle_menu_action(
     if command == "menu:projects:discover":
         return _projects_menu_response(chat_id, settings, store)
 
+    if command == "menu:projects:roots":
+        return _handle_project_command(chat_id, "roots list", settings, store)
+
     if command.startswith("menu:projects:use:"):
         name = command.removeprefix("menu:projects:use:").strip()
         if not name:
             return "Empty project selection."
         store.clear_ui_flow(chat_id)
         return _handle_project_command(chat_id, f"use {name}", settings, store)
+
+    if command.startswith("menu:projects:register:"):
+        key = command.removeprefix("menu:projects:register:").strip()
+        if not key:
+            return "Empty project key."
+        workspaces = discover_project_workspaces(settings)
+        workspace = next((w for w in workspaces if w.key == key), None)
+        if workspace is None:
+            return f"Project not found: {key}"
+        try:
+            project = register_project(settings, workspace.label, str(workspace.path))
+            return (
+                f"專案已註冊：{workspace.label}\n"
+                f"key: {project.get('key')}\n"
+                f"path: {project.get('path')}"
+            )
+        except ValueError as exc:
+            return f"註冊失敗：{exc}"
 
     return f"Unknown menu action: {command}"
 
@@ -2098,6 +2338,11 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
     if command == "brain":
         store.clear_ui_flow(ctx.chat_id)
         return _brain_menu_response(ctx.chat_id, store)
+
+    if text and not command:
+        requested_mode = _parse_display_mode_selection(text)
+        if requested_mode is not None:
+            return _set_display_mode_response(ctx.chat_id, store, requested_mode)
 
     # Non-blocking rule: plain text should always reach the agent for content flows.
     # Keep numeric/text selection for settings flows (model/provider/project).
@@ -2379,23 +2624,60 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
 
     if request.command == "models":
         provider = str(state["provider"])
-        lines = [f"Models for {provider}:"]
-        lines.extend(f"- {item}" for item in SUPPORTED_MODELS.get(provider, []))
+        catalog = get_model_catalog(settings, provider)
+        default_model = _default_model_name(provider, settings)
+        lines = [
+            f"Models for {provider}:",
+            f"current: {state['model']}",
+            f"source: {catalog.source}",
+        ]
+        if catalog.note:
+            lines.append(f"note: {catalog.note}")
+        lines.append("")
+        for item in catalog.items:
+            tags: list[str] = []
+            if item.name == default_model:
+                tags.append("default")
+            if item.name == state["model"]:
+                tags.append("current")
+            marker = f" ({', '.join(tags)})" if tags else ""
+            if item.description:
+                lines.append(f"- {item.name}{marker}  {item.description}")
+            else:
+                lines.append(f"- {item.name}{marker}")
         if settings.custom_models:
+            if catalog.items:
+                lines.append("")
             lines.append("--- custom models ---")
             lines.extend(f"- {item}" for item in settings.custom_models)
         return "\n".join(lines)
+
+    if request.command in {"mode", "usermode", "devmode", "developermode"}:
+        if request.command == "usermode":
+            return _set_display_mode_response(chat_id, store, DISPLAY_MODE_USER)
+        if request.command in {"devmode", "developermode"}:
+            return _set_display_mode_response(chat_id, store, DISPLAY_MODE_DEVELOPER)
+        payload = request.payload.strip()
+        if not payload:
+            return format_display_mode_status(store.get_display_mode(chat_id))
+        requested_mode = _parse_display_mode_selection(payload)
+        if requested_mode is None:
+            return "Unknown mode selection.\nUse /mode user or /mode developer."
+        return _set_display_mode_response(chat_id, store, requested_mode)
 
     if request.command == "model":
         payload = request.payload.strip()
         if not payload:
             return _model_menu_response(chat_id, store, settings)
-        selected_model = _resolve_model_selection(str(state["provider"]), payload)
+        selected_model = _resolve_model_selection(str(state["provider"]), payload, settings)
         if selected_model is None:
             return (
                 f"Unknown model selection: {payload}\n"
                 "Use /model to open the model chooser, or /models to list available models."
             )
+        _is_catalog_model, validation_error = validate_selected_model(settings, str(state["provider"]), selected_model)
+        if validation_error:
+            return validation_error
         next_state = store.set_model(chat_id, selected_model)
         return f"Model updated.\nprovider: {next_state['provider']}\nmodel: {next_state['model']}"
 
@@ -2838,29 +3120,43 @@ async def handle_control(
             status_key=status_key,
         )
         state = store.get_chat_state(chat_id)
+        display_mode = str(state.get("display_mode") or DISPLAY_MODE_DEVELOPER)
+        project_display = _project_display(state["project_name"], state["project_path"])
         queue_waiting = max(0, int(position) - 1)
         if started:
             return _status_event(
                 chat_id,
-                "Provider run started.\n"
-                f"goal: {goal}\n"
-                f"project: {_project_display(state['project_name'], state['project_path'])}\n"
-                f"path: {state['project_path']}\n"
-                f"queue_waiting: {queue_waiting}\n"
-                "elapsed: 00:00\n"
-                "heartbeat: starting (first update within 1 second)",
+                format_run_started(
+                    display_mode,
+                    kind="provider",
+                    goal=goal,
+                    project=project_display,
+                    path=str(state["project_path"]),
+                    queue_waiting=queue_waiting,
+                    elapsed="00:00",
+                ),
                 status_key=status_key,
                 request_id=request.request_id,
+                typing="active",
             )
-        return (
-            "Provider run queued.\n"
-            f"goal: {goal}\n"
-            f"project: {_project_display(state['project_name'], state['project_path'])}\n"
-            f"path: {state['project_path']}\n"
-            f"queue_position: {position}\n"
-            "elapsed: 00:00\n"
-            "hint: use /queue to check waiting jobs"
+        queued_text = format_run_queued(
+            display_mode,
+            kind="provider",
+            goal=goal,
+            project=project_display,
+            path=str(state["project_path"]),
+            position=int(position),
+            elapsed="00:00",
         )
+        if normalize_display_mode(display_mode) == DISPLAY_MODE_USER:
+            return _status_event(
+                chat_id,
+                queued_text,
+                status_key=status_key,
+                request_id=request.request_id,
+                typing="active",
+            )
+        return queued_text
     if request.command == "agent":
         options, error = _parse_agent_options(request.payload)
         if options is None:
@@ -2881,31 +3177,43 @@ async def handle_control(
             status_key=status_key,
         )
         state = store.get_chat_state(chat_id)
+        display_mode = str(state.get("display_mode") or DISPLAY_MODE_DEVELOPER)
+        project_display = _project_display(state["project_name"], state["project_path"])
         queue_waiting = max(0, int(position) - 1)
         if started:
             return _status_event(
                 chat_id,
-                "Auto-dev run started.\n"
-                f"goal: {options.goal}\n"
-                f"project: {_project_display(state['project_name'], state['project_path'])}\n"
-                f"path: {state['project_path']}\n"
-                f"queue_waiting: {queue_waiting}\n"
-                f"run_id: {run_id}\n"
-                "elapsed: 00:00\n"
-                "heartbeat: starting (first update within 1 second)",
+                format_run_started(
+                    display_mode,
+                    kind="auto_dev",
+                    goal=str(options.goal),
+                    project=project_display,
+                    path=str(state["project_path"]),
+                    queue_waiting=queue_waiting,
+                    elapsed="00:00",
+                ),
                 status_key=status_key,
                 request_id=request.request_id,
+                typing="active",
             )
-        return (
-            "Auto-dev run queued.\n"
-            f"goal: {options.goal}\n"
-            f"project: {_project_display(state['project_name'], state['project_path'])}\n"
-            f"path: {state['project_path']}\n"
-            f"queue_position: {position}\n"
-            f"run_id: {run_id}\n"
-            "elapsed: 00:00\n"
-            "hint: use /queue to check waiting jobs"
+        queued_text = format_run_queued(
+            display_mode,
+            kind="auto_dev",
+            goal=str(options.goal),
+            project=project_display,
+            path=str(state["project_path"]),
+            position=int(position),
+            elapsed="00:00",
         )
+        if normalize_display_mode(display_mode) == DISPLAY_MODE_USER:
+            return _status_event(
+                chat_id,
+                queued_text,
+                status_key=status_key,
+                request_id=request.request_id,
+                typing="active",
+            )
+        return queued_text
     if request.command == "agentresume":
         parsed, error = _parse_resume_options(request.payload)
         if parsed is None:
@@ -2935,33 +3243,43 @@ async def handle_control(
             status_key=status_key,
         )
         state = store.get_chat_state(chat_id)
+        display_mode = str(state.get("display_mode") or DISPLAY_MODE_DEVELOPER)
+        project_display = _project_display(state["project_name"], state["project_path"])
         queue_waiting = max(0, int(position) - 1)
         if started:
             return _status_event(
                 chat_id,
-                "Auto-dev resume started.\n"
-                f"goal: <resume>\n"
-                f"project: {_project_display(state['project_name'], state['project_path'])}\n"
-                f"path: {state['project_path']}\n"
-                f"queue_waiting: {queue_waiting}\n"
-                f"run_id: {run_id}\n"
-                f"resume: {resume_target}\n"
-                "elapsed: 00:00\n"
-                "heartbeat: starting (first update within 1 second)",
+                format_run_started(
+                    display_mode,
+                    kind="auto_dev",
+                    goal="<resume>",
+                    project=project_display,
+                    path=str(state["project_path"]),
+                    queue_waiting=queue_waiting,
+                    elapsed="00:00",
+                ),
                 status_key=status_key,
                 request_id=request.request_id,
+                typing="active",
             )
-        return (
-            "Auto-dev resume queued.\n"
-            f"goal: <resume>\n"
-            f"project: {_project_display(state['project_name'], state['project_path'])}\n"
-            f"path: {state['project_path']}\n"
-            f"queue_position: {position}\n"
-            f"run_id: {run_id}\n"
-            f"resume: {resume_target}\n"
-            "elapsed: 00:00\n"
-            "hint: use /queue to check waiting jobs"
+        queued_text = format_run_queued(
+            display_mode,
+            kind="auto_dev",
+            goal="<resume>",
+            project=project_display,
+            path=str(state["project_path"]),
+            position=int(position),
+            elapsed="00:00",
         )
+        if normalize_display_mode(display_mode) == DISPLAY_MODE_USER:
+            return _status_event(
+                chat_id,
+                queued_text,
+                status_key=status_key,
+                request_id=request.request_id,
+                typing="active",
+            )
+        return queued_text
     if request.command == "schedule":
         sync_options, sync_error = _parse_schedule_sync_options(request.payload.strip())
         if sync_options is not None:
@@ -3100,29 +3418,43 @@ async def handle_agent(chat_id: int, request: ClassifiedRequest, store: ChatStat
         status_key=status_key,
     )
     state = store.get_chat_state(chat_id)
+    display_mode = str(state.get("display_mode") or DISPLAY_MODE_DEVELOPER)
+    project_display = _project_display(state["project_name"], state["project_path"])
     queue_waiting = max(0, int(position) - 1)
     if started:
         return _status_event(
             chat_id,
-            "Provider run started.\n"
-            f"goal: {prompt}\n"
-            f"project: {_project_display(state['project_name'], state['project_path'])}\n"
-            f"path: {state['project_path']}\n"
-            f"queue_waiting: {queue_waiting}\n"
-            "elapsed: 00:00\n"
-            "heartbeat: starting (first update within 1 second)",
+            format_run_started(
+                display_mode,
+                kind="provider",
+                goal=prompt,
+                project=project_display,
+                path=str(state["project_path"]),
+                queue_waiting=queue_waiting,
+                elapsed="00:00",
+            ),
             status_key=status_key,
             request_id=request.request_id,
+            typing="active",
         )
-    return (
-        "Provider run queued.\n"
-        f"goal: {prompt}\n"
-        f"project: {_project_display(state['project_name'], state['project_path'])}\n"
-        f"path: {state['project_path']}\n"
-        f"queue_position: {position}\n"
-        "elapsed: 00:00\n"
-        "hint: use /queue to check waiting jobs"
+    queued_text = format_run_queued(
+        display_mode,
+        kind="provider",
+        goal=prompt,
+        project=project_display,
+        path=str(state["project_path"]),
+        position=int(position),
+        elapsed="00:00",
     )
+    if normalize_display_mode(display_mode) == DISPLAY_MODE_USER:
+        return _status_event(
+            chat_id,
+            queued_text,
+            status_key=status_key,
+            request_id=request.request_id,
+            typing="active",
+        )
+    return queued_text
 
 
 

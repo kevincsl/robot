@@ -12,8 +12,28 @@ from sqlalchemy.orm import Session
 
 from app.models import ExamPaper, ExamPaperSubject, Law, Question, QuestionType, Subject
 from app.services.law_links import backfill_question_law_refs
+from app.services.question_text import sanitize_question_text
 
-OPTION_MARKERS = {"": "A", "": "B", "": "C", "": "D"}
+# Some downloaded PDFs use private-use glyphs for option bullets. Keep the parser
+# tolerant by accepting both the private-use markers and common A/B/C/D forms.
+OPTION_MARKERS = {
+    "\ue18c": "A",
+    "\ue18d": "B",
+    "\ue18e": "C",
+    "\ue18f": "D",
+    "A.": "A",
+    "B.": "B",
+    "C.": "C",
+    "D.": "D",
+    "A、": "A",
+    "B、": "B",
+    "C、": "C",
+    "D、": "D",
+    "A ": "A",
+    "B ": "B",
+    "C ": "C",
+    "D ": "D",
+}
 ESSAY_START_RE = re.compile(r"^([一二三四五六七八九十]+、)\s*(.*)")
 CHOICE_START_INLINE_RE = re.compile(r"^(\d+)\s+(.+)")
 CHOICE_NUMBER_RE = re.compile(r"^\d+$")
@@ -38,6 +58,9 @@ SUBJECT_FALLBACK_LAWS = {
 SINGLE_LAW_SUBJECT = {
     "civil_law": "民法",
 }
+
+HEADER_PREFIXES = ("代號：", "頁次：", "※")
+PRIVATE_SKIP_PREFIXES = ("\ue129", "\ue12a", "\ue12b")
 
 
 @dataclass
@@ -73,8 +96,7 @@ def _clean_lines(text: str) -> list[str]:
 
 
 def _normalize_text(text: str) -> str:
-    normalized = unicodedata.normalize("NFKC", text or "")
-    return normalized
+    return unicodedata.normalize("NFKC", text or "")
 
 
 def _parse_question_paper(path: Path) -> ParsedPaper:
@@ -110,9 +132,7 @@ def _parse_question_paper(path: Path) -> ParsedPaper:
             flush_essay()
             section = "choice"
             continue
-        if line.startswith("代號：") or line.startswith("頁次：") or line.startswith("※"):
-            continue
-        if line.startswith("") or line.startswith("") or line.startswith(""):
+        if line.startswith(HEADER_PREFIXES) or line.startswith(PRIVATE_SKIP_PREFIXES):
             continue
 
         if section == "essay":
@@ -160,15 +180,26 @@ def _parse_answer_pdf(path: Path) -> tuple[dict[int, str], str | None]:
     count_match = ANSWER_COUNT_RE.search(text)
     if not count_match:
         return {}, None
+
     question_count = int(count_match.group(1))
     last_marker = max(text.rfind("第100題"), text.rfind(f"第{question_count}題"))
     if last_marker < 0:
         last_marker = text.find("標準答案")
-    stop_candidates = [idx for idx in [text.find("複選題數"), text.find("備"), text.find("標準答案：")] if idx > last_marker]
+
+    stop_candidates = [
+        idx
+        for idx in [
+            text.find("複選題數"),
+            text.find("備"),
+            text.find("標準答案："),
+        ]
+        if idx > last_marker
+    ]
     stop_at = min(stop_candidates) if stop_candidates else len(text)
     answer_zone = text[last_marker:stop_at]
     tokens = re.findall(r"[A-D]", answer_zone)
     answers = {idx: token for idx, token in enumerate(tokens[:question_count], start=1)}
+
     note = None
     note_match = re.search(r"備\s*註[：:]\s*(.+)", text, re.S)
     if note_match:
@@ -189,6 +220,7 @@ def _classify_subject_files(subject_row: ExamPaperSubject) -> tuple[Path | None,
             path = Path(__file__).resolve().parents[2] / path
         if not path.exists():
             continue
+
         head_text = _extract_text(path)[:800]
         if "標準答案" in head_text:
             if "更正" in head_text:
@@ -214,6 +246,7 @@ def _subject_code_for_name(subject_name: str) -> str | None:
 def _infer_law_refs(text: str, subject_code: str | None, laws: list[Law]) -> list[str]:
     refs: list[str] = []
     normalized = re.sub(r"\s+", "", _normalize_text(text))
+
     for law in laws:
         compact_name = re.sub(r"\s+", "", _normalize_text(law.name))
         if compact_name not in normalized:
@@ -281,20 +314,21 @@ def import_exam_questions(db: Session, *, source_prefix: str = "moex:") -> dict[
 
             parsed = _parse_question_paper(question_file)
             answers, _ = _parse_answer_pdf(answer_file) if answer_file else ({}, None)
+            clean_answer_note = sanitize_question_text(answer_note)
 
             for essay in parsed.essays:
-                body = essay.body
+                essay_body = sanitize_question_text(essay.body) or ""
                 q = Question(
                     subject_id=subject_id,
                     chapter_id=None,
                     type=QuestionType.ESSAY,
                     year=paper.roc_year,
                     source=f"{source_prefix}{paper.bundle_id}:subject:{subject_row.sort_order}:essay:{essay.number}",
-                    body=body,
+                    body=essay_body,
                     options=None,
                     answer=None,
-                    explanation=answer_note,
-                    law_refs=_infer_law_refs(body, subject_code, laws),
+                    explanation=clean_answer_note,
+                    law_refs=_infer_law_refs(essay_body, subject_code, laws),
                     difficulty=3,
                 )
                 db.add(q)
@@ -302,17 +336,22 @@ def import_exam_questions(db: Session, *, source_prefix: str = "moex:") -> dict[
                 stats["essays"] += 1
 
             for choice in parsed.choices:
-                composed = choice.stem + " " + " ".join(option["text"] for option in choice.options)
+                clean_stem = sanitize_question_text(choice.stem) or ""
+                clean_options = [
+                    {"key": option["key"], "text": sanitize_question_text(option["text"]) or ""}
+                    for option in choice.options
+                ]
+                composed = clean_stem + " " + " ".join(option["text"] for option in clean_options)
                 q = Question(
                     subject_id=subject_id,
                     chapter_id=None,
                     type=QuestionType.CHOICE,
                     year=paper.roc_year,
                     source=f"{source_prefix}{paper.bundle_id}:subject:{subject_row.sort_order}:choice:{choice.number}",
-                    body=choice.stem,
-                    options=choice.options,
+                    body=clean_stem,
+                    options=clean_options,
                     answer=answers.get(choice.number),
-                    explanation=answer_note,
+                    explanation=clean_answer_note,
                     law_refs=_infer_law_refs(composed, subject_code, laws),
                     difficulty=3,
                 )

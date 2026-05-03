@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}選擇題 — House Agent{% endblock %}
+{% block title %}選擇題 | House Agent{% endblock %}
 {% block content %}
 <div class="flex flex-wrap items-center gap-3 mb-5">
   <h1 class="text-xl font-bold">選擇題練習</h1>
@@ -25,13 +25,12 @@
 
 {% if not question %}
 <div class="card text-center text-slate-500 py-16">
-  <div class="text-5xl mb-4">📝</div>
-  <p class="font-medium">此條件下暫無題目</p>
-  <p class="text-sm mt-1">請先匯入題庫或更換科目</p>
+  <div class="text-5xl mb-4">0</div>
+  <p class="font-medium">目前沒有可用題目。</p>
+  <p class="text-sm mt-1">請先選擇其他科目或匯入題庫。</p>
 </div>
 {% else %}
 <div class="card mb-4" id="questionCard">
-  <!-- 題目 metadata -->
   <div class="flex items-center gap-2 mb-3 flex-wrap">
     <span class="badge bg-blue-50 text-blue-700">{{ question.subject.name }}</span>
     {% if question.chapter %}<span class="badge bg-slate-100 text-slate-600">{{ question.chapter.name }}</span>{% endif %}
@@ -44,7 +43,7 @@
 
   {% if importance %}
   <div class="mb-4 text-xs text-slate-500">
-    這題的法條重要度加權為 x{{ '%.2f'|format(importance.weight) }}，屬於{{ question.subject.name }}內的 {{ importance.level }}。
+    這題會依法條重要度調整出題權重，目前在 {{ question.subject.name }} 中屬於 {{ importance.level }}，權重倍率 x{{ '%.2f'|format(importance.weight) }}。
   </div>
   {% endif %}
 
@@ -53,37 +52,31 @@
   <form id="quizForm" class="space-y-2">
     <input type="hidden" name="question_id" value="{{ question.id }}">
     {% for opt in question.options or [] %}
-    <label class="option-label flex items-start gap-3 p-3 border border-slate-200 rounded-lg
-                  hover:bg-blue-50 hover:border-blue-300 cursor-pointer transition select-none"
+    <label class="option-label flex items-start gap-3 p-3 border border-slate-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 cursor-pointer transition select-none"
            data-key="{{ opt.key }}">
       <input type="radio" name="answer" value="{{ opt.key }}" class="mt-1 shrink-0" required>
       <span><b class="text-blue-700">{{ opt.key }}.</b> {{ opt.text }}</span>
     </label>
     {% endfor %}
     <div class="flex items-center gap-3 mt-4 flex-wrap">
-      <button type="submit" id="submitBtn"
-              class="btn-primary">送出答案</button>
-      <span class="text-xs text-slate-400">按 A/B/C/D 選擇，Enter 送出</span>
+      <button type="submit" id="submitBtn" class="btn-primary">送出答案</button>
+      <span class="text-xs text-slate-400">可用 A/B/C/D 快捷鍵作答，按 Enter 送出</span>
     </div>
   </form>
 
   <div id="feedback" class="hidden mt-4 p-4 rounded-xl border text-sm leading-relaxed"></div>
-
-  <!-- 法條連結 -->
   <div id="lawRefs" class="hidden mt-3"></div>
 </div>
 
 <div class="flex gap-2 flex-wrap">
-  <a href="/quiz{% if subject_id %}?subject_id={{ subject_id }}{% endif %}{% if chapter_id %}&chapter_id={{ chapter_id }}{% endif %}"
-     id="nextBtn" class="btn-secondary">下一題 →</a>
-  <a href="/" class="btn-secondary">返回儀表板</a>
+  <a href="/quiz{% if subject_id %}?subject_id={{ subject_id }}{% endif %}{% if chapter_id %}&chapter_id={{ chapter_id }}{% endif %}" id="nextBtn" class="btn-secondary">下一題</a>
+  <a href="/" class="btn-secondary">返回首頁</a>
 </div>
 
 <script>
 const startTs = Date.now();
 let answered = false;
 
-// keyboard shortcuts
 document.addEventListener('keydown', e => {
   if (answered) return;
   const keys = {'a':'A','b':'B','c':'C','d':'D'};
@@ -106,7 +99,7 @@ document.getElementById('quizForm').addEventListener('submit', async e => {
     time_spent_ms: Date.now() - startTs,
   };
   document.getElementById('submitBtn').disabled = true;
-  document.getElementById('submitBtn').textContent = '批改中...';
+  document.getElementById('submitBtn').textContent = '判定中...';
 
   const res = await fetch('/api/choice/submit', {
     method: 'POST',
@@ -116,7 +109,6 @@ document.getElementById('quizForm').addEventListener('submit', async e => {
   const data = await res.json();
   answered = true;
 
-  // highlight options
   document.querySelectorAll('.option-label').forEach(el => {
     const k = el.dataset.key;
     if (k === data.answer) {
@@ -137,7 +129,6 @@ document.getElementById('quizForm').addEventListener('submit', async e => {
     fb.innerHTML = `<b>✗ 答錯。</b> 正解：<b>${data.answer}</b>` + (data.explanation ? '<div class="mt-2 text-slate-700">' + data.explanation + '</div>' : '');
   }
 
-  // show law refs
   if (data.law_refs && data.law_refs.length) {
     const refs = document.getElementById('lawRefs');
     refs.classList.remove('hidden');
@@ -145,7 +136,7 @@ document.getElementById('quizForm').addEventListener('submit', async e => {
       data.law_refs.map(r => `<span class="badge bg-indigo-50 text-indigo-700 mr-1">${r}</span>`).join('');
   }
 
-  document.getElementById('submitBtn').textContent = '已送出';
+  document.getElementById('submitBtn').textContent = '已完成作答';
 });
 </script>
 {% endif %}

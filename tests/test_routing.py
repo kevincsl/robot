@@ -17,10 +17,14 @@ from teleapp.protocol import AppEvent
 
 from robot.agents import AgentCoordinator
 from robot.config import load_settings
+from robot.model_catalog import CatalogModel, ModelCatalog
+from robot.projects import discover_project_workspaces
 from robot.routing import (
     AGENT_REQUEST,
     COMMAND_REQUEST,
     CONTROL_REQUEST,
+    HOSTED_BUILD_TAG,
+    UI_BUILD_TAG,
     classify_request,
     handle_command,
     handle_control,
@@ -81,6 +85,31 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(request.kind, COMMAND_REQUEST)
         self.assertEqual(request.command, "model")
 
+    def test_plain_text_user_mode_switch_is_handled_before_agent(self) -> None:
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="使用者模式"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIn("已切換為使用者模式", body)
+        self.assertEqual(self.store.get_display_mode(1), "user")
+
+    def test_plain_text_developer_mode_switch_is_handled_before_agent(self) -> None:
+        self.store.set_display_mode(1, "user")
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="開發者模式"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIn("已切換為開發者模式", body)
+        self.assertEqual(self.store.get_display_mode(1), "developer")
+
     def test_classify_control_request(self) -> None:
         ctx = MessageContext(chat_id=1, text="/reset", command="reset")
         request = classify_request(ctx)
@@ -119,18 +148,19 @@ class RoutingTests(unittest.TestCase):
         )
         self.assertIsInstance(body, ButtonResponse)
         self.assertIn("robot menu", body.text.lower())
-        self.assertIn("ui-build:2026-04-10-b", body.text)
+        self.assertIn(UI_BUILD_TAG, body.text)
         self.assertIn("其他自然語言訊息不會被選單吃掉", body.text)
         self.assertEqual([button.data for button in body.buttons or []], ["menu:status", "menu:provider", "menu:model", "menu:projects", "menu:cancel"])
         self.assertIsNone(self.store.get_ui_flow(1))
 
     def test_status_includes_build_tags(self) -> None:
-        self.store.set_last_provider_timing(1, {"elapsed_seconds": 8, "return_code": 0, "cancelled": False})
+        self.store.set_last_provider_timing(1, {"elapsed_seconds": 8, "return_code": 0, "cancelled": False, "model": "claude-sonnet-4-6"})
         request = classify_request(MessageContext(chat_id=1, text="/status", command="status"))
         body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
-        self.assertIn("ui_build: ui-build:2026-04-10-b", body)
-        self.assertIn("hosted_build: hosted-build:2026-04-10-c", body)
+        self.assertIn(f"ui_build: {UI_BUILD_TAG}", body)
+        self.assertIn(f"hosted_build: {HOSTED_BUILD_TAG}", body)
         self.assertIn("provider_elapsed_seconds: 8", body)
+        self.assertIn("runtime_model: claude-sonnet-4-6", body)
         self.assertIn("queued_jobs: 0", body)
         self.assertIn("scheduled_jobs: 0", body)
         self.assertIn("ui_flow: -", body)
@@ -139,6 +169,11 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("codex_skip_git_repo_check: False", body)
         self.assertIn("runtime_commit:", body)
 
+    def test_status_shows_runtime_model_not_run_yet_before_any_provider_run(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/status", command="status"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("runtime_model: not_run_yet", body)
+
     def test_quick_command_returns_quick_reference(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/quick", command="quick"))
         body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
@@ -146,6 +181,7 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("/brainbatchauto [limit]", body)
         self.assertIn("/menu", body)
         self.assertIn("/model [name]", body)
+        self.assertIn("/mode [user|developer]", body)
 
     def test_guide_command_returns_docs_overview(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/guide", command="guide"))
@@ -153,6 +189,25 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("features guide", body)
         self.assertIn("FEATURES_GUIDE.md", body)
         self.assertIn("/provider /model /project list", body)
+        self.assertIn("/mode [user|developer]", body)
+
+    def test_mode_command_without_payload_returns_current_mode(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/mode", command="mode"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("目前模式: 開發者模式", body)
+
+    def test_mode_command_switches_to_user_mode(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/mode user", command="mode"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("已切換為使用者模式", body)
+        self.assertEqual(self.store.get_display_mode(1), "user")
+
+    def test_mode_command_switches_to_developer_mode_via_alias(self) -> None:
+        self.store.set_display_mode(1, "user")
+        request = classify_request(MessageContext(chat_id=1, text="/devmode", command="devmode"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("已切換為開發者模式", body)
+        self.assertEqual(self.store.get_display_mode(1), "developer")
 
     def test_status_shows_risk_mode_when_dangerous_flags_enabled(self) -> None:
         object.__setattr__(self.settings, "codex_bypass_approvals_and_sandbox", True)
@@ -234,7 +289,7 @@ class RoutingTests(unittest.TestCase):
         )
         self.assertIsInstance(body, ButtonResponse)
         self.assertIn("brain menu", body.text.lower())
-        self.assertIn("ui-build:2026-04-10-b", body.text)
+        self.assertIn(UI_BUILD_TAG, body.text)
         self.assertEqual(
             [button.data for button in body.buttons or []],
             [
@@ -307,7 +362,7 @@ class RoutingTests(unittest.TestCase):
         )
         self.assertIsInstance(body, ButtonResponse)
         self.assertIn("Select Model", body.text)
-        self.assertIn("ui-build:2026-04-10-b", body.text)
+        self.assertIn(UI_BUILD_TAG, body.text)
 
     def test_brain_command_without_text_still_returns_buttons(self) -> None:
         body = self.loop.run_until_complete(
@@ -1426,6 +1481,29 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("已封存過期行程", body)
         self.assertIn("06 Schedule/休息.md", body)
 
+    def test_menu_model_flow_rejects_missing_claude_catalog_model(self) -> None:
+        self.store.set_provider(1, "claude")
+        open_menu = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="menu:model"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(open_menu, ButtonResponse)
+
+        applied = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="menu:set_model:claude-not-real"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIn("Model not available for claude", applied)
+        self.assertEqual(self.store.get_chat_state(1)["model"], "claude-opus-4-7")
+
     def test_menu_model_flow_updates_model_from_button_callback(self) -> None:
         open_menu = self.loop.run_until_complete(
             handle_request(
@@ -1487,6 +1565,64 @@ class RoutingTests(unittest.TestCase):
         flow = self.store.get_ui_flow(1)
         self.assertIsInstance(flow, dict)
         self.assertEqual(flow.get("kind"), "await_model")
+
+    def test_models_command_uses_dynamic_catalog(self) -> None:
+        self.store.set_provider(1, "codex")
+        catalog = ModelCatalog(
+            provider="codex",
+            items=(
+                CatalogModel(name="gpt-5.5", description="Frontier model for complex work."),
+                CatalogModel(name="gpt-5.4", description="Strong model for everyday coding."),
+            ),
+            source="codex debug models",
+            note=None,
+        )
+        request = classify_request(MessageContext(chat_id=1, text="/models", command="models"))
+        with patch("robot.routing.get_model_catalog", return_value=catalog):
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("Models for codex:", body)
+        self.assertIn("source: codex debug models", body)
+        self.assertIn("- gpt-5.5", body)
+        self.assertIn("- gpt-5.4", body)
+
+    def test_model_command_without_payload_uses_dynamic_catalog(self) -> None:
+        self.store.set_provider(1, "codex")
+        catalog = ModelCatalog(
+            provider="codex",
+            items=(
+                CatalogModel(name="gpt-5.5", description="Frontier model for complex work."),
+                CatalogModel(name="gpt-5.4", description="Strong model for everyday coding."),
+            ),
+            source="codex debug models",
+            note=None,
+        )
+        request = classify_request(MessageContext(chat_id=1, text="/model", command="model"))
+        with patch("robot.routing.get_model_catalog", return_value=catalog):
+            body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("source: codex debug models", body.text)
+        self.assertIn("1. gpt-5.5", body.text)
+        self.assertIn("2. gpt-5.4", body.text)
+        self.assertIn("3. custom", body.text)
+        self.assertEqual(
+            [button.data for button in body.buttons or []],
+            ["menu:set_model:gpt-5.5", "menu:set_model:gpt-5.4", "menu:set_model:custom"],
+        )
+
+    def test_model_command_rejects_missing_claude_catalog_model(self) -> None:
+        self.store.set_provider(1, "claude")
+        request = classify_request(MessageContext(chat_id=1, text="/model claude-not-real", command="model"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("Model not available for claude", body)
+        self.assertEqual(self.store.get_chat_state(1)["model"], "claude-opus-4-7")
+
+    def test_model_command_keeps_custom_model_for_claude(self) -> None:
+        object.__setattr__(self.settings, "custom_models", ["deepseek-chat"])
+        self.store.set_provider(1, "claude")
+        request = classify_request(MessageContext(chat_id=1, text="/model deepseek-chat", command="model"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertEqual(body, "Model updated.\nprovider: claude\nmodel: deepseek-chat")
+        self.assertEqual(self.store.get_chat_state(1)["model"], "deepseek-chat")
 
     def test_menu_text_action_status_works_without_buttons(self) -> None:
         with patch("robot.routing.handle_agent", new=AsyncMock(return_value="agent delegated")) as mock_handle_agent:
@@ -1585,7 +1721,7 @@ class RoutingTests(unittest.TestCase):
         self.assertIsInstance(body, ButtonResponse)
         self.assertIn("Available projects:", body.text)
         self.assertTrue(any(button.data.startswith("proj-") for button in (body.buttons or [])))
-        self.assertTrue(any(" | proj-" in button.text for button in (body.buttons or [])))
+        self.assertTrue(any(button.text.startswith("Use: ") for button in (body.buttons or [])))
         flow = self.store.get_ui_flow(1)
         self.assertIsInstance(flow, dict)
         self.assertEqual(flow.get("kind"), "await_project")
@@ -1598,6 +1734,43 @@ class RoutingTests(unittest.TestCase):
         flow = self.store.get_ui_flow(1)
         self.assertIsInstance(flow, dict)
         self.assertEqual(flow.get("kind"), "await_project")
+
+    def test_project_command_from_plain_command_text_opens_chooser(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="project", command="project"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("Available projects:", body.text)
+        flow = self.store.get_ui_flow(1)
+        self.assertIsInstance(flow, dict)
+        self.assertEqual(flow.get("kind"), "await_project")
+
+    def test_project_discover_alias_opens_chooser(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/project discover", command="project"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("Available projects:", body.text)
+        flow = self.store.get_ui_flow(1)
+        self.assertIsInstance(flow, dict)
+        self.assertEqual(flow.get("kind"), "await_project")
+
+    def test_projects_chooser_marks_registered_status(self) -> None:
+        workspaces = discover_project_workspaces(self.settings)
+        self.assertTrue(workspaces)
+        register_project_name = "demo"
+        register_project_path = str(workspaces[0].path)
+        register_request = classify_request(
+            MessageContext(
+                chat_id=1,
+                text=f"/project register {register_project_name} {register_project_path}",
+                command="project",
+            )
+        )
+        _ = self.loop.run_until_complete(handle_command(1, register_request, self.settings, self.store, self.agents))
+        chooser_request = classify_request(MessageContext(chat_id=1, text="/projects", command="projects"))
+        body = self.loop.run_until_complete(handle_command(1, chooser_request, self.settings, self.store, self.agents))
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertIn("Registered in list:", body.text)
+        self.assertIn("registered (demo)", body.text)
 
     def test_projects_list_returns_indexed_text_list(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/projects list", command="projects"))
@@ -1701,7 +1874,30 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(self.store.get_chat_state(1)["project_key"], project_button.data)
         self.assertIsNone(self.store.get_ui_flow(1))
 
-    def test_menu_projects_opens_management_panel(self) -> None:
+    def test_project_management_menu_marks_chat_local_active_project(self) -> None:
+        workspace = Path(self.tempdir.name) / "demo-project"
+        workspace.mkdir(parents=True, exist_ok=True)
+        (workspace / "README.md").write_text("# demo\n", encoding="utf-8")
+
+        self.loop.run_until_complete(
+            handle_command(
+                1,
+                classify_request(MessageContext(chat_id=1, text=f"/project register demo {workspace}", command="project")),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.loop.run_until_complete(
+            handle_command(
+                1,
+                classify_request(MessageContext(chat_id=1, text="/project use demo", command="project")),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+
         body = self.loop.run_until_complete(
             handle_request(
                 MessageContext(chat_id=1, text="", command="menu:projects"),
@@ -1710,9 +1906,99 @@ class RoutingTests(unittest.TestCase):
                 self.agents,
             )
         )
+
         self.assertIsInstance(body, ButtonResponse)
-        self.assertIn("Project management", body.text)
-        self.assertTrue(any(button.data == "menu:projects:list" for button in (body.buttons or [])))
+        self.assertTrue(any(button.text == "Use demo *" for button in (body.buttons or [])))
+
+    def test_project_registry_list_marks_active_per_chat(self) -> None:
+        workspace_a = Path(self.tempdir.name) / "demo-a"
+        workspace_a.mkdir(parents=True, exist_ok=True)
+        (workspace_a / "README.md").write_text("# demo a\n", encoding="utf-8")
+        workspace_b = Path(self.tempdir.name) / "demo-b"
+        workspace_b.mkdir(parents=True, exist_ok=True)
+        (workspace_b / "README.md").write_text("# demo b\n", encoding="utf-8")
+
+        for chat_id, name, path in ((1, "demo-a", workspace_a), (2, "demo-b", workspace_b)):
+            self.loop.run_until_complete(
+                handle_command(
+                    chat_id,
+                    classify_request(MessageContext(chat_id=chat_id, text=f"/project register {name} {path}", command="project")),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+            self.loop.run_until_complete(
+                handle_command(
+                    chat_id,
+                    classify_request(MessageContext(chat_id=chat_id, text=f"/project use {name}", command="project")),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+
+        body_chat_1 = self.loop.run_until_complete(
+            handle_command(1, classify_request(MessageContext(chat_id=1, text="/project list", command="project")), self.settings, self.store, self.agents)
+        )
+        body_chat_2 = self.loop.run_until_complete(
+            handle_command(2, classify_request(MessageContext(chat_id=2, text="/project list", command="project")), self.settings, self.store, self.agents)
+        )
+
+        line_chat_1_a = next(line for line in body_chat_1.splitlines() if "demo-a |" in line)
+        line_chat_1_b = next(line for line in body_chat_1.splitlines() if "demo-b |" in line)
+        line_chat_2_a = next(line for line in body_chat_2.splitlines() if "demo-a |" in line)
+        line_chat_2_b = next(line for line in body_chat_2.splitlines() if "demo-b |" in line)
+
+        self.assertIn("  *active", line_chat_1_a)
+        self.assertNotIn("  *active", line_chat_1_b)
+        self.assertNotIn("  *active", line_chat_2_a)
+        self.assertIn("  *active", line_chat_2_b)
+
+    def test_project_current_prefers_chat_local_state_over_global_registry(self) -> None:
+        workspace_a = Path(self.tempdir.name) / "demo-a"
+        workspace_a.mkdir(parents=True, exist_ok=True)
+        (workspace_a / "README.md").write_text("# demo a\n", encoding="utf-8")
+        workspace_b = Path(self.tempdir.name) / "demo-b"
+        workspace_b.mkdir(parents=True, exist_ok=True)
+        (workspace_b / "README.md").write_text("# demo b\n", encoding="utf-8")
+
+        self.loop.run_until_complete(
+            handle_command(
+                1,
+                classify_request(MessageContext(chat_id=1, text=f"/project register demo-a {workspace_a}", command="project")),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.loop.run_until_complete(
+            handle_command(
+                1,
+                classify_request(MessageContext(chat_id=1, text=f"/project register demo-b {workspace_b}", command="project")),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.loop.run_until_complete(
+            handle_command(
+                2,
+                classify_request(MessageContext(chat_id=2, text="/project use demo-b", command="project")),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.store.set_project(1, "proj-chat-local", "demo-a", str(workspace_a))
+
+        body = self.loop.run_until_complete(
+            handle_command(1, classify_request(MessageContext(chat_id=1, text="/project current", command="project")), self.settings, self.store, self.agents)
+        )
+
+        self.assertIn("active project", body)
+        self.assertIn("name: demo-a", body)
+        self.assertIn(f"path: {workspace_a}", body)
 
     def test_doctor_command_returns_report(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/doctor", command="doctor"))
@@ -1927,6 +2213,18 @@ class RoutingTests(unittest.TestCase):
         self.assertFalse(body.raw["replace"])
         self.assertTrue(self.agents.is_running(1))
 
+    def test_run_command_uses_user_mode_summary(self) -> None:
+        self.store.set_display_mode(1, "user")
+        request = classify_request(MessageContext(chat_id=1, text="/run inspect repo", command="run"))
+        body = self.loop.run_until_complete(handle_control(1, request, self.store, self.agents))
+        state = self.store.get_chat_state(1)
+        self.assertIsInstance(body, AppEvent)
+        assert isinstance(body, AppEvent)
+        self.assertEqual(body.type, "status")
+        self.assertEqual(body.text, f"專案[{state['project_name']}] 已接收訊息")
+        self.assertEqual(body.raw["status_key"], "heartbeat")
+        self.assertFalse(body.raw["replace"])
+
     def test_run_command_with_request_id_uses_request_scoped_heartbeat_key(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/run inspect repo", command="run", request_id="1-9"))
         body = self.loop.run_until_complete(handle_control(1, request, self.store, self.agents))
@@ -1951,6 +2249,24 @@ class RoutingTests(unittest.TestCase):
         current = self.store.get_chat_state(1)["agent_current_run"]
         self.assertIsInstance(current, dict)
         self.assertEqual(current["kind"], "auto_dev")
+
+    def test_plain_text_agent_request_uses_user_mode_summary(self) -> None:
+        self.store.set_display_mode(1, "user")
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="Hi"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        state = self.store.get_chat_state(1)
+        self.assertIsInstance(body, AppEvent)
+        assert isinstance(body, AppEvent)
+        self.assertEqual(body.type, "status")
+        self.assertEqual(body.text, f"專案[{state['project_name']}] 已接收訊息")
+        self.assertEqual(body.raw["status_key"], "heartbeat")
+        self.assertFalse(body.raw["replace"])
 
     def test_schedule_command_adds_auto_dev_schedule(self) -> None:
         request = classify_request(

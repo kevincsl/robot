@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Question, QuestionType, Subject
 from app.services.law_links import question_importance_details
+from app.services.question_text import sanitize_question_record
 
 
 @dataclass
@@ -45,6 +46,8 @@ def build_mock_exam(
         selected.extend(chosen)
 
     selected.sort(key=lambda item: (item.subject_id, (item.year or 0), item.id))
+    for question in selected:
+        sanitize_question_record(question)
     return MockExamPaper(questions=selected, per_subject_target=per_subject)
 
 
@@ -60,6 +63,8 @@ def grade_mock_exam(
     questions = [question for question in questions if question is not None and question.type == QuestionType.CHOICE]
     question_map = {question.id: question for question in questions}
     ordered_questions = [question_map[qid] for qid in question_ids if qid in question_map]
+    for question in ordered_questions:
+        sanitize_question_record(question)
     details = question_importance_details(db, [question.id for question in ordered_questions])
 
     total = len(ordered_questions)
@@ -91,7 +96,7 @@ def grade_mock_exam(
             user_id=user_id,
         )
 
-        importance = details.get(question.id, {"score": 0.0, "weight": 1.0, "level": "敺敞蝛?"})
+        importance = details.get(question.id, {"score": 0.0, "weight": 1.0, "level": "未分類"})
         item = {
             "question": question,
             "user_answer": user_answer,
