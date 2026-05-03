@@ -142,8 +142,6 @@ def normalize_provider(provider: str | None) -> str:
 def normalize_model(provider: str, model: str | None) -> str:
     normalized_provider = normalize_provider(provider)
     candidate = (model or "").strip()
-    if normalized_provider == "codex" and candidate == "gpt-5.3-codex":
-        candidate = "gpt-5.4"
     if not candidate or candidate.lower() == "default":
         return SUPPORTED_MODELS[normalized_provider][0]
     if candidate in SUPPORTED_MODELS.get(normalized_provider, []):
