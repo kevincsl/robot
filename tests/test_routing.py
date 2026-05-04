@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import contextlib
@@ -1531,6 +1531,30 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(self.store.get_chat_state(1)["model"], "gpt-5.4")
         self.assertIsNone(self.store.get_ui_flow(1))
 
+    def test_menu_model_flow_updates_to_gpt_5_3_codex_from_button_callback(self) -> None:
+        open_menu = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="menu:model"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(open_menu, ButtonResponse)
+
+        applied = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="menu:set_model:gpt-5.3-codex"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(applied, str)
+        self.assertIn("Model updated.", applied)
+        self.assertEqual(self.store.get_chat_state(1)["model"], "gpt-5.3-codex")
+        self.assertIsNone(self.store.get_ui_flow(1))
+
     def test_menu_model_flow_rejects_text_and_keeps_flow(self) -> None:
         open_menu = self.loop.run_until_complete(
             handle_request(
@@ -2210,7 +2234,7 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("Provider run started.", body.text)
         self.assertIn("heartbeat: starting (first update within 1 second)", body.text)
         self.assertEqual(body.raw["status_key"], "heartbeat")
-        self.assertFalse(body.raw["replace"])
+        self.assertTrue(body.raw["replace"])
         self.assertTrue(self.agents.is_running(1))
 
     def test_run_command_uses_user_mode_summary(self) -> None:
@@ -2221,9 +2245,9 @@ class RoutingTests(unittest.TestCase):
         self.assertIsInstance(body, AppEvent)
         assert isinstance(body, AppEvent)
         self.assertEqual(body.type, "status")
-        self.assertEqual(body.text, f"專案[{state['project_name']}] 已接收訊息")
+        self.assertEqual(body.text, f"📨 專案[{state['project_name']}] 已接收")
         self.assertEqual(body.raw["status_key"], "heartbeat")
-        self.assertFalse(body.raw["replace"])
+        self.assertTrue(body.raw["replace"])
 
     def test_run_command_with_request_id_uses_request_scoped_heartbeat_key(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/run inspect repo", command="run", request_id="1-9"))
@@ -2243,7 +2267,7 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("Auto-dev run started.", body.text)
         self.assertIn("heartbeat: starting (first update within 1 second)", body.text)
         self.assertEqual(body.raw["status_key"], "heartbeat")
-        self.assertFalse(body.raw["replace"])
+        self.assertTrue(body.raw["replace"])
         queue = self.store.get_agent_queue(1)
         self.assertEqual(len(queue), 0)
         current = self.store.get_chat_state(1)["agent_current_run"]
@@ -2264,9 +2288,9 @@ class RoutingTests(unittest.TestCase):
         self.assertIsInstance(body, AppEvent)
         assert isinstance(body, AppEvent)
         self.assertEqual(body.type, "status")
-        self.assertEqual(body.text, f"專案[{state['project_name']}] 已接收訊息")
+        self.assertEqual(body.text, f"📨 專案[{state['project_name']}] 已接收")
         self.assertEqual(body.raw["status_key"], "heartbeat")
-        self.assertFalse(body.raw["replace"])
+        self.assertTrue(body.raw["replace"])
 
     def test_schedule_command_adds_auto_dev_schedule(self) -> None:
         request = classify_request(
@@ -2483,6 +2507,7 @@ class RoutingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

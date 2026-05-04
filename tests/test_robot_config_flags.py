@@ -40,8 +40,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(normalize_model("claude", "default"), "claude-opus-4-7")
         self.assertEqual(normalize_model("codex", "default"), "gpt-5.4")
 
-    def test_legacy_codex_model_normalizes_to_current_default(self) -> None:
-        self.assertEqual(normalize_model("codex", "gpt-5.3-codex"), "gpt-5.4")
+    def test_codex_model_preserves_gpt_5_3_codex(self) -> None:
+        self.assertEqual(normalize_model("codex", "gpt-5.3-codex"), "gpt-5.3-codex")
 
 
 if __name__ == "__main__":
