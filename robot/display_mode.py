@@ -31,9 +31,11 @@ _FOOTER_PREFIXES = (
     "run_id: ",
     "profile: ",
     "回覆來自 model: ",
+    "— ",
 )
 _FOOTER_PREFIXES_NORMALIZED = tuple(prefix.lower() for prefix in _FOOTER_PREFIXES)
 _MODEL_ORIGIN_FOOTER_RE = re.compile(r"^回覆來自\s*model\s*[:：]\s*", re.IGNORECASE)
+_MODEL_DASH_FOOTER_RE = re.compile(r"^—\s*\S", re.UNICODE)
 
 
 def normalize_display_mode(value: str | None) -> str:
@@ -289,12 +291,7 @@ def format_run_stopped(
 ) -> str:
     normalized = normalize_display_mode(mode)
     if normalized == DISPLAY_MODE_USER:
-        return "\n".join(
-            [
-                f"{_format_project_tag(project)} 處理中止",
-                f"total_elapsed: {_elapsed_to_user_value(elapsed)}",
-            ]
-        )
+        return f"⛔ {_format_project_tag(project)} 處理中止 · {_elapsed_to_user_value(elapsed)}"
 
     return "\n".join(
         [
@@ -328,19 +325,21 @@ def format_output_text(
         return body
 
     if cancelled:
+        icon = "⛔"
         title = "處理中止"
     elif success:
+        icon = "✅"
         title = "處理完成"
     else:
+        icon = "❌"
         title = "處理失敗"
 
-    lines = [f"{_format_project_tag(project or '-')} {title}"]
-    if elapsed is not None:
-        lines.append(f"total_elapsed: {_elapsed_to_user_value(elapsed)}")
+    elapsed_display = f" · {_elapsed_to_user_value(elapsed)}" if elapsed is not None else ""
+    lines = [f"{icon} {_format_project_tag(project or '-')} {title}{elapsed_display}"]
     if body:
         lines.extend(["", body])
     origin = (model or "").strip() or "-"
-    lines.extend(["", f"回覆來自 model: {origin}"])
+    lines.extend(["", f"— {origin}"])
     return "\n".join(lines).strip()
 
 
@@ -368,23 +367,21 @@ def strip_output_footer(text: str) -> str:
 
 def _strip_user_mode_completion_wrapper(text: str) -> str:
     lines = text.strip().splitlines()
-    if len(lines) < 2:
+    if not lines:
         return text.strip()
 
     first = lines[0].strip()
-    second = lines[1].strip()
-    if not first.startswith("專案["):
+    _COMPLETION_ICONS = ("✅ ", "❌ ", "⛔ ")
+    if not any(first.startswith(icon + "專案[") for icon in _COMPLETION_ICONS):
         return text.strip()
     if not (
-        first.endswith("處理完成")
-        or first.endswith("處理失敗")
-        or first.endswith("處理中止")
+        first.endswith("處理完成") or "處理完成 ·" in first
+        or first.endswith("處理失敗") or "處理失敗 ·" in first
+        or first.endswith("處理中止") or "處理中止 ·" in first
     ):
         return text.strip()
-    if not second.startswith("total_elapsed: "):
-        return text.strip()
 
-    start_index = 2
+    start_index = 1
     while start_index < len(lines) and not lines[start_index].strip():
         start_index += 1
     if start_index >= len(lines):
@@ -410,11 +407,10 @@ def _is_footer_line(line: str) -> bool:
 
 def _format_user_progress(*, project: str, elapsed: str) -> str:
     seconds = _elapsed_to_seconds(elapsed)
-    state = "已接收訊息" if seconds <= 0 else "處理中"
     tag = _format_project_tag(project)
     if seconds > 0:
-        return f"{tag} {state} {_elapsed_to_user_value(elapsed)}"
-    return f"{tag} {state}"
+        return f"⚙️ {tag} 處理中 · {_elapsed_to_user_value(elapsed)}"
+    return f"📨 {tag} 已接收訊息"
 
 
 def _elapsed_history_lines(elapsed: str) -> list[str]:
