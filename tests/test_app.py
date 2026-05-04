@@ -188,6 +188,18 @@ class AppTypingTests(unittest.TestCase):
             self.assertEqual(robot_app._typing_min_interval_seconds(), 4.0)
 
 
+class AppGatewayPatchTests(unittest.TestCase):
+    def test_status_render_no_longer_adds_status_prefix(self) -> None:
+        event = AppEvent(type="status", text="📨 專案[robot/main] 已接收", chat_id=1, request_id="r1", raw={})
+        rendered = robot_app.TelegramGateway._render_event(event)
+        self.assertEqual(rendered, "📨 專案[robot/main] 已接收")
+
+    def test_error_render_no_longer_adds_error_prefix(self) -> None:
+        event = AppEvent(type="error", text="boom", chat_id=1, request_id="r1", raw={})
+        rendered = robot_app.TelegramGateway._render_event(event)
+        self.assertEqual(rendered, "boom")
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -191,6 +191,7 @@ FLOW_AWAIT_BRAIN_SCHEDULE_UPDATE_CONFIRM = "await_brain_schedule_update_confirm"
 FLOW_AWAIT_BRAIN_ORGANIZE_TEXT = "await_brain_organize_text"
 FLOW_AWAIT_BRAIN_ORGANIZE_TARGET = "await_brain_organize_target"
 FLOW_AWAIT_BRAIN_ORGANIZE_TITLE = "await_brain_organize_title"
+FLOW_AWAIT_FILE_ACTION = "await_file_action"
 FLOW_BRAIN_SEARCH_RESULTS = "brain_search_results"
 FLOW_BRAIN_BATCH_RESULTS = "brain_batch_results"
 
@@ -412,7 +413,7 @@ def _status_event(
     text: str,
     *,
     status_key: str = "heartbeat",
-    replace: bool = False,
+    replace: bool = True,
     request_id: str | None = None,
     typing: str | None = None,
 ) -> AppEvent:
@@ -2281,6 +2282,56 @@ async def _handle_flow_input(
         store.clear_ui_flow(chat_id)
         return f"已整理成 {label} 筆記：{path}\n\n{body}"
 
+    if kind == FLOW_AWAIT_FILE_ACTION:
+        local_path = str(flow.get("local_path") or "").strip()
+        source_name = str(flow.get("source_name") or "").strip()
+        title = str(flow.get("title") or "").strip()
+        if not local_path:
+            store.clear_ui_flow(chat_id)
+            return "檔案流程資料遺失，請重新上傳。"
+        if not source_name:
+            source_name = Path(local_path).name
+        if not title:
+            title = Path(source_name).stem if source_name else Path(local_path).stem
+
+        lowered = text.lower()
+        should_import = any(token in lowered for token in ("匯入", "secondbrain", "second brain"))
+        if should_import:
+            try:
+                note_path, extracted = import_markitdown_resource(settings, Path(local_path), title=title)
+            except (FileConversionException, MarkItDownException) as exc:
+                store.clear_ui_flow(chat_id)
+                return _document_import_error_message(source_name, exc)
+
+            preview = extracted.strip().replace("\r\n", "\n")
+            if len(preview) > 500:
+                preview = preview[:500].rstrip() + "..."
+            store.clear_ui_flow(chat_id)
+            return (
+                "已匯入文件到 secondbrain。\n"
+                f"path: {note_path}\n"
+                f"source_file: {source_name}\n\n"
+                f"{preview or '(No extracted text)'}"
+            )
+
+        store.clear_ui_flow(chat_id)
+        return await handle_agent(
+            chat_id,
+            ClassifiedRequest(
+                AGENT_REQUEST,
+                None,
+                "\n".join(
+                    [
+                        f"source_file: {source_name}",
+                        f"local_path: {local_path}",
+                        f"user_request: {text}",
+                    ]
+                ),
+            ),
+            store,
+            agents,
+        )
+
     if kind == FLOW_AWAIT_BRAIN_DECIDE:
         related_paths, brief = build_decision_support_brief(settings, text, limit=5)
         path = create_decision_note_from_brief(settings, text, brief, related_notes=related_paths)
@@ -2316,18 +2367,19 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
         if not title:
             file_name = str(ctx.document.file_name or "").strip()
             title = Path(file_name).stem if file_name else Path(local_path).stem
-        try:
-            note_path, extracted = import_markitdown_resource(settings, Path(local_path), title=title)
-        except (FileConversionException, MarkItDownException) as exc:
-            return _document_import_error_message(source_name, exc)
-        preview = extracted.strip().replace("\r\n", "\n")
-        if len(preview) > 500:
-            preview = preview[:500].rstrip() + "..."
+        store.set_ui_flow(
+            ctx.chat_id,
+            {
+                "kind": FLOW_AWAIT_FILE_ACTION,
+                "local_path": local_path,
+                "source_name": source_name,
+                "title": title,
+                "mime_type": str(ctx.document.mime_type or "").strip(),
+            },
+        )
         return (
-            "已匯入文件到 secondbrain。\n"
-            f"path: {note_path}\n"
-            f"source_file: {source_name}\n\n"
-            f"{preview or '(No extracted text)'}"
+            f"已收到檔案：{source_name}\n"
+            "要怎麼處理？例如：匯入 secondbrain、摘要、轉成 docx/pdf、OCR"
         )
 
     if command == "menu":
@@ -2349,7 +2401,7 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
     active_flow = store.get_ui_flow(ctx.chat_id)
     if text and not command and isinstance(active_flow, dict):
         flow_kind = str(active_flow.get("kind") or "").strip()
-        allowed_flow_kinds = {FLOW_AWAIT_MODEL, FLOW_AWAIT_PROVIDER, FLOW_AWAIT_PROJECT}
+        allowed_flow_kinds = {FLOW_AWAIT_MODEL, FLOW_AWAIT_PROVIDER, FLOW_AWAIT_PROJECT, FLOW_AWAIT_FILE_ACTION}
         if flow_kind not in allowed_flow_kinds:
             store.clear_ui_flow(ctx.chat_id)
 

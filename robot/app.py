@@ -29,6 +29,7 @@ def _patch_teleapp_noop_event() -> None:
         return
 
     original_send_event = TelegramGateway._send_event
+    original_render_event = TelegramGateway._render_event
 
     async def _send_event_with_noop(self, app, chat_id: int, event: AppEvent) -> None:
         event_type = str(getattr(event, "type", "") or "").strip().lower()
@@ -36,7 +37,14 @@ def _patch_teleapp_noop_event() -> None:
             return
         await original_send_event(self, app, chat_id, event)
 
+    def _render_event_without_status_prefix(event: AppEvent) -> str:
+        event_type = str(getattr(event, "type", "") or "").strip().lower()
+        if event_type in {"status", "error"}:
+            return str(getattr(event, "text", "") or "")
+        return original_render_event(event)
+
     TelegramGateway._send_event = _send_event_with_noop
+    TelegramGateway._render_event = staticmethod(_render_event_without_status_prefix)
     setattr(TelegramGateway, "_robot_noop_event_patch", True)
 
 

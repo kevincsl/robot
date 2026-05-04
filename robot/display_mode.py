@@ -372,7 +372,9 @@ def _strip_user_mode_completion_wrapper(text: str) -> str:
 
     first = lines[0].strip()
     _COMPLETION_ICONS = ("✅ ", "❌ ", "⛔ ")
-    if not any(first.startswith(icon + "專案[") for icon in _COMPLETION_ICONS):
+    has_icon_prefix = any(first.startswith(icon + "專案[") for icon in _COMPLETION_ICONS)
+    has_legacy_prefix = first.startswith("專案[")
+    if not (has_icon_prefix or has_legacy_prefix):
         return text.strip()
     if not (
         first.endswith("處理完成") or "處理完成 ·" in first
@@ -382,6 +384,9 @@ def _strip_user_mode_completion_wrapper(text: str) -> str:
         return text.strip()
 
     start_index = 1
+    if has_legacy_prefix and start_index < len(lines):
+        if lines[start_index].strip().lower().startswith("total_elapsed:"):
+            start_index += 1
     while start_index < len(lines) and not lines[start_index].strip():
         start_index += 1
     if start_index >= len(lines):
@@ -409,8 +414,8 @@ def _format_user_progress(*, project: str, elapsed: str) -> str:
     seconds = _elapsed_to_seconds(elapsed)
     tag = _format_project_tag(project)
     if seconds > 0:
-        return f"⚙️ {tag} 處理中 · {_elapsed_to_user_value(elapsed)}"
-    return f"📨 {tag} 已接收訊息"
+        return f"🤖 {tag} 處理中 · {_elapsed_to_user_value(elapsed)}"
+    return f"📨 {tag} 已接收"
 
 
 def _elapsed_history_lines(elapsed: str) -> list[str]:

@@ -4,86 +4,80 @@
 
 [English](./README.md) | 繁體中文
 
-`robot` 可以讓你在 Telegram 中控制本機開發/自動化流程，依需求切換不同 provider，並統一管理 queue、排程與第二大腦流程。
+> **⚠️ 警告**
+> 本專案建議具備**資訊／軟體工程背景**的人員安裝使用。
+> 本系統對 AI Agent 的執行限制非常少，操作不當可能導致檔案或目錄被刪除。
+> **因設定錯誤或操作不當造成的任何資料損失，請自行負責。**
+
+`robot` 讓你透過 Telegram 控制本機開發與自動化流程——將請求路由到不同 AI Provider、管理任務佇列、排程，以及第二大腦筆記系統，全部整合在一個 bot 程序中。
 
 ## 功能
 
-- 多 provider 路由：`claude`、`codex`、`gemini`
+- 多 Provider AI 路由：`claude`、`codex`、`gemini`
 - 每個 chat 可切換模型（`/provider`、`/model`、`/models`）
-- 可選擇工作目錄（`/project`、`/projects`）
-- Agent 佇列與狀態控制（`/queue`、`/agentstatus`、`/clearqueue`）
-- 內建第二大腦指令（筆記、搜尋、行程）
+- 工作目錄切換（`/project`、`/projects`）
+- Agent 任務佇列與狀態管理（`/queue`、`/agentstatus`、`/clearqueue`）
+- 第二大腦指令（筆記、搜尋、排程）
 - 文件匯入支援 `markitdown` 流程
-- 內建單實例鎖與 Telegram polling conflict 保護
+- Google Calendar 同步
+- 通訊錄（郵件收件人管理）
+- 多 Robot 支援（同時執行多個 bot 實例）
+- 單實例鎖與 Telegram polling conflict 保護
 
 ## 需求
 
 - Python `>=3.11`
-- Telegram bot token 與允許的 user id
-- Teleapp runtime（依賴安裝後可用）
-- 依 provider 需求，PATH 上可選擇安裝：
-  - `claude`
-  - `codex`
-  - `gemini`
+- Telegram bot token 與允許的 user ID
+- Teleapp runtime（bootstrap 安裝）
+- AI Provider CLI（只需安裝你要用的）：
+  - `claude` — Claude provider
+  - `codex` — Codex provider
+  - `gemini` — Gemini provider
 
 ## 快速開始
 
-1. 安裝依賴
+### 1. 安裝依賴
 
 ```bash
+# Windows
 bootstrap_robot.bat
-# 或：./bootstrap_robot.sh
+
+# Linux / macOS
+./bootstrap_robot.sh
 ```
 
-2. 建立設定檔
+### 2. 建立設定檔
 
 ```bash
 mkdir .robots
 copy .env.example .robots\default.env
 ```
 
-至少填入：
+編輯 `.robots/default.env`，至少填入：
 
-- `TELEAPP_TOKEN`
-- `TELEAPP_ALLOWED_USER_ID`
-- `ROBOT_DEFAULT_PROVIDER`
-- `ROBOT_DEFAULT_MODEL`
+| 變數 | 說明 |
+|---|---|
+| `TELEAPP_TOKEN` | Telegram bot token |
+| `TELEAPP_ALLOWED_USER_ID` | 你的 Telegram user ID |
+| `ROBOT_DEFAULT_PROVIDER` | `claude` / `codex` / `gemini` |
+| `ROBOT_DEFAULT_MODEL` | 例如 `claude-sonnet-4-6` |
 
-`bootstrap_robot.*` 也會把 `robotctl` shim 安裝到 `~/.local/bin`，因此在 PowerShell 與已包含該路徑的 shell 中可直接執行 `robotctl start all`。
-
-3. 啟動 bot
-
-建議統一使用：
+### 3. 啟動 bot
 
 ```bash
-robotctl /h
+robotctl run default        # 前景執行
+robotctl start default      # 背景執行
+robotctl /h                 # 顯示所有指令
 ```
 
-### 單一 Robot
+## 多 Robot
 
-```bash
-robotctl run default
-# 或：python robotctl.py run default
-```
+同時執行多個不同設定的 bot 實例：
 
-### 多個 Robot（背景執行）
-
-若要同時執行多個不同配置的 robot：
-
-1. 建立配置檔：
 ```bash
 copy .env.example .robots\robot1.env
 copy .env.example .robots\robot2.env
-```
-
-2. 編輯每個配置檔，設定不同的：
-   - `ROBOT_ID`（例如 `robot-claude`、`robot-codex`）
-   - `TELEAPP_TOKEN`（每個 robot 使用不同的 bot token）
-   - Provider/model 設定
-
-3. 啟動 / 管理 robot：
-```bash
-robotctl start robot1
+# 編輯每個檔案，設定不同的 ROBOT_ID 與 TELEAPP_TOKEN
 robotctl start all
 robotctl status
 robotctl stop robot1
@@ -91,102 +85,170 @@ robotctl restart robot1
 robotctl logs robot1 -f
 ```
 
-詳細的多 robot 設定請參考 [MULTI_ROBOT.md](./MULTI_ROBOT.md)。
-
-**注意**：配置名稱會直接對應 `.robots/<name>.env`（例如 `robot1` => `.robots/robot1.env`）。配置檔內的 `ROBOT_ID` 用於執行時的狀態檔案。
-舊的 `start_robot.*`、`manage_robots.*`、`start_all.*`、`stop_all.*` 仍可用，但現在都只是轉呼叫 `robotctl` 的相容 wrapper。
-舊的設定檔命名如 `.env`、`.env.<name>` 已不再支援；請改成 `.robots/<name>.env`。
+- 配置名稱（例如 `robot1`）對應 `.robots/robot1.env`
+- env 檔內的 `ROBOT_ID` 用於執行時的狀態檔案
+- 詳細說明請參考 [MULTI_ROBOT.md](./MULTI_ROBOT.md)
 
 ## 常用指令
 
-- `/help`：指令總覽
-- `/status`：目前 provider/model/project/queue 狀態
-- `/contact list`、`/contact add <key> <email> <name>`
-- `/provider <claude|codex|gemini>`
-- `/model <model_name>`
-- `/project <workspace>`
-- `/queue`
-- `/restart`
-- `/brain`、`/brainsearch`、`/braininbox`、`/brainschedule`
+### 一般操作
 
-### 多 Robot 指令
+| 指令 | 說明 |
+|---|---|
+| `/help` | 完整指令表 |
+| `/menu` | 按鈕式主選單 |
+| `/status` | 目前 provider / model / project / queue 狀態 |
+| `/doctor` | 診斷資訊 |
+| `/quick` | 一頁速查 |
 
-當執行多個 robot 時：
+### Provider 與模型
 
-- `/robots`：列出所有活躍的 robot 及其狀態
-- `/robotstatus <robot_id>`：顯示特定 robot 的詳細狀態
+| 指令 | 說明 |
+|---|---|
+| `/provider <claude\|codex\|gemini>` | 切換 AI provider |
+| `/models` | 列出可用模型 |
+| `/model <name>` | 切換模型 |
 
-## 重要環境變數
+### 專案與 Agent
 
-對照 `.env.example` 與 runtime 設定：
+| 指令 | 說明 |
+|---|---|
+| `/projects` | 列出工作目錄 |
+| `/project <key>` | 切換工作目錄 |
+| `/run <goal>` | 執行任務 |
+| `/agent [options] <goal>` | 以選項執行 agent |
+| `/queue` | 顯示任務佇列 |
+| `/agentstatus` | 顯示 agent 狀態 |
+| `/schedules` | 顯示已排程任務 |
+| `/schedule YYYY-MM-DD HH:MM <goal>` | 新增排程任務 |
 
-- `TELEAPP_TOKEN`
-- `TELEAPP_ALLOWED_USER_ID`
-- `TELEAPP_APP`（預設 `robot.py`）
-- `ROBOT_DEFAULT_PROVIDER`
-- `ROBOT_DEFAULT_MODEL`
-- `ROBOT_CODEX_CMD`
-- `ROBOT_CLAUDE_CMD`
-- `ROBOT_CUSTOM_MODELS`（逗號分隔的自訂模型名稱）
-- `ROBOT_GEMINI_CMD`
-- `ROBOT_PROJECTS_ROOTS`
-- `ROBOT_STATE_HOME`
-- `ROBOT_GOOGLE_CALENDAR_ENABLED`
-- `ROBOT_GOOGLE_CALENDAR_CREDENTIALS_PATH`
-- `ROBOT_GOOGLE_CALENDAR_TOKEN_PATH`
-- `ROBOT_GOOGLE_CALENDAR_ID`
-- `ROBOT_GOOGLE_CALENDAR_SCOPES`
+### 第二大腦（Brain）
 
-安全相關旗標（預設關閉）：
+| 指令 | 說明 |
+|---|---|
+| `/braininbox <text>` | 新增筆記到收件匣 |
+| `/brainsearch <query>` | 搜尋筆記 |
+| `/brainbatchauto [limit]` | 自動批次整理收件匣 |
+| `/braindaily` | 今日摘要 |
+| `/brainweekly` | 每週摘要 |
 
-- `ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX=0`
-- `ROBOT_CODEX_SKIP_GIT_REPO_CHECK=0`
-- `ROBOT_CLAUDE_SKIP_PERMISSIONS=0`
+### 控制類
 
-## Hot Reload / 衝突備註
+| 指令 | 說明 |
+|---|---|
+| `/clearqueue` | 清空任務佇列 |
+| `/clearschedule` | 清空所有排程 |
+| `/reset` | 重置對話狀態 |
+| `/panic` | 緊急停止所有任務 |
+| `/restart` | 重啟 bot 程序 |
 
-- 主要入口建議使用 `robotctl run <config>` 或 `robotctl start <config|all>`。
-- 預設模式為 `TELEAPP_HOT_RELOAD=0`（穩定模式，較少程序層級衝突）。
-- 每個 robot 實例使用基於其 bot token 的單實例鎖來防止 polling 衝突。
-- 若仍發生 conflict crash，請確認同一 token 只有一個 bot 程序在跑。
+### 多 Robot
+
+| 指令 | 說明 |
+|---|---|
+| `/robots` | 列出所有活躍的 robot 實例 |
+| `/robotstatus <robot_id>` | 顯示特定 robot 的詳細狀態 |
+
+## 環境變數
+
+### 必填
+
+| 變數 | 說明 |
+|---|---|
+| `TELEAPP_TOKEN` | Telegram bot token |
+| `TELEAPP_ALLOWED_USER_ID` | 允許的 Telegram user ID |
+| `ROBOT_DEFAULT_PROVIDER` | 預設 provider（`claude` / `codex` / `gemini`） |
+| `ROBOT_DEFAULT_MODEL` | 預設模型名稱 |
+
+### 選填
+
+| 變數 | 說明 |
+|---|---|
+| `TELEAPP_APP` | 入口程式（預設：`robot.py`） |
+| `ROBOT_ID` | Robot 實例 ID |
+| `ROBOT_CODEX_CMD` | 自訂 codex CLI 指令 |
+| `ROBOT_CLAUDE_CMD` | 自訂 claude CLI 指令 |
+| `ROBOT_GEMINI_CMD` | 自訂 gemini CLI 指令 |
+| `ROBOT_CUSTOM_MODELS` | 逗號分隔的自訂模型名稱 |
+| `ROBOT_PROJECTS_ROOTS` | 分號分隔的工作目錄根路徑 |
+| `ROBOT_STATE_HOME` | 狀態目錄（預設：`.robot_state`） |
+
+### Google Calendar
+
+| 變數 | 說明 |
+|---|---|
+| `ROBOT_GOOGLE_CALENDAR_ENABLED` | `1` 以啟用 |
+| `ROBOT_GOOGLE_CALENDAR_CREDENTIALS_PATH` | OAuth 憑證 JSON 路徑 |
+| `ROBOT_GOOGLE_CALENDAR_TOKEN_PATH` | Token 快取路徑 |
+| `ROBOT_GOOGLE_CALENDAR_ID` | 行事曆 ID（預設：`primary`） |
+| `ROBOT_GOOGLE_CALENDAR_SCOPES` | OAuth scopes（逗號或分號分隔） |
+
+### 安全旗標（預設關閉）
+
+| 變數 | 預設 | 說明 |
+|---|---|---|
+| `ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX` | `0` | 略過 Codex 沙盒機制 |
+| `ROBOT_CODEX_SKIP_GIT_REPO_CHECK` | `0` | 略過 Codex git repo 檢查 |
+| `ROBOT_CLAUDE_SKIP_PERMISSIONS` | `0` | 略過 Claude 權限確認 |
 
 ## Google Calendar 同步
 
-- `/schedule ...` 在啟用 Google Calendar 後，會嘗試同步建立/更新對應事件。
-- `/schedule sync [push|pull|both] [days] [limit]` 可手動立即觸發同步。
-- `/clearschedule` 會清空本地排程，且會嘗試刪除已綁定的 Google 事件。
-- 背景同步每 5 分鐘執行一次，維持 `/schedule` 與 Google 行事曆一致。
-- 若要使用可寫入同步（`/schedule`、`/clearschedule` 刪除）：
-  - `ROBOT_GOOGLE_CALENDAR_SCOPES=https://www.googleapis.com/auth/calendar`
-  - 重新執行 `python scripts/google_calendar_auth.py` 完成授權。
+1. 啟用：設定 `ROBOT_GOOGLE_CALENDAR_ENABLED=1`
+2. 授權：`python scripts/google_calendar_auth.py`
+3. 如需寫入權限（建立/刪除事件），設定：
+   ```
+   ROBOT_GOOGLE_CALENDAR_SCOPES=https://www.googleapis.com/auth/calendar
+   ```
+   然後重新執行授權腳本。
+
+背景同步每 5 分鐘執行一次。手動同步：`/schedule sync [push|pull|both] [days] [limit]`
 
 ## 通訊錄
 
-- 可用 alias 管理常用收件人：
-  - `/contact add <key> <email> <name>`
-  - `/contact list`
-  - `/contact show <key>`
-  - `/contact remove <key>`
-  - `/contact alias <key> add <alias>`
-  - `/contact resolve <target1> [target2] ...`
-- 寄信指令可直接使用通訊錄 alias：
-  - `/mailcli -t <key_or_email> -s <subject> -bdy <body_or_file>`
-  - `/mailjson <config.json>`
-  - `/mailbatch <recipients.csv> <base_config.json>`
-  - `/mailmcp`
+以 alias 管理常用郵件收件人：
+
+```
+/contact add <key> <email> <name>
+/contact list
+/contact show <key>
+/contact remove <key>
+/contact resolve <key>
+```
+
+寄信指令可使用 alias：
+
+```
+/mailcli -t <key_or_email> -s <subject> -bdy <body>
+/mailjson <config.json>
+/mailbatch <recipients.csv> <base_config.json>
+```
+
+## 疑難排解
+
+| 症狀 | 處理方式 |
+|---|---|
+| Polling conflict 錯誤 | 終止使用同一 token 的重複程序，只保留單一實例 |
+| 任務卡住 | 查看 `/queue` 與 `/agentstatus`；必要時用 `/panic` |
+| 安裝後 import 錯誤 | 重新執行 bootstrap；檢查 `constraints.txt` |
+| Bot 無回應 | 執行 `/doctor`；用 `robotctl logs default -f` 查看日誌 |
 
 ## 開發
 
-執行測試：
-
 ```bash
-pytest -q
+pytest -q                                    # 執行測試
+python scripts/google_calendar_auth.py       # 一次性行事曆授權
+python scripts/check_release_consistency.py  # 發布前檢查
 ```
 
-Google Calendar 一次性授權：
+專案版本定義於 [`robot/config.py`](./robot/config.py) 與 `pyproject.toml`。
 
-```bash
-python scripts/google_calendar_auth.py
-```
+## 相關文件
 
-專案版本定義於 [robot/config.py](./robot/config.py) 與 `pyproject.toml`（目前 `1.0.0`）。
+| 檔案 | 說明 |
+|---|---|
+| [MULTI_ROBOT.md](./MULTI_ROBOT.md) | 多 Robot 架構與設定 |
+| [FEATURES_GUIDE.md](./FEATURES_GUIDE.md) | 完整指令參考 |
+| [QUICK_REFERENCE.md](./QUICK_REFERENCE.md) | 一頁速查表 |
+| [RUNBOOK.md](./RUNBOOK.md) | 維運操作手冊 |
+| [ROLLBACK.md](./ROLLBACK.md) | 回滾程序 |
+| [DEPENDENCY_STRATEGY.md](./DEPENDENCY_STRATEGY.md) | 依賴升級策略 |

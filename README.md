@@ -2,88 +2,83 @@
 
 Teleapp-based Telegram task and agent router.
 
-English | [Traditional Chinese](./README.zh-TW.md)
+English | [繁體中文](./README.zh-TW.md)
 
-`robot` lets you control local coding/automation workflows from Telegram, route requests to different providers, and manage simple queue/brain/schedule flows in one bot process.
+> **⚠️ WARNING**
+> This project is intended for users with an **IT / software engineering background**.
+> It imposes very few restrictions on what AI agents can execute on your machine.
+> Improper use may result in unintended file or directory deletion.
+> **You are solely responsible for any data loss caused by misconfiguration or misuse.**
+
+`robot` lets you control local coding/automation workflows from Telegram — route requests to different AI providers, manage task queues, schedules, and a second-brain note system, all in one bot process.
 
 ## Features
 
-- Multi-provider routing: `claude`, `codex`, `gemini`
-- Model switching per chat (`/provider`, `/model`, `/models`)
+- Multi-provider AI routing: `claude`, `codex`, `gemini`
+- Per-chat model switching (`/provider`, `/model`, `/models`)
 - Workspace selection (`/project`, `/projects`)
-- Agent queue and status controls (`/queue`, `/agentstatus`, `/clearqueue`)
-- Built-in "brain" commands for notes/search/schedule
-- Document import via `markitdown` pipeline (configured in routing flow)
-- Single-instance lock + polling conflict protection
+- Agent task queue and status (`/queue`, `/agentstatus`, `/clearqueue`)
+- Second-brain commands for notes, search, and scheduling
+- Document import via `markitdown` pipeline
+- Google Calendar sync
+- Address book for mail recipients
+- Multi-robot support (run multiple bot instances simultaneously)
+- Single-instance lock and Telegram polling conflict protection
 
 ## Requirements
 
 - Python `>=3.11`
-- Telegram bot token + allowed user id
-- Teleapp runtime (installed via dependencies)
-- Optional CLIs on PATH (depending on provider you use):
-  - `claude`
-  - `codex`
-  - `gemini`
+- Telegram bot token and allowed user ID
+- Teleapp runtime (installed via bootstrap)
+- AI provider CLIs on PATH (install only what you use):
+  - `claude` — for Claude provider
+  - `codex` — for Codex provider
+  - `gemini` — for Gemini provider
 
 ## Quick Start
 
-1. Install dependencies
+### 1. Install dependencies
 
 ```bash
+# Windows
 bootstrap_robot.bat
-# or: ./bootstrap_robot.sh
+
+# Linux / macOS
+./bootstrap_robot.sh
 ```
 
-2. Configure env file
+### 2. Configure env file
 
 ```bash
 mkdir .robots
 copy .env.example .robots\default.env
 ```
 
-Fill at least:
+Edit `.robots/default.env` and fill in at minimum:
 
-- `TELEAPP_TOKEN`
-- `TELEAPP_ALLOWED_USER_ID`
-- `ROBOT_DEFAULT_PROVIDER`
-- `ROBOT_DEFAULT_MODEL`
+| Variable | Description |
+|---|---|
+| `TELEAPP_TOKEN` | Telegram bot token |
+| `TELEAPP_ALLOWED_USER_ID` | Your Telegram user ID |
+| `ROBOT_DEFAULT_PROVIDER` | `claude` / `codex` / `gemini` |
+| `ROBOT_DEFAULT_MODEL` | e.g. `claude-sonnet-4-6` |
 
-`bootstrap_robot.*` also installs a `robotctl` shim into `~/.local/bin`, so `robotctl start all` works directly in PowerShell and shells where that path is already on `PATH`.
-
-3. Start bot
-
-Preferred unified CLI:
+### 3. Start the bot
 
 ```bash
-robotctl /h
+robotctl run default        # foreground
+robotctl start default      # background
+robotctl /h                 # show all commands
 ```
 
-### Single Robot
+## Multiple Robots
 
-```bash
-robotctl run default
-# or: python robotctl.py run default
-```
+To run multiple bot instances with different configs:
 
-### Multiple Robots (Background)
-
-For running multiple robot instances with different configs:
-
-1. Create config files:
 ```bash
 copy .env.example .robots\robot1.env
 copy .env.example .robots\robot2.env
-```
-
-2. Edit each config file and set unique:
-   - `ROBOT_ID` (e.g., `robot-claude`, `robot-codex`)
-   - `TELEAPP_TOKEN` (different bot token for each)
-   - Provider/model settings
-
-3. Start / manage robots:
-```bash
-robotctl start robot1
+# edit each file, set unique ROBOT_ID and TELEAPP_TOKEN
 robotctl start all
 robotctl status
 robotctl stop robot1
@@ -91,103 +86,170 @@ robotctl restart robot1
 robotctl logs robot1 -f
 ```
 
-See [MULTI_ROBOT.md](./MULTI_ROBOT.md) for detailed multi-robot setup.
-
-**Note**: Config name maps directly to `.robots/<name>.env` (for example, `robot1` => `.robots/robot1.env`). `ROBOT_ID` inside the config is used for runtime state files.
-Legacy `start_robot.*`, `manage_robots.*`, `start_all.*`, and `stop_all.*` remain as compatibility wrappers and now forward to `robotctl`.
-Legacy config names like `.env` and `.env.<name>` are no longer supported; move them to `.robots/<name>.env`.
+- Config name (e.g. `robot1`) maps to `.robots/robot1.env`
+- `ROBOT_ID` inside the env file is used for runtime state files
+- See [MULTI_ROBOT.md](./MULTI_ROBOT.md) for full details
 
 ## Common Commands
 
-- `/help`: command list
-- `/status`: current provider/model/project/queue summary
-- `/contact list`, `/contact add <key> <email> <name>`
-- `/provider <claude|codex|gemini>`
-- `/model <model_name>`
-- `/project <workspace>`
-- `/queue`
-- `/restart`
-- `/brain`, `/brainsearch`, `/braininbox`, `/brainschedule`
+### General
 
-### Multi-Robot Commands
+| Command | Description |
+|---|---|
+| `/help` | Full command list |
+| `/menu` | Button-based main menu |
+| `/status` | Current provider / model / project / queue |
+| `/doctor` | Diagnostics |
+| `/quick` | One-page quick reference |
 
-When running multiple robots:
+### Provider & Model
 
-- `/robots`: list all active robots and their status
-- `/robotstatus <robot_id>`: show detailed status for specific robot
+| Command | Description |
+|---|---|
+| `/provider <claude\|codex\|gemini>` | Switch AI provider |
+| `/models` | List available models |
+| `/model <name>` | Switch model |
 
-## Important Env Vars
+### Project & Agent
 
-From `.env.example` and runtime config:
+| Command | Description |
+|---|---|
+| `/projects` | List workspaces |
+| `/project <key>` | Switch workspace |
+| `/run <goal>` | Run a task |
+| `/agent [options] <goal>` | Run agent with options |
+| `/queue` | Show task queue |
+| `/agentstatus` | Show agent status |
+| `/schedules` | Show scheduled tasks |
+| `/schedule YYYY-MM-DD HH:MM <goal>` | Schedule a task |
 
-- `TELEAPP_TOKEN`
-- `TELEAPP_ALLOWED_USER_ID`
-- `TELEAPP_APP` (default `robot.py`)
-- `ROBOT_DEFAULT_PROVIDER`
-- `ROBOT_DEFAULT_MODEL`
-- `ROBOT_CODEX_CMD`
-- `ROBOT_CLAUDE_CMD`
-- `ROBOT_CUSTOM_MODELS` (comma-separated custom model names)
-- `ROBOT_GEMINI_CMD`
-- `ROBOT_PROJECTS_ROOTS`
-- `ROBOT_STATE_HOME`
-- `ROBOT_GOOGLE_CALENDAR_ENABLED`
-- `ROBOT_GOOGLE_CALENDAR_CREDENTIALS_PATH`
-- `ROBOT_GOOGLE_CALENDAR_TOKEN_PATH`
-- `ROBOT_GOOGLE_CALENDAR_ID`
-- `ROBOT_GOOGLE_CALENDAR_SCOPES`
+### Brain (Second Brain)
 
-Security-related flags (default off):
+| Command | Description |
+|---|---|
+| `/braininbox <text>` | Add note to inbox |
+| `/brainsearch <query>` | Search notes |
+| `/brainbatchauto [limit]` | Auto-process inbox |
+| `/braindaily` | Today's summary |
+| `/brainweekly` | Weekly summary |
 
-- `ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX=0`
-- `ROBOT_CODEX_SKIP_GIT_REPO_CHECK=0`
-- `ROBOT_CLAUDE_SKIP_PERMISSIONS=0`
+### Control
 
-## Hot Reload / Conflict Notes
+| Command | Description |
+|---|---|
+| `/clearqueue` | Clear task queue |
+| `/clearschedule` | Clear all schedules |
+| `/reset` | Reset thread state |
+| `/panic` | Emergency stop all tasks |
+| `/restart` | Restart bot process |
 
-- Use `robotctl run <config>` or `robotctl start <config|all>` as the primary entrypoint.
-- Default mode is `TELEAPP_HOT_RELOAD=0` (stable mode, fewer process layers/conflicts).
-- If needed, temporarily enable hot reload with `set TELEAPP_HOT_RELOAD=1` before startup.
-- Each robot instance uses a single-instance lock based on its bot token to prevent polling conflicts.
-- If you still see conflict crashes, ensure only one process is using the same bot token.
+### Multi-Robot
+
+| Command | Description |
+|---|---|
+| `/robots` | List all active robot instances |
+| `/robotstatus <robot_id>` | Detailed status for a specific robot |
+
+## Environment Variables
+
+### Required
+
+| Variable | Description |
+|---|---|
+| `TELEAPP_TOKEN` | Telegram bot token |
+| `TELEAPP_ALLOWED_USER_ID` | Allowed Telegram user ID |
+| `ROBOT_DEFAULT_PROVIDER` | Default provider (`claude` / `codex` / `gemini`) |
+| `ROBOT_DEFAULT_MODEL` | Default model name |
+
+### Optional
+
+| Variable | Description |
+|---|---|
+| `TELEAPP_APP` | Entry point (default: `robot.py`) |
+| `ROBOT_ID` | Robot instance ID |
+| `ROBOT_CODEX_CMD` | Custom codex CLI command |
+| `ROBOT_CLAUDE_CMD` | Custom claude CLI command |
+| `ROBOT_GEMINI_CMD` | Custom gemini CLI command |
+| `ROBOT_CUSTOM_MODELS` | Comma-separated extra model names |
+| `ROBOT_PROJECTS_ROOTS` | Semicolon-separated workspace root paths |
+| `ROBOT_STATE_HOME` | State directory (default: `.robot_state`) |
+
+### Google Calendar
+
+| Variable | Description |
+|---|---|
+| `ROBOT_GOOGLE_CALENDAR_ENABLED` | `1` to enable |
+| `ROBOT_GOOGLE_CALENDAR_CREDENTIALS_PATH` | OAuth credentials JSON path |
+| `ROBOT_GOOGLE_CALENDAR_TOKEN_PATH` | Token cache path |
+| `ROBOT_GOOGLE_CALENDAR_ID` | Calendar ID (default: `primary`) |
+| `ROBOT_GOOGLE_CALENDAR_SCOPES` | OAuth scopes (comma or semicolon separated) |
+
+### Security Flags (default: off)
+
+| Variable | Default | Description |
+|---|---|---|
+| `ROBOT_CODEX_BYPASS_APPROVALS_AND_SANDBOX` | `0` | Bypass Codex sandboxing |
+| `ROBOT_CODEX_SKIP_GIT_REPO_CHECK` | `0` | Skip git repo check for Codex |
+| `ROBOT_CLAUDE_SKIP_PERMISSIONS` | `0` | Skip Claude permission prompts |
 
 ## Google Calendar Sync
 
-- `/schedule ...` attempts to upsert a matching Google Calendar event when calendar sync is enabled.
-- `/schedule sync [push|pull|both] [days] [limit]` triggers manual sync on demand.
-- `/clearschedule` clears local schedules and also deletes linked Google events when available.
-- Background sync runs every 5 minutes to keep `/schedule` and Google Calendar aligned.
-- For write sync (`/schedule`, `/clearschedule` delete), use scope:
-  - `ROBOT_GOOGLE_CALENDAR_SCOPES=https://www.googleapis.com/auth/calendar`
-  - then re-authorize with `python scripts/google_calendar_auth.py`
+1. Enable: set `ROBOT_GOOGLE_CALENDAR_ENABLED=1`
+2. Authorize: `python scripts/google_calendar_auth.py`
+3. For write access (create/delete events), set:
+   ```
+   ROBOT_GOOGLE_CALENDAR_SCOPES=https://www.googleapis.com/auth/calendar
+   ```
+   Then re-run the auth script.
+
+Background sync runs every 5 minutes. Manual sync: `/schedule sync [push|pull|both] [days] [limit]`
 
 ## Address Book
 
-- Manage reusable recipients by alias:
-  - `/contact add <key> <email> <name>`
-  - `/contact list`
-  - `/contact show <key>`
-  - `/contact remove <key>`
-  - `/contact alias <key> add <alias>`
-  - `/contact resolve <target1> [target2] ...`
-- Mail commands can resolve aliases from address book:
-  - `/mailcli -t <key_or_email> -s <subject> -bdy <body_or_file>`
-  - `/mailjson <config.json>`
-  - `/mailbatch <recipients.csv> <base_config.json>`
-  - `/mailmcp`
+Manage reusable mail recipients by alias:
+
+```
+/contact add <key> <email> <name>
+/contact list
+/contact show <key>
+/contact remove <key>
+/contact resolve <key>
+```
+
+Mail commands accept alias keys:
+
+```
+/mailcli -t <key_or_email> -s <subject> -bdy <body>
+/mailjson <config.json>
+/mailbatch <recipients.csv> <base_config.json>
+```
+
+## Troubleshooting
+
+| Symptom | Action |
+|---|---|
+| Polling conflict error | Kill duplicate processes using the same token; keep only one instance |
+| Task appears stuck | Check `/queue` and `/agentstatus`; use `/panic` if needed |
+| Import errors after install | Re-run bootstrap; check `constraints.txt` |
+| Bot not responding | Run `/doctor`; check logs with `robotctl logs default -f` |
 
 ## Development
 
-Run tests:
-
 ```bash
-pytest -q
+pytest -q                                    # run tests
+python scripts/google_calendar_auth.py       # one-time calendar auth
+python scripts/check_release_consistency.py  # pre-release check
 ```
 
-Google Calendar one-time auth:
+Project version: defined in [`robot/config.py`](./robot/config.py) and `pyproject.toml`.
 
-```bash
-python scripts/google_calendar_auth.py
-```
+## Related Docs
 
-Project version is defined in [robot/config.py](./robot/config.py) and `pyproject.toml` (currently `1.0.0`).
+| File | Description |
+|---|---|
+| [MULTI_ROBOT.md](./MULTI_ROBOT.md) | Multi-robot setup and architecture |
+| [FEATURES_GUIDE.md](./FEATURES_GUIDE.md) | Full command reference |
+| [QUICK_REFERENCE.md](./QUICK_REFERENCE.md) | One-page cheat sheet |
+| [RUNBOOK.md](./RUNBOOK.md) | Operations runbook |
+| [ROLLBACK.md](./ROLLBACK.md) | Rollback procedures |
+| [DEPENDENCY_STRATEGY.md](./DEPENDENCY_STRATEGY.md) | Dependency upgrade policy |

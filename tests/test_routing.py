@@ -770,7 +770,7 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("Resource", body)
         self.assertIn("04 Resources/AI article.md", body)
 
-    def test_document_upload_imports_markitdown_resource(self) -> None:
+    def test_document_upload_prompts_for_action_and_sets_flow(self) -> None:
         ctx = MessageContext(
             chat_id=1,
             text="Meeting notes",
@@ -788,6 +788,44 @@ class RoutingTests(unittest.TestCase):
             return_value=("04 Resources/Meeting notes.md", "# Meeting notes\n\nSummary body"),
         ) as mock_import, patch("robot.security.sanitize_file_size"):
             body = self.loop.run_until_complete(handle_request(ctx, self.settings, self.store, self.agents))
+        mock_import.assert_not_called()
+        flow = self.store.get_ui_flow(1)
+        self.assertIsInstance(flow, dict)
+        self.assertEqual(flow.get("kind"), "await_file_action")
+        self.assertEqual(flow.get("local_path"), "C:\\temp\\meeting.pdf")
+        self.assertEqual(flow.get("source_name"), "meeting.pdf")
+        self.assertEqual(flow.get("title"), "Meeting notes")
+        self.assertIn("已收到檔案", body)
+        self.assertIn("要怎麼處理", body)
+
+    def test_document_upload_imports_markitdown_resource_after_user_action(self) -> None:
+        upload_ctx = MessageContext(
+            chat_id=1,
+            text="Meeting notes",
+            caption="Meeting notes",
+            document=DocumentInput(
+                file_id="f1",
+                file_unique_id="u1",
+                file_name="meeting.pdf",
+                mime_type="application/pdf",
+                local_path="C:\\temp\\meeting.pdf",
+            ),
+        )
+        with patch(
+            "robot.routing.import_markitdown_resource",
+            return_value=("04 Resources/Meeting notes.md", "# Meeting notes\n\nSummary body"),
+        ) as mock_import, patch("robot.security.sanitize_file_size"):
+            prompt_body = self.loop.run_until_complete(handle_request(upload_ctx, self.settings, self.store, self.agents))
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="匯入 secondbrain"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+
+        self.assertIn("已收到檔案", prompt_body)
         mock_import.assert_called_once()
         args, kwargs = mock_import.call_args
         self.assertEqual(args[0], self.settings)
@@ -814,9 +852,10 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("沒有可讀取的本機路徑", body)
 
     def test_document_upload_pdf_missing_dependency_returns_friendly_error(self) -> None:
-        ctx = MessageContext(
+        upload_ctx = MessageContext(
             chat_id=1,
             text="Meeting notes",
+            caption="Meeting notes",
             document=DocumentInput(
                 file_id="f1",
                 file_unique_id="u1",
@@ -838,7 +877,16 @@ class RoutingTests(unittest.TestCase):
                 )
             ),
         ), patch("robot.security.sanitize_file_size"):
-            body = self.loop.run_until_complete(handle_request(ctx, self.settings, self.store, self.agents))
+            prompt_body = self.loop.run_until_complete(handle_request(upload_ctx, self.settings, self.store, self.agents))
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="匯入 secondbrain"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+        self.assertIn("已收到檔案", prompt_body)
         self.assertIn("還沒有安裝 PDF 轉換依賴", body)
         self.assertIn("meeting.pdf", body)
         self.assertIn("markitdown[pdf]", body)

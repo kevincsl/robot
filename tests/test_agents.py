@@ -364,7 +364,7 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
             await self.coordinator._maybe_sync_google_schedules(chat_id, datetime(2026, 4, 12, 9, 0))
         mock_sync.assert_not_called()
 
-    async def test_heartbeat_loop_skips_periodic_status_in_user_mode(self) -> None:
+    async def test_heartbeat_loop_emits_periodic_status_in_user_mode(self) -> None:
         chat_id = 16
         self.store.set_display_mode(chat_id, "user")
         invocation = RunningInvocation()
@@ -381,7 +381,9 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await self.coordinator._heartbeat_loop(chat_id, job, invocation)
 
-        self.assertEqual(self.events, [])
+        self.assertEqual(len(self.events), 1)
+        self.assertEqual(self.events[0][1], "status")
+        self.assertIn("專案[robot/fix]", self.events[0][2])
 
     async def test_worker_emits_user_mode_provider_output_summary(self) -> None:
         chat_id = 17
@@ -420,8 +422,8 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
 
         status_texts = [text for event_chat_id, event_type, text in self.events if event_chat_id == chat_id and event_type == "status"]
         output_texts = [text for event_chat_id, event_type, text in self.events if event_chat_id == chat_id and event_type == "output"]
-        self.assertTrue(any("專案[robot/main] 已接收訊息" in text for text in status_texts))
-        self.assertIn("專案[robot/main] 處理完成\ntotal_elapsed: 7s\n\nHi\n\n回覆來自 model: gpt-5.4", output_texts)
+        self.assertTrue(any("📨 專案[robot/main] 已接收" in text for text in status_texts))
+        self.assertIn("✅ 專案[robot/main] 處理完成 · 7s\n\nHi\n\n— gpt-5.4", output_texts)
         self.assertFalse(any("provider: codex" in text for text in output_texts))
 
     async def test_worker_user_mode_deduplicates_existing_model_footer(self) -> None:
@@ -462,7 +464,7 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
         output_texts = [text for event_chat_id, event_type, text in self.events if event_chat_id == chat_id and event_type == "output"]
         self.assertEqual(
             output_texts[-1],
-            "專案[robot/main] 處理完成\ntotal_elapsed: 2s\n\nHi\n\n回覆來自 model: gpt-5.4",
+            "✅ 專案[robot/main] 處理完成 · 2s\n\nHi\n\n— gpt-5.4",
         )
 
     async def test_worker_user_mode_unwraps_existing_completion_wrapper(self) -> None:
@@ -508,7 +510,7 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
         output_texts = [text for event_chat_id, event_type, text in self.events if event_chat_id == chat_id and event_type == "output"]
         self.assertEqual(
             output_texts[-1],
-            "專案[robot/main] 處理完成\ntotal_elapsed: 23s\n\nhello.\n\n回覆來自 model: gpt-5.4",
+            "✅ 專案[robot/main] 處理完成 · 23s\n\nhello.\n\n— gpt-5.4",
         )
 
     async def test_worker_user_mode_unwraps_wrapper_and_strips_duplicate_model_footer(self) -> None:
@@ -555,7 +557,7 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
         output_texts = [text for event_chat_id, event_type, text in self.events if event_chat_id == chat_id and event_type == "output"]
         self.assertEqual(
             output_texts[-1],
-            "專案[robot/main] 處理完成\ntotal_elapsed: 23s\n\nhello.\n\n回覆來自 model: gpt-5.4",
+            "✅ 專案[robot/main] 處理完成 · 23s\n\nhello.\n\n— gpt-5.4",
         )
 
     async def test_worker_user_mode_strips_duplicate_model_footer_without_wrapper(self) -> None:
@@ -600,7 +602,7 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
         output_texts = [text for event_chat_id, event_type, text in self.events if event_chat_id == chat_id and event_type == "output"]
         self.assertEqual(
             output_texts[-1],
-            "專案[robot/main] 處理完成\ntotal_elapsed: 29s\n\nhello.\n\n回覆來自 model: gpt-5.4",
+            "✅ 專案[robot/main] 處理完成 · 29s\n\nhello.\n\n— gpt-5.4",
         )
 
     async def test_enqueue_deduplicates_same_request_id(self) -> None:
