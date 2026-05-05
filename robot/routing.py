@@ -13,7 +13,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 from markitdown._exceptions import FileConversionException, MarkItDownException
-from teleapp import Button, ButtonResponse
+from teleapp import Button, ButtonResponse, DocumentResponse
 from teleapp.context import MessageContext
 from teleapp.protocol import AppEvent
 
@@ -390,6 +390,37 @@ def _document_import_error_message(source_name: str, exc: Exception) -> str:
             f"error: {details}"
         )
     raise exc
+
+
+
+def _wants_pdf_export(text: str) -> bool:
+    lowered = (text or "").lower().strip()
+    compact = lowered.replace(" ", "")
+    has_pdf = "pdf" in compact
+    has_convert = any(token in compact for token in ("轉存", "轉成", "轉換", "convert", "to", "傳給我", "給我", "send"))
+    return has_pdf and has_convert
+
+
+def _convert_image_to_pdf(local_path: Path) -> Path:
+    suffix = local_path.suffix.lower()
+    if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}:
+        raise ValueError("unsupported_input")
+    try:
+        from PIL import Image
+    except Exception as exc:
+        raise RuntimeError("missing_pillow") from exc
+
+    output_path = local_path.with_suffix(".pdf")
+    if output_path.exists():
+        output_path = output_path.with_name(f"{local_path.stem}-{int(time.time())}.pdf")
+
+    image = Image.open(local_path)
+    try:
+        image.convert("RGB").save(output_path, "PDF", resolution=100.0)
+    finally:
+        with contextlib.suppress(Exception):
+            image.close()
+    return output_path
 
 
 @dataclass(slots=True)
@@ -2312,6 +2343,36 @@ async def _handle_flow_input(
                 f"path: {note_path}\n"
                 f"source_file: {source_name}\n\n"
                 f"{preview or '(No extracted text)'}"
+            )
+
+        if _wants_pdf_export(text):
+            try:
+                output_path = _convert_image_to_pdf(Path(local_path))
+            except ValueError:
+                store.clear_ui_flow(chat_id)
+                return (
+                    "目前只支援把圖片轉成 PDF。\n"
+                    f"source_file: {source_name}"
+                )
+            except RuntimeError:
+                store.clear_ui_flow(chat_id)
+                return (
+                    "文件已收到，但目前環境缺少圖片轉 PDF 依賴。\n"
+                    "needed: pip install pillow"
+                )
+            except Exception as exc:
+                store.clear_ui_flow(chat_id)
+                return (
+                    "轉存 PDF 失敗。\n"
+                    f"source_file: {source_name}\n"
+                    f"error: {exc.__class__.__name__}: {exc}"
+                )
+
+            store.clear_ui_flow(chat_id)
+            return DocumentResponse(
+                text="已轉存 PDF。",
+                file_path=str(output_path),
+                caption=f"source_file: {source_name}",
             )
 
         store.clear_ui_flow(chat_id)

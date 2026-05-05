@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from markitdown._exceptions import FileConversionException
-from teleapp import ButtonResponse
+from teleapp import ButtonResponse, DocumentResponse
 from teleapp.context import DocumentInput, MessageContext
 from teleapp.protocol import AppEvent
 
@@ -850,6 +850,99 @@ class RoutingTests(unittest.TestCase):
         )
         body = self.loop.run_until_complete(handle_request(ctx, self.settings, self.store, self.agents))
         self.assertIn("沒有可讀取的本機路徑", body)
+
+
+    def test_document_upload_convert_image_to_pdf_after_user_action(self) -> None:
+        upload_ctx = MessageContext(
+            chat_id=1,
+            text="photo",
+            caption="photo",
+            document=DocumentInput(
+                file_id="f1",
+                file_unique_id="u1",
+                file_name="photo.jpg",
+                mime_type="image/jpeg",
+                local_path="C:\\temp\\photo.jpg",
+            ),
+        )
+        with patch("robot.routing._convert_image_to_pdf", return_value=Path("C:/temp/photo.pdf")) as mock_convert, patch(
+            "robot.security.sanitize_file_size"
+        ):
+            prompt_body = self.loop.run_until_complete(handle_request(upload_ctx, self.settings, self.store, self.agents))
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="轉存 PDF"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+
+        self.assertIn("已收到檔案", prompt_body)
+        mock_convert.assert_called_once_with(Path("C:/temp/photo.jpg"))
+        self.assertIsInstance(body, DocumentResponse)
+        self.assertEqual(body.text, "已轉存 PDF。")
+        self.assertEqual(str(body.file_path).replace("\\", "/"), "C:/temp/photo.pdf")
+        self.assertEqual(body.caption, "source_file: photo.jpg")
+
+    def test_document_upload_convert_image_to_pdf_send_after_user_action(self) -> None:
+        upload_ctx = MessageContext(
+            chat_id=1,
+            text="photo",
+            caption="photo",
+            document=DocumentInput(
+                file_id="f1",
+                file_unique_id="u1",
+                file_name="photo.jpg",
+                mime_type="image/jpeg",
+                local_path="C:\\temp\\photo.jpg",
+            ),
+        )
+        with patch("robot.routing._convert_image_to_pdf", return_value=Path("C:/temp/photo.pdf")) as mock_convert, patch(
+            "robot.security.sanitize_file_size"
+        ):
+            self.loop.run_until_complete(handle_request(upload_ctx, self.settings, self.store, self.agents))
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="Pdf 傳給我"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+
+        mock_convert.assert_called_once_with(Path("C:/temp/photo.jpg"))
+        self.assertIsInstance(body, DocumentResponse)
+        self.assertEqual(body.text, "已轉存 PDF。")
+        self.assertEqual(str(body.file_path).replace("\\", "/"), "C:/temp/photo.pdf")
+        self.assertEqual(body.caption, "source_file: photo.jpg")
+
+    def test_document_upload_convert_pdf_for_non_image_returns_hint(self) -> None:
+        upload_ctx = MessageContext(
+            chat_id=1,
+            text="Meeting notes",
+            caption="Meeting notes",
+            document=DocumentInput(
+                file_id="f1",
+                file_unique_id="u1",
+                file_name="meeting.pdf",
+                mime_type="application/pdf",
+                local_path="C:\\temp\\meeting.pdf",
+            ),
+        )
+        with patch("robot.security.sanitize_file_size"):
+            self.loop.run_until_complete(handle_request(upload_ctx, self.settings, self.store, self.agents))
+            body = self.loop.run_until_complete(
+                handle_request(
+                    MessageContext(chat_id=1, text="轉存 PDF"),
+                    self.settings,
+                    self.store,
+                    self.agents,
+                )
+            )
+
+        self.assertIn("目前只支援把圖片轉成 PDF", body)
+        self.assertIn("source_file: meeting.pdf", body)
 
     def test_document_upload_pdf_missing_dependency_returns_friendly_error(self) -> None:
         upload_ctx = MessageContext(
