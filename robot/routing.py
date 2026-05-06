@@ -3074,6 +3074,9 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         store.update_brain_automation(chat_id, weekly_day=weekday, weekly_time=time_raw)
         return f"brain weekly automation updated.\nweekly_day: {weekday}\nweekly_time: {time_raw}"
 
+    if request.command == "compact":
+        return await _handle_compact_command(chat_id, request.payload, settings, store)
+
     if request.command == "robotonly":
         return "\n".join(
             [
@@ -3137,6 +3140,98 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         return "\n".join(lines)
 
     return f"Unknown command: /{request.command}\nUse /help."
+
+
+async def _handle_compact_command(chat_id: int, payload: str, settings: Settings, store: ChatStateStore) -> str:
+    """
+    Run compress-context skill to compress conversation history.
+    Usage: /compact [--ratio 0.5] [--token-limit 100000]
+    """
+    parser = _SilentArgumentParser(add_help=False)
+    parser.add_argument("--ratio", type=float, default=0.5)
+    parser.add_argument("--token-limit", type=int, default=100000)
+    try:
+        parsed = parser.parse_args(_split_payload(payload))
+    except (SystemExit, ValueError):
+        return "Usage: /compact [--ratio 0.5] [--token-limit 100000]"
+
+    state_home = settings.state_home
+    input_path = state_home / "conversation.json"
+    output_path = state_home / "conversation_compressed.json"
+    coco_index_path = state_home / "coco_index.json"
+
+    if not input_path.exists():
+        return "conversation.json not found. No active conversation to compress."
+
+    compress_script = settings.project_root / "scripts" / "skills" / "compress_context.py"
+    if not compress_script.exists():
+        return f"compress-context script not found: {compress_script}"
+
+    state = store.get_chat_state(chat_id)
+    project_name = state.get("project_name") or ""
+    display_mode = store.get_display_mode(chat_id)
+    is_user_mode = display_mode == DISPLAY_MODE_USER
+
+    command = [
+        sys.executable,
+        str(compress_script),
+        "--input", str(input_path),
+        "--output", str(output_path),
+        "--ratio", str(parsed.ratio),
+        "--token-limit", str(parsed.token_limit),
+        "--coco-index", str(coco_index_path),
+        "--force",
+    ]
+
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            cwd=str(settings.project_root),
+        )
+    except subprocess.TimeoutExpired:
+        return "壓縮逾時（180 秒）。"
+    except OSError as exc:
+        return f"執行失敗：{exc}"
+
+    stdout_text = (completed.stdout or "").strip()
+    stderr_text = (completed.stderr or "").strip()
+
+    if completed.returncode != 0:
+        error_lines = ["壓縮失敗。"]
+        if stderr_text:
+            error_lines.append(f"error: {stderr_text[:200]}")
+        return "\n".join(error_lines)
+
+    # Parse token stats from output
+    import re as _re
+    pre_match = _re.search(r"Token count:\s*([\d,]+)", stdout_text)
+    post_match = _re.search(r"After.*?:\s*([\d,]+)\s*tokens", stdout_text)
+    saved_match = _re.search(r"Saved\s*([\d,]+)\s*tokens\s*\(([0-9.]+)%\)", stdout_text)
+
+    if is_user_mode:
+        # User-friendly summary
+        if saved_match:
+            saved_tokens = int(saved_match.group(1).replace(",", ""))
+            pct = float(saved_match.group(2))
+            return f"✅ 上下文已壓縮\n節省 {saved_tokens:,} tokens（{pct:.1f}%）"
+        return "✅ 上下文已在限制內，無需壓縮。"
+
+    # Developer mode: detailed output
+    lines = ["compress-context completed"]
+    if pre_match:
+        lines.append(f"tokens_before: {pre_match.group(1)}")
+    if post_match:
+        lines.append(f"tokens_after: {post_match.group(1)}")
+    if saved_match:
+        lines.append(f"saved: {saved_match.group(1)} tokens ({saved_match.group(2)}%)")
+    lines.append(f"output: {output_path}")
+    lines.append(f"coco_index: {coco_index_path}")
+    lines.append(f"ratio: {parsed.ratio}")
+    lines.append(f"token_limit: {parsed.token_limit}")
+    return "\n".join(lines)
 
 
 async def handle_control(
