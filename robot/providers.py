@@ -315,6 +315,13 @@ def _is_claude_session_not_found(detail: str) -> bool:
     return "no conversation found with session id" in text
 
 
+def _is_claude_token_overflow(detail: str) -> bool:
+    text = (detail or "").strip().lower()
+    if not text:
+        return False
+    return "model_max_prompt_tokens_exceeded" in text or "prompt token count" in text and "exceeds the limit" in text
+
+
 def _build_codex_command(
     *,
     settings: Settings,
@@ -751,6 +758,31 @@ async def _run_claude(
     ):
         if invocation is not None:
             invocation.set_phase("claude: retrying with fresh session")
+        fresh_command = _build_claude_command(
+            settings=settings,
+            model=model,
+            session_id=None,
+            prompt=prompt,
+        )
+        retry_completed = await _run_process(fresh_command, prompt="", workdir=workdir, invocation=invocation)
+        retry_session_id, retry_assistant_text, retry_detail = _parse_claude_stream(
+            stdout=retry_completed.stdout or "",
+            stderr=retry_completed.stderr or "",
+            base_session_id=None,
+        )
+        completed = retry_completed
+        next_session_id = retry_session_id
+        assistant_text = retry_assistant_text
+        latest_detail = retry_detail
+
+    if (
+        completed.returncode != 0
+        and not cancelled
+        and session_id is not None
+        and _is_claude_token_overflow(latest_detail)
+    ):
+        if invocation is not None:
+            invocation.set_phase("claude: retrying with fresh session (token overflow)")
         fresh_command = _build_claude_command(
             settings=settings,
             model=model,

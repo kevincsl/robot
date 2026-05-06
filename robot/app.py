@@ -13,9 +13,10 @@ from teleapp import TeleApp
 from teleapp.protocol import AppEvent
 from teleapp.telegram_gateway import TelegramGateway
 
+from robot.template_loader import get_templates
 from robot.agents import AgentCoordinator
 from robot.config import load_settings, robot_lock_path
-from robot.display_mode import DISPLAY_MODE_USER, normalize_display_mode
+from robot.display_mode import DISPLAY_MODE_USER, configure_templates, normalize_display_mode
 from robot.projects import format_project_with_branch
 from robot.routing import AGENT_REQUEST, classify_request, handle_request, heartbeat_status_key
 from robot.state import ChatStateStore
@@ -59,6 +60,9 @@ UI_BUILD_TAG = "ui-build:2026-04-10-b"
 
 @app.on_startup
 async def on_startup():
+    locale = os.getenv("ROBOT_LOCALE", "zh_TW")
+    platform = "telegram"
+    configure_templates(get_templates(locale=locale, platform=platform))
     AGENTS.attach_supervisor(app.supervisor)
     AGENTS.start()
     risk_enabled = bool(
