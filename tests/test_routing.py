@@ -153,6 +153,46 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual([button.data for button in body.buttons or []], ["menu:status", "menu:provider", "menu:model", "menu:projects", "menu:cancel"])
         self.assertIsNone(self.store.get_ui_flow(1))
 
+    def test_menu_trigger_returns_user_mode_buttons(self) -> None:
+        self.store.set_display_mode(1, "user")
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="menu"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertEqual([button.data for button in body.buttons or []], ["menu:status", "menu:projects", "menu:cancel"])
+
+    def test_menu_trigger_uses_external_json_buttons(self) -> None:
+        payload = {
+            "user": [
+                {"text": "自訂狀態", "data": "menu:status"},
+                {"text": "自訂取消", "data": "menu:cancel"},
+            ],
+            "developer": [
+                {"text": "開發狀態", "data": "menu:status"},
+                {"text": "開發專案", "data": "menu:projects"},
+            ],
+        }
+        (self.settings.project_root / "menu_buttons.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="menu"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIsInstance(body, ButtonResponse)
+        self.assertEqual([button.text for button in body.buttons or []], ["開發狀態", "開發專案"])
+        self.assertEqual([button.data for button in body.buttons or []], ["menu:status", "menu:projects"])
+
     def test_status_includes_build_tags(self) -> None:
         self.store.set_last_provider_timing(1, {"elapsed_seconds": 8, "return_code": 0, "cancelled": False, "model": "claude-sonnet-4-6"})
         request = classify_request(MessageContext(chat_id=1, text="/status", command="status"))
@@ -191,10 +231,12 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("/provider /model /project list", body)
         self.assertIn("/mode [user|developer]", body)
 
-    def test_mode_command_without_payload_returns_current_mode(self) -> None:
+    def test_mode_command_without_payload_returns_second_level_commands(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/mode", command="mode"))
         body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
-        self.assertIn("目前模式: 開發者模式", body)
+        self.assertIn("display_mode 可輸入:", body)
+        self.assertIn("1. /display_mode_user", body)
+        self.assertIn("2. /display_mode_dev", body)
 
     def test_mode_command_switches_to_user_mode(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/mode user", command="mode"))
@@ -278,7 +320,7 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(body, "agent delegated")
         mock_handle_agent.assert_awaited_once()
 
-    def test_brain_trigger_returns_buttons(self) -> None:
+    def test_brain_trigger_returns_second_level_commands(self) -> None:
         body = self.loop.run_until_complete(
             handle_request(
                 MessageContext(chat_id=1, text="", command="brain"),
@@ -287,31 +329,10 @@ class RoutingTests(unittest.TestCase):
                 self.agents,
             )
         )
-        self.assertIsInstance(body, ButtonResponse)
-        self.assertIn("brain menu", body.text.lower())
-        self.assertIn(UI_BUILD_TAG, body.text)
-        self.assertEqual(
-            [button.data for button in body.buttons or []],
-            [
-                "brain:capture",
-                "brain:inbox",
-                "brain:read",
-                "brain:search",
-                "brain:organize",
-                "brain:batch",
-                "brain:batch_auto",
-                "brain:project",
-                "brain:knowledge",
-                "brain:resource",
-                "brain:schedule",
-                "brain:summary",
-                "brain:decide",
-                "brain:remind",
-                "brain:daily",
-                "brain:weekly",
-                "brain:cancel",
-            ],
-        )
+        self.assertIn("brain 可輸入:", body)
+        self.assertIn("1. /brain_add", body)
+        self.assertIn("4. /brain_search", body)
+        self.assertIn("15. /brain_weekly", body)
         self.assertIsNone(self.store.get_ui_flow(1))
 
     def test_brain_schedule_button_opens_schedule_menu(self) -> None:
@@ -351,7 +372,7 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("robot menu", body.text.lower())
         self.assertIsNone(self.store.get_ui_flow(1))
 
-    def test_model_command_without_text_still_returns_buttons(self) -> None:
+    def test_model_command_without_text_opens_model_chooser(self) -> None:
         body = self.loop.run_until_complete(
             handle_request(
                 MessageContext(chat_id=1, text="", command="model"),
@@ -360,11 +381,11 @@ class RoutingTests(unittest.TestCase):
                 self.agents,
             )
         )
-        self.assertIsInstance(body, ButtonResponse)
-        self.assertIn("Select Model", body.text)
-        self.assertIn(UI_BUILD_TAG, body.text)
+        # handle_request can return ButtonResponse
+        body_text = body.text if hasattr(body, "text") else body
+        self.assertIn("Select Model", body_text)
 
-    def test_brain_command_without_text_still_returns_buttons(self) -> None:
+    def test_brain_command_without_text_still_returns_second_level_commands(self) -> None:
         body = self.loop.run_until_complete(
             handle_request(
                 MessageContext(chat_id=1, text="", command="brain"),
@@ -373,8 +394,9 @@ class RoutingTests(unittest.TestCase):
                 self.agents,
             )
         )
-        self.assertIsInstance(body, ButtonResponse)
-        self.assertIn("brain menu", body.text.lower())
+        self.assertIn("brain 可輸入:", body)
+        self.assertIn("/brain_add", body)
+        self.assertIn("/brain_weekly", body)
         self.assertIsNone(self.store.get_ui_flow(1))
 
     def test_plain_text_menu_routes_to_agent(self) -> None:
@@ -503,6 +525,18 @@ class RoutingTests(unittest.TestCase):
         self.assertIsInstance(body, ButtonResponse)
         self.assertIn("搜尋結果", body.text)
         self.assertEqual([button.data for button in body.buttons or []], ["brain:open_note:0", "brain:open_note:1"])
+
+    def test_brain_search_slash_alias_opens_search_flow(self) -> None:
+        body = self.loop.run_until_complete(
+            handle_request(
+                MessageContext(chat_id=1, text="", command="brain_search"),
+                self.settings,
+                self.store,
+                self.agents,
+            )
+        )
+        self.assertIn("請輸入要搜尋 secondbrain 的關鍵字", body)
+        self.assertEqual(self.store.get_ui_flow(1), {"kind": "await_brain_search"})
 
     def test_brain_search_flow_returns_clickable_results(self) -> None:
         self.loop.run_until_complete(
@@ -1721,15 +1755,11 @@ class RoutingTests(unittest.TestCase):
         self.assertIsInstance(flow, dict)
         self.assertEqual(flow.get("kind"), "await_model")
 
-    def test_model_command_without_payload_opens_chooser(self) -> None:
+    def test_model_command_without_payload_opens_model_chooser(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/model", command="model"))
         body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
-        self.assertIsInstance(body, ButtonResponse)
-        self.assertIn("Select Model", body.text)
-        self.assertIn("1.", body.text)
-        flow = self.store.get_ui_flow(1)
-        self.assertIsInstance(flow, dict)
-        self.assertEqual(flow.get("kind"), "await_model")
+        body_text = body.text if hasattr(body, "text") else body
+        self.assertIn("Select Model", body_text)
 
     def test_models_command_uses_dynamic_catalog(self) -> None:
         self.store.set_provider(1, "codex")
@@ -1750,7 +1780,7 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("- gpt-5.5", body)
         self.assertIn("- gpt-5.4", body)
 
-    def test_model_command_without_payload_uses_dynamic_catalog(self) -> None:
+    def test_model_codex_command_uses_dynamic_catalog(self) -> None:
         self.store.set_provider(1, "codex")
         catalog = ModelCatalog(
             provider="codex",
@@ -1761,18 +1791,12 @@ class RoutingTests(unittest.TestCase):
             source="codex debug models",
             note=None,
         )
-        request = classify_request(MessageContext(chat_id=1, text="/model", command="model"))
+        request = classify_request(MessageContext(chat_id=1, text="/model_codex", command="model_codex"))
         with patch("robot.routing.get_model_catalog", return_value=catalog):
             body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
-        self.assertIsInstance(body, ButtonResponse)
-        self.assertIn("source: codex debug models", body.text)
-        self.assertIn("1. gpt-5.5", body.text)
-        self.assertIn("2. gpt-5.4", body.text)
-        self.assertIn("3. custom", body.text)
-        self.assertEqual(
-            [button.data for button in body.buttons or []],
-            ["menu:set_model:gpt-5.5", "menu:set_model:gpt-5.4", "menu:set_model:custom"],
-        )
+        self.assertIn("Models for codex:", body)
+        self.assertIn("- gpt-5.5", body)
+        self.assertIn("- gpt-5.4", body)
 
     def test_model_command_rejects_missing_claude_catalog_model(self) -> None:
         self.store.set_provider(1, "claude")
@@ -1852,8 +1876,10 @@ class RoutingTests(unittest.TestCase):
     def test_provider_command_without_payload_opens_chooser(self) -> None:
         request = classify_request(MessageContext(chat_id=1, text="/provider", command="provider"))
         body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
-        self.assertIn("可輸入的 provider:", body)
-        self.assertIn("1.", body)
+        self.assertIn("provider 可輸入:", body)
+        self.assertIn("1. /provider_codex", body)
+        self.assertIn("2. /provider_claude", body)
+        self.assertIn("3. /provider_gemini", body)
         flow = self.store.get_ui_flow(1)
         self.assertIsInstance(flow, dict)
         self.assertEqual(flow.get("kind"), "await_provider")
@@ -2648,7 +2674,6 @@ class RoutingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 
 
 

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import json
@@ -102,33 +102,65 @@ class _SelectableModelOption:
     section: str = "provider"
 
 COMMAND_NAMES = {
+    # ── General ────────────────────────────────────────────────────
     "start",
     "help",
     "quick",
     "guide",
     "about",
+    "menu",
+    # ── Status / Diagnostics ───────────────────────────────────────
     "status",
+    "status_robot",
+    "status_teleapp",
     "doctor",
-    "contact",
-    "contacts",
-    "mailcli",
-    "mailjson",
-    "mailbatch",
-    "mailmcp",
-    "provider",
-    "model",
-    "models",
+    # ── Control ────────────────────────────────────────────────────
+    "reset",
+    "panic",
+    "restart",
+    "newthread",
+    "clearqueue",
+    "clearschedule",
+    "clearschedules",
+    "lock",
+    "unlock",
+    "debug",
+    # ── Agent / Task ───────────────────────────────────────────────
+    "run",
+    "agent",
+    "agentstatus",
+    "agentprofiles",
+    "agentresume",
+    "resume",
+    "queue",
+    "schedule",
+    "schedules",
+    "cron",
+    # ── Display Mode ───────────────────────────────────────────────
     "mode",
     "usermode",
     "devmode",
     "developermode",
+    "display_mode",
+    "display_mode_user",
+    "display_mode_dev",
+    # ── Provider ───────────────────────────────────────────────────
+    "provider",
+    "provider_codex",
+    "provider_claude",
+    "provider_gemini",
+    # ── Model ─────────────────────────────────────────────────────
+    "model",
+    "models",
+    "model_codex",
+    "model_claude",
+    "model_gemini",
+    # ── Project ────────────────────────────────────────────────────
     "project",
     "projects",
-    "queue",
-    "schedules",
-    "agentstatus",
-    "agentprofiles",
-    "menu",
+    "project_list",
+    "project_switch",
+    # ── Brain ─────────────────────────────────────────────────────
     "brain",
     "brainread",
     "braininbox",
@@ -149,24 +181,110 @@ COMMAND_NAMES = {
     "brainauto",
     "brainautodaily",
     "brainautoweekly",
+    # ── Brain (new /cmd_arg style) ─────────────────────────────────
+    "brain_add",
+    "brain_add_work",
+    "brain_search",
+    "brain_search_work",
+    "brain_list",
+    "brain_summary",
+    "brain_batch",
+    "brain_batch_auto",
+    "brain_daily",
+    "brain_decide",
+    "brain_inbox",
+    "brain_knowledge",
+    "brain_organize",
+    "brain_project",
+    "brain_remind",
+    "brain_resource",
+    "brain_url",
+    "brain_weekly",
+    "brain_auto",
+    # ── Mail ───────────────────────────────────────────────────────
+    "mailcli",
+    "mailjson",
+    "mailbatch",
+    "mailmcp",
+    "mail",
+    "mail_send",
+    "mail_list",
+    "mail_contacts",
+    # ── Contact ────────────────────────────────────────────────────
+    "contact",
+    "contacts",
+    # ── Multi-Robot ────────────────────────────────────────────────
     "robotonly",
+    "robot",
     "robots",
     "robotstatus",
+    # ── Developer Tools ────────────────────────────────────────────
+    "compact",
+    "compact_status",
+    "release_check",
+    "dependencies_check",
 }
 
 CONTROL_NAMES = {
     "reset",
-    "newthread",
-    "restart",
     "panic",
+    "restart",
     "clearqueue",
     "clearschedule",
     "clearschedules",
-    "run",
-    "agent",
-    "agentresume",
-    "schedule",
 }
+
+
+SECOND_LEVEL_COMMANDS = {
+    "provider": ("provider_codex", "provider_claude", "provider_gemini"),
+    "model": ("model_codex", "model_claude", "model_gemini"),
+    "display_mode": ("display_mode_user", "display_mode_dev"),
+    "brain": (
+        "brain_add",
+        "brain_inbox",
+        "brain_list",
+        "brain_search",
+        "brain_organize",
+        "brain_batch",
+        "brain_batch_auto",
+        "brain_project",
+        "brain_knowledge",
+        "brain_resource",
+        "brain_summary",
+        "brain_decide",
+        "brain_remind",
+        "brain_daily",
+        "brain_weekly",
+    ),
+}
+
+
+BRAIN_SLASH_ALIASES = {
+    "brain_add": "brain:capture",
+    "brain_inbox": "brain:inbox",
+    "brain_list": "brain:read",
+    "brain_search": "brain:search",
+    "brain_organize": "brain:organize",
+    "brain_batch": "brain:batch",
+    "brain_batch_auto": "brain:batch_auto",
+    "brain_project": "brain:project",
+    "brain_knowledge": "brain:knowledge",
+    "brain_resource": "brain:resource",
+    "brain_summary": "brain:summary",
+    "brain_decide": "brain:decide",
+    "brain_remind": "brain:remind",
+    "brain_daily": "brain:daily",
+    "brain_weekly": "brain:weekly",
+    "brain_add_work": "brain:capture",
+    "brain_search_work": "brain:search",
+    "brain_url": "brainweb",
+    "brain_auto": "brainauto",
+}
+
+def _command_menu_text(command: str, items: tuple[str, ...]) -> str:
+    lines = [f"{command} 可輸入:"]
+    lines.extend(f"{index}. /{item}" for index, item in enumerate(items, start=1))
+    return "\n".join(lines)
 
 MENU_COMMAND_PREFIX = "menu:"
 BRAIN_COMMAND_PREFIX = "brain:"
@@ -194,6 +312,57 @@ FLOW_AWAIT_BRAIN_ORGANIZE_TITLE = "await_brain_organize_title"
 FLOW_AWAIT_FILE_ACTION = "await_file_action"
 FLOW_BRAIN_SEARCH_RESULTS = "brain_search_results"
 FLOW_BRAIN_BATCH_RESULTS = "brain_batch_results"
+
+MENU_BUTTONS_CONFIG_NAME = "menu_buttons.json"
+DEFAULT_MENU_BUTTONS: dict[str, list[tuple[str, str]]] = {
+    DISPLAY_MODE_USER: [
+        ("狀態", "menu:status"),
+        ("Projects", "menu:projects"),
+        ("取消", "menu:cancel"),
+    ],
+    DISPLAY_MODE_DEVELOPER: [
+        ("狀態", "menu:status"),
+        ("Provider", "menu:provider"),
+        ("Model", "menu:model"),
+        ("Projects", "menu:projects"),
+        ("取消", "menu:cancel"),
+    ],
+}
+
+
+def _build_menu_buttons(specs: list[tuple[str, str]]) -> list[Button]:
+    return [Button(label, data) for label, data in specs]
+
+
+def _default_menu_buttons(display_mode: str) -> list[Button]:
+    specs = DEFAULT_MENU_BUTTONS.get(display_mode) or DEFAULT_MENU_BUTTONS[DISPLAY_MODE_DEVELOPER]
+    return _build_menu_buttons(specs)
+
+
+def _load_menu_buttons(settings: Settings, display_mode: str) -> list[Button]:
+    config_path = settings.project_root / MENU_BUTTONS_CONFIG_NAME
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _default_menu_buttons(display_mode)
+
+    if not isinstance(payload, dict):
+        return _default_menu_buttons(display_mode)
+
+    raw_buttons = payload.get(display_mode)
+    if not isinstance(raw_buttons, list):
+        return _default_menu_buttons(display_mode)
+
+    specs: list[tuple[str, str]] = []
+    for item in raw_buttons:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("text") or "").strip()
+        data = str(item.get("data") or "").strip()
+        if label and data:
+            specs.append((label, data))
+
+    return _build_menu_buttons(specs) if specs else _default_menu_buttons(display_mode)
 
 
 def _runtime_git_commit() -> str:
@@ -915,10 +1084,10 @@ def classify_request(ctx: MessageContext) -> ClassifiedRequest:
     if command == "brain" or (command and command.startswith(BRAIN_COMMAND_PREFIX)):
         return ClassifiedRequest(COMMAND_REQUEST, command, "", ctx.request_id)
 
-    if command in COMMAND_NAMES:
-        return ClassifiedRequest(COMMAND_REQUEST, command, _resolved_payload(text, command), ctx.request_id)
     if command in CONTROL_NAMES:
         return ClassifiedRequest(CONTROL_REQUEST, command, _resolved_payload(text, command), ctx.request_id)
+    if command in COMMAND_NAMES:
+        return ClassifiedRequest(COMMAND_REQUEST, command, _resolved_payload(text, command), ctx.request_id)
     if command is not None:
         return ClassifiedRequest(COMMAND_REQUEST, command, _resolved_payload(text, command), ctx.request_id)
     if text.startswith("/"):
@@ -968,9 +1137,12 @@ def _status_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str
             f"teleapp_raw_status: {teleapp_raw_status}",
             "",
             "request classes:",
-            "- command request: /provider /model /project /status /doctor /queue /schedules /agentstatus /agentprofiles",
-            "- control request: /reset /newthread /restart /panic /run /agent /agentresume /schedule /clearschedule",
+            "- command request: /provider /model /project /status /cron /agentstatus /agentprofiles",
+            "- control request: /reset /restart /panic",
             "- agent request: plain text (provider runner)",
+            "- /provider_codex /provider_claude /provider_gemini (direct switch)",
+            "- /model_codex /model_claude /model_gemini (list models)",
+            "- /display_mode_user /display_mode_dev (mode switch)",
         ]
     )
 
@@ -1189,7 +1361,8 @@ async def _handle_brain_action(
     agents: AgentCoordinator,
 ):
     if command in {"brain", "brain:open"}:
-        return _brain_menu_response(chat_id, store)
+        store.clear_ui_flow(chat_id)
+        return _command_menu_text("brain", SECOND_LEVEL_COMMANDS["brain"])
 
     if command == "brain:cancel":
         flow = store.get_ui_flow(chat_id)
@@ -1485,34 +1658,19 @@ async def _handle_brain_action(
     return f"Unknown brain action: {command}"
 
 
-def _main_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
+def _main_menu_response(chat_id: int, store: ChatStateStore, settings: Settings) -> ButtonResponse:
+    display_mode = store.get_display_mode(chat_id)
+    buttons = _load_menu_buttons(settings, display_mode)
     return ButtonResponse(
         _menu_text(chat_id, store),
-        buttons=[
-            Button("狀態", "menu:status"),
-            Button("Provider", "menu:provider"),
-            Button("Model", "menu:model"),
-            Button("Projects", "menu:projects"),
-            Button("取消", "menu:cancel"),
-        ],
+        buttons=buttons,
     )
 
 
 def _provider_menu_response(chat_id: int, store: ChatStateStore) -> str:
     state = store.get_chat_state(chat_id)
     store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_PROVIDER})
-    provider_names = list(PROVIDER_LABELS.keys())
-    lines = [f"Current provider: {state['provider']}", "", "可輸入的 provider:"]
-    lines.extend(f"{index}. {name}" for index, name in enumerate(provider_names, start=1))
-    lines.extend(
-        [
-            "",
-            "可直接輸入編號或 provider 名稱，也可用 /provider <name>。",
-            "輸入 /menu 返回主選單。",
-            "其他自然語言會直接送進 AI。",
-        ]
-    )
-    return "\n".join(lines)
+    return "\n".join([f"Current provider: {state['provider']}", _command_menu_text("provider", SECOND_LEVEL_COMMANDS["provider"])])
 
 
 def _invalid_model_message(provider: str, model: str) -> str:
@@ -2043,7 +2201,7 @@ async def _handle_menu_action(
     agents: AgentCoordinator,
 ):
     if command in {"menu", "menu:open"}:
-        return _main_menu_response(chat_id, store)
+        return _main_menu_response(chat_id, store, settings)
 
     if command == "menu:cancel":
         store.clear_ui_flow(chat_id)
@@ -2445,12 +2603,12 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
 
     if command == "menu":
         store.clear_ui_flow(ctx.chat_id)
-        return _main_menu_response(ctx.chat_id, store)
+        return _main_menu_response(ctx.chat_id, store, settings)
     if command == "model":
         return _model_menu_response(ctx.chat_id, store, settings)
     if command == "brain":
         store.clear_ui_flow(ctx.chat_id)
-        return _brain_menu_response(ctx.chat_id, store)
+        return _command_menu_text("brain", SECOND_LEVEL_COMMANDS["brain"])
 
     if text and not command:
         requested_mode = _parse_display_mode_selection(text)
@@ -2481,6 +2639,8 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
 async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Settings, store: ChatStateStore, agents: AgentCoordinator) -> str:
     if request.command == "menu" or (request.command and request.command.startswith(MENU_COMMAND_PREFIX)):
         return await _handle_menu_action(chat_id, request.command, settings, store, agents)
+    if request.command in BRAIN_SLASH_ALIASES:
+        return await _handle_brain_action(chat_id, BRAIN_SLASH_ALIASES[request.command], settings, store, agents)
     if request.command == "brain" or (request.command and request.command.startswith(BRAIN_COMMAND_PREFIX)):
         return await _handle_brain_action(chat_id, request.command, settings, store, agents)
 
@@ -2509,6 +2669,47 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
 
     if request.command == "status":
         return _status_text(chat_id, store, settings)
+
+    if request.command == "status_robot":
+        lines = [
+            "robot status",
+            f"version: {VERSION}",
+            f"commit: {_runtime_git_commit()}",
+            f"display_mode: {state.get('display_mode') or DISPLAY_MODE_DEVELOPER}",
+            f"provider: {state['provider']}",
+            f"model: {state['model']}",
+            f"project: {_project_display(state['project_name'], state['project_path'])}",
+            f"thread_id: {state['thread_id'] or '-'}",
+            f"queued_jobs: {len(store.get_agent_queue(chat_id))}",
+            f"scheduled_jobs: {len(store.get_agent_schedules(chat_id))}",
+        ]
+        current = state.get("agent_current_run") if isinstance(state.get("agent_current_run"), dict) else None
+        if current:
+            lines.append(f"running: {current.get('goal') or '<resume>'} ({current.get('kind')})")
+        last = state.get("agent_last_run") if isinstance(state.get("agent_last_run"), dict) else None
+        if last:
+            lines.append(f"last_run: {last.get('status') or '-'}")
+        return "\n".join(lines)
+
+    if request.command == "status_teleapp":
+        try:
+            teleapp_version = __import__("teleapp").__version__
+        except Exception:
+            teleapp_version = "unknown"
+        try:
+            from telegram import __version__ as tg_version
+        except Exception:
+            tg_version = "unknown"
+        risk_mode = bool(settings.codex_bypass_approvals_and_sandbox or settings.codex_skip_git_repo_check)
+        lines = [
+            "teleapp status",
+            f"teleapp_version: {teleapp_version}",
+            f"telegram_bot_version: {tg_version}",
+            f"ui_build: {UI_BUILD_TAG}",
+            f"hosted_build: {HOSTED_BUILD_TAG}",
+            f"security_risk_mode: {'on' if risk_mode else 'off'}",
+        ]
+        return "\n".join(lines)
 
     if request.command == "doctor":
         return build_doctor_report(settings)
@@ -2722,6 +2923,38 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
             ]
         )
 
+    if request.command == "mail_send":
+        return "Usage: /mailcli <sendmail-cli-args>"
+
+    if request.command == "mail_list":
+        return "mail commands:\n/mailcli <sendmail-cli-args>\n/mailjson <config.json>\n/mailbatch <recipients.csv> <base_config.json>\n/mailmcp"
+
+    if request.command == "mail_contacts":
+        return await handle_command(chat_id, ClassifiedRequest(COMMAND_REQUEST, "contact", "list", request.request_id), settings, store, agents)
+
+    if request.command == "project_list":
+        return _handle_project_command(chat_id, "list", settings, store)
+
+    if request.command == "project_switch":
+        payload = request.payload.strip()
+        if not payload:
+            return "Usage: /project_switch <name|key>"
+        return _handle_project_command(chat_id, f"use {payload}", settings, store)
+
+    if request.command == "compact_status":
+        return "compact status\nworkflow: /compact\nscript: scripts/skills/compress_context.py"
+
+    if request.command == "release_check":
+        return "release check\nversion: {version}\ncommit: {commit}".format(version=VERSION, commit=_runtime_git_commit())
+
+    if request.command == "dependencies_check":
+        return build_doctor_report(settings)
+
+    if request.command in {"provider_codex", "provider_claude", "provider_gemini"}:
+        selected_provider = request.command.split("_", 1)[1]
+        next_state = store.set_provider(chat_id, selected_provider)
+        return f"Provider updated.\nprovider: {next_state['provider']}\nmodel: {next_state['model']}"
+
     if request.command == "provider":
         payload = request.payload.strip().lower()
         if not payload:
@@ -2730,7 +2963,7 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         if selected_provider is None:
             return (
                 f"Unknown provider selection: {payload}\n"
-                "Use /provider to open the provider chooser."
+                "Use /provider to open the provider chooser, or /provider_codex /provider_claude /provider_gemini."
             )
         next_state = store.set_provider(chat_id, selected_provider)
         return f"Provider updated.\nprovider: {next_state['provider']}\nmodel: {next_state['model']}"
@@ -2765,18 +2998,25 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
             lines.extend(f"- {item}" for item in settings.custom_models)
         return "\n".join(lines)
 
-    if request.command in {"mode", "usermode", "devmode", "developermode"}:
-        if request.command == "usermode":
-            return _set_display_mode_response(chat_id, store, DISPLAY_MODE_USER)
-        if request.command in {"devmode", "developermode"}:
-            return _set_display_mode_response(chat_id, store, DISPLAY_MODE_DEVELOPER)
+    if request.command in {"mode", "display_mode"}:
         payload = request.payload.strip()
         if not payload:
-            return format_display_mode_status(store.get_display_mode(chat_id))
+            return _command_menu_text("display_mode", SECOND_LEVEL_COMMANDS["display_mode"])
         requested_mode = _parse_display_mode_selection(payload)
         if requested_mode is None:
-            return "Unknown mode selection.\nUse /mode user or /mode developer."
+            return "Unknown mode selection.\nUse /display_mode_user or /display_mode_dev."
         return _set_display_mode_response(chat_id, store, requested_mode)
+
+    if request.command == "display_mode_user":
+        return _set_display_mode_response(chat_id, store, DISPLAY_MODE_USER)
+
+    if request.command == "display_mode_dev":
+        return _set_display_mode_response(chat_id, store, DISPLAY_MODE_DEVELOPER)
+
+    if request.command in {"usermode", "devmode", "developermode"}:
+        if request.command == "usermode":
+            return _set_display_mode_response(chat_id, store, DISPLAY_MODE_USER)
+        return _set_display_mode_response(chat_id, store, DISPLAY_MODE_DEVELOPER)
 
     if request.command == "model":
         payload = request.payload.strip()
@@ -2794,6 +3034,28 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         next_state = store.set_model(chat_id, selected_model)
         return f"Model updated.\nprovider: {next_state['provider']}\nmodel: {next_state['model']}"
 
+    if request.command in {"model_codex", "model_claude", "model_gemini"}:
+        provider = request.command.split("_", 1)[1]
+        catalog = get_model_catalog(settings, provider)
+        default_model = _default_model_name(provider, settings)
+        current_model = str(state["model"]) if state["provider"] == provider else None
+        lines = [
+            f"Models for {provider}:",
+            f"current: {current_model or '-'}",
+            f"default: {default_model}",
+            "",
+        ]
+        for item in catalog.items:
+            marker = " ←" if item.name == current_model else (" (default)" if item.name == default_model else "")
+            desc = f"  {item.description}" if item.description else ""
+            lines.append(f"- {item.name}{marker}{desc}")
+        if settings.custom_models:
+            lines.append("")
+            lines.append("--- custom models ---")
+            lines.extend(f"- {item}" for item in settings.custom_models)
+        return "\n".join(lines)
+
+
     if request.command in {"project", "projects"}:
         return _handle_project_command(chat_id, request.payload, settings, store)
 
@@ -2801,6 +3063,9 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         return agents.queue_overview(chat_id)
 
     if request.command == "schedules":
+        return agents.schedule_overview(chat_id)
+
+    if request.command == "cron":
         return agents.schedule_overview(chat_id)
 
     if request.command == "agentstatus":
@@ -3568,6 +3833,4 @@ async def handle_agent(chat_id: int, request: ClassifiedRequest, store: ChatStat
             typing="active",
         )
     return queued_text
-
-
 

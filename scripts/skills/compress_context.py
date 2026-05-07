@@ -6,7 +6,7 @@ Usage:
   python scripts/skills/compress_context.py \
     --input files/conversation.json \
     --output files/conversation_compressed.json \
-    --token-limit 100000 \
+    --token-limit 200000 \
     --ratio 0.5
 """
 
@@ -24,7 +24,18 @@ except ImportError:
     sys.exit(1)
 
 COCO_INDEX_PATH = "files/coco_index.json"
-DEFAULT_TOKEN_LIMIT = 100000
+
+
+def _default_token_limit() -> int:
+    raw = os.getenv("COMPRESS_CONTEXT_TOKEN_LIMIT", "200000")
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"[compress-context] Warning: invalid COMPRESS_CONTEXT_TOKEN_LIMIT={raw!r}; using 200000")
+        return 200000
+
+
+DEFAULT_TOKEN_LIMIT = _default_token_limit()
 DEFAULT_RATIO = 0.5
 TIKTOKEN_MODEL = "cl100k_base"
 

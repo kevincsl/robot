@@ -298,7 +298,7 @@ Edit images iteratively, sending each result to Telegram for review.
 
 Compress conversation history using LLMLingua semantic compression + rolling coco index to prevent token overflow errors in Claude/LLM API calls.
 
-**When to use:** When the robot encounters a `prompt token count of N exceeds the limit of 128000` error, or proactively before sending a large conversation to the API. Also runs periodically for long-running sessions.
+**When to use:** When the robot encounters a `prompt token count of N exceeds the configured token limit` error, or proactively before sending a large conversation to the API. Also runs periodically for long-running sessions.
 
 **How it works:**
 - Counts tokens in conversation history via tiktoken (`cl100k_base`)
@@ -312,17 +312,19 @@ Compress conversation history using LLMLingua semantic compression + rolling coc
 |-----|---------|-------------|
 | `--input` | (required) | Input conversation JSON or JSONL file |
 | `--output` | (required) | Output compressed conversation JSON file |
-| `--token-limit` | `100000` | Target token budget |
+| `--token-limit` | `200000` | Target token budget (or `COMPRESS_CONTEXT_TOKEN_LIMIT`) |
 | `--ratio` | `0.5` | LLMLingua compression ratio (0–1) |
 | `--coco-index` | `files/coco_index.json` | Path to coco index JSON |
 | `--force` | — | Compress even if under token limit |
+
+**Env override:** Set `COMPRESS_CONTEXT_TOKEN_LIMIT` to change the default token budget without editing code.
 
 **Example:**
 ```
 python scripts/skills/compress_context.py \
   --input files/conversation.json \
   --output files/conversation_compressed.json \
-  --token-limit 100000 \
+  --token-limit 200000 \
   --ratio 0.5
 ```
 
