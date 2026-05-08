@@ -8,6 +8,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+# i18n layer — lazily imported to avoid circular imports at module level.
+from robot import i18n
+
 ENV_FILE = Path(os.getenv("ROBOT_ENV_FILE", ".robots/default.env") or ".robots/default.env")
 
 # Use utf-8-sig so env files saved with BOM still parse first key correctly.
@@ -18,76 +21,28 @@ load_dotenv(ENV_FILE, override=True, encoding="utf-8-sig")
 VERSION = "1.0.0"
 DEFAULT_GOOGLE_CALENDAR_SCOPES = ("https://www.googleapis.com/auth/calendar.readonly",)
 
-PROVIDER_LABELS = {
-    "codex": "Codex",
-    "claude": "Claude",
-    "gemini": "Gemini",
+PROVIDER_LABELS: dict[str, str] = {
+    p: i18n.provider_name(p) for p in ("codex", "claude", "gemini")
 }
 
-SUPPORTED_MODELS = {
-    "codex": [
-        "gpt-5.4",
-        "gpt-5.5",
-        "gpt-5.3-codex",
-        "gpt-5.4-mini",
-        "gpt-5.2",
-        "custom",
-    ],
-    "claude": [
-        "claude-opus-4-7",
-        "claude-sonnet-4-6",
-        "claude-haiku-4-5",
-        "custom",
-    ],
-    "gemini": [
-        "gemini-2.5-pro",
-        "gemini-2.5-flash",
-        "custom",
-    ],
+SUPPORTED_MODELS: dict[str, list[str]] = {
+    p: [m["id"] for m in i18n.model_list(p)] for p in ("codex", "claude", "gemini")
 }
 
-MODEL_CHOICES = {
-    "codex": [
-        ("gpt-5.3-codex", "gpt-5.3-codex | coding"),
-        ("gpt-5.5", "gpt-5.5 | frontier"),
-        ("gpt-5.4", "gpt-5.4 | strong general"),
-        ("gpt-5.4-mini", "gpt-5.4-mini | fast general"),
-        ("gpt-5.2", "gpt-5.2 | long-running agents"),
-        ("custom", "custom | specify any model"),
-    ],
-    "claude": [
-        ("claude-opus-4-7", "claude-opus-4-7 | strongest"),
-        ("claude-sonnet-4-6", "claude-sonnet-4-6 | balanced"),
-        ("claude-haiku-4-5", "claude-haiku-4-5 | fastest"),
-        ("custom", "custom | specify any model"),
-    ],
-    "gemini": [
-        ("gemini-2.5-pro", "gemini-2.5-pro"),
-        ("gemini-2.5-flash", "gemini-2.5-flash"),
-        ("custom", "custom | specify any model"),
-    ],
+MODEL_CHOICES: dict[str, list] = {
+    p: [
+        (m["id"], f"{m['id']} | {m.get(f'description_{i18n.get_locale()}') or m.get('description') or ''}")
+        for m in i18n.model_list(p)
+    ]
+    for p in ("codex", "claude", "gemini")
 }
 
-MODEL_DESCRIPTIONS = {
-    "codex": {
-        "gpt-5.3-codex": "Coding-optimized model.",
-        "gpt-5.5": "Frontier model for complex coding, research, and real-world work.",
-        "gpt-5.4": "Strong model for everyday coding.",
-        "gpt-5.4-mini": "Small, fast, and cost-efficient model for simpler coding tasks.",
-        "gpt-5.2": "Optimized for professional work and long-running agents.",
-        "custom": "Use any model (e.g. deepseek-chat, qwen-turbo).",
-    },
-    "claude": {
-        "claude-opus-4-7": "Most capable model for complex tasks.",
-        "claude-sonnet-4-6": "Balanced performance and speed.",
-        "claude-haiku-4-5": "Fast and cost-efficient.",
-        "custom": "Use any model (e.g. deepseek-chat, qwen-turbo).",
-    },
-    "gemini": {
-        "gemini-2.5-pro": "Google's most capable model.",
-        "gemini-2.5-flash": "Fast and efficient.",
-        "custom": "Use any model (e.g. deepseek-chat, qwen-turbo).",
+MODEL_DESCRIPTIONS: dict[str, dict[str, str]] = {
+    p: {
+        m["id"]: m.get(f"description_{i18n.get_locale()}") or m.get("description", "")
+        for m in i18n.model_list(p)
     }
+    for p in ("codex", "claude", "gemini")
 }
 
 

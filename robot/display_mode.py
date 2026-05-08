@@ -13,11 +13,13 @@ DISPLAY_MODE_DEVELOPER = "developer"
 
 # ── template injection ───────────────────────────────────────
 _templates: DisplayModeTemplates | None = None
+_template_locale: str | None = None
 
 
 def configure_templates(templates: DisplayModeTemplates) -> None:
-    global _templates
+    global _templates, _template_locale
     _templates = templates
+    _template_locale = templates.locale
 
 
 def _t() -> DisplayModeTemplates:
@@ -26,6 +28,15 @@ def _t() -> DisplayModeTemplates:
         from robot.template_loader import get_templates
         _templates = get_templates()
     return _templates
+
+
+def configure_templates_for_locale(locale: str, platform: str = "telegram") -> None:
+    """Reload templates for the given locale (call after i18n.set_locale)."""
+    global _templates, _template_locale
+    from robot.template_loader import clear_templates_cache, get_templates
+    clear_templates_cache()
+    _templates = get_templates(locale=locale, platform=platform)
+    _template_locale = locale
 
 _DISPLAY_MODE_LOOKUP = {
     "user": DISPLAY_MODE_USER,

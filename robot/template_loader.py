@@ -168,7 +168,9 @@ class TemplateRegistry:
         return tmpl
 
     def _load(self, locale: str, platform: str) -> DisplayModeTemplates:
-        path = self._root / "display_mode" / platform / f"{locale}.yaml"
+        # Normalize locale: zh-cn → zh_cn (underscores for filesystem compat)
+        filename = locale.replace("-", "_")
+        path = self._root / "display_mode" / platform / f"{filename}.yaml"
         if not path.exists():
             raise TemplateNotFoundError(
                 f"Template not found: {path}. "
@@ -211,6 +213,14 @@ class TemplateRegistry:
             if d.is_dir()
         )
 
+    def clear_cache(self) -> None:
+        """清除所有已快取的模板。"""
+        self._cache.clear()
+
+    def clear_cache_for_locale(self, locale: str, platform: str) -> None:
+        """清除指定 locale + platform 的快取（下次請求時會重新載入）。"""
+        self._cache.pop((locale, platform), None)
+
 
 # ── 全域單例 ──────────────────────────────────────────────
 _DEFAULT_REGISTRY: TemplateRegistry | None = None
@@ -228,3 +238,10 @@ def get_templates(
     if _DEFAULT_REGISTRY is None:
         _DEFAULT_REGISTRY = TemplateRegistry()
     return _DEFAULT_REGISTRY.get(locale, platform)
+
+
+def clear_templates_cache() -> None:
+    """清除全域 registry 的所有快取（驅動 locale 切換）。"""
+    global _DEFAULT_REGISTRY
+    if _DEFAULT_REGISTRY is not None:
+        _DEFAULT_REGISTRY.clear_cache()

@@ -214,6 +214,18 @@ class ChatStateStore:
             self._save()
             return self.get_chat_state(chat_id)
 
+    def get_locale(self, chat_id: int) -> str:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            return str(bucket.get("locale") or "zh")
+
+    def set_locale(self, chat_id: int, locale: str) -> dict[str, Any]:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            bucket["locale"] = locale
+            self._save()
+            return self.get_chat_state(chat_id)
+
     def set_project(self, chat_id: int, key: str, name: str, path: str) -> dict[str, Any]:
         with self._lock:
             bucket = self._bucket(chat_id)

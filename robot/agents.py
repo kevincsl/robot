@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import contextlib
@@ -66,6 +66,7 @@ class AgentJob:
     enable_pr: bool = False
     disable_post_run: bool = False
     run_at: str | None = None
+    locale: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -90,6 +91,7 @@ class AgentJob:
             "enable_pr": self.enable_pr,
             "disable_post_run": self.disable_post_run,
             "run_at": self.run_at,
+            "locale": self.locale,
         }
 
 
@@ -279,6 +281,7 @@ class AgentCoordinator:
             source=source,
             request_id=clean_request_id or None,
             status_key=status_key,
+            locale=self._store.get_locale(chat_id),
         )
         position = self._store.enqueue_agent_job(chat_id, job.to_dict())
         started = position == 1 and not self.is_running(chat_id)
@@ -327,6 +330,7 @@ class AgentCoordinator:
             enable_push=enable_push,
             enable_pr=enable_pr,
             disable_post_run=disable_post_run,
+            locale=self._store.get_locale(chat_id),
         )
         position = self._store.enqueue_agent_job(chat_id, job.to_dict())
         started = position == 1 and not self.is_running(chat_id)
@@ -375,6 +379,7 @@ class AgentCoordinator:
             enable_push=enable_push,
             enable_pr=enable_pr,
             disable_post_run=disable_post_run,
+            locale=self._store.get_locale(chat_id),
         )
         position = self._store.enqueue_agent_job(chat_id, job.to_dict())
         started = position == 1 and not self.is_running(chat_id)
@@ -424,6 +429,7 @@ class AgentCoordinator:
             enable_pr=enable_pr,
             disable_post_run=disable_post_run,
             run_at=run_at,
+            locale=self._store.get_locale(chat_id),
         )
         count = self._store.add_agent_schedule(chat_id, job.to_dict())
         return job.job_id, run_id, count
@@ -747,6 +753,7 @@ class AgentCoordinator:
                         enable_pr=enable_pr,
                         disable_post_run=disable_post_run,
                         invocation=invocation,
+                        locale=str(job.get("locale") or ""),
                     )
                 else:
                     result = await run_agent_request(
@@ -762,6 +769,7 @@ class AgentCoordinator:
                             or self._settings.project_root.name
                         ),
                         invocation=invocation,
+                        locale=str(job.get("locale") or ""),
                     )
             except asyncio.CancelledError:
                 cancelled_by_shutdown = True

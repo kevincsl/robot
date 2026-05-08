@@ -18,6 +18,7 @@ from teleapp.context import MessageContext
 from teleapp.protocol import AppEvent
 
 from robot.agents import AgentCoordinator
+from robot import i18n
 from robot.brain import (
     auto_organize_recent_notes,
     archive_schedule_note,
@@ -55,6 +56,7 @@ from robot.diagnostics import build_doctor_report
 from robot.display_mode import (
     DISPLAY_MODE_DEVELOPER,
     DISPLAY_MODE_USER,
+    configure_templates_for_locale,
     display_mode_label,
     format_display_mode_changed,
     format_display_mode_status,
@@ -144,6 +146,13 @@ COMMAND_NAMES = {
     "display_mode",
     "display_mode_user",
     "display_mode_dev",
+    "lang",
+    "lang_zh",
+    "lang_zhcn",
+    "lang_zhhk",
+    "lang_en",
+    "lang_ja",
+    "lang_ko",
     # ── Provider ───────────────────────────────────────────────────
     "provider",
     "provider_codex",
@@ -316,22 +325,22 @@ FLOW_BRAIN_BATCH_RESULTS = "brain_batch_results"
 MENU_BUTTONS_CONFIG_NAME = "menu_buttons.json"
 DEFAULT_MENU_BUTTONS: dict[str, list[tuple[str, str]]] = {
     DISPLAY_MODE_USER: [
-        ("狀態", "menu:status"),
+        ("", "menu:status"),
         ("Projects", "menu:projects"),
-        ("取消", "menu:cancel"),
+        ("", "menu:cancel"),
     ],
     DISPLAY_MODE_DEVELOPER: [
-        ("狀態", "menu:status"),
+        ("", "menu:status"),
         ("Provider", "menu:provider"),
         ("Model", "menu:model"),
         ("Projects", "menu:projects"),
-        ("取消", "menu:cancel"),
+        ("", "menu:cancel"),
     ],
 }
 
 
 def _build_menu_buttons(specs: list[tuple[str, str]]) -> list[Button]:
-    return [Button(label, data) for label, data in specs]
+    return [Button(label or i18n.tr("menu." + data.split(":")[1]), data) for label, data in specs]
 
 
 def _default_menu_buttons(display_mode: str) -> list[Button]:
@@ -387,91 +396,90 @@ def _project_display(project_name: object, project_path: object) -> str:
 
 
 def _schedule_confirm_response(parsed: dict[str, str]) -> ButtonResponse:
+    t = i18n.tr
     return ButtonResponse(
         "\n".join(
             [
-                "看起來像一筆行程，要怎麼處理？",
+                t("brain_schedule.confirm_create_question"),
                 "",
-                f"標題: {parsed['title']}",
-                f"日期: {parsed['date_text']}",
-                f"時間: {parsed['time_text']}",
+                f"{t('menu.schedule_label')}: {parsed['title']}",
+                f"{t('menu.date_label')}: {parsed['date_text']}",
+                f"{t('menu.time_label')}: {parsed['time_text']}",
                 "",
-                f"原文: {parsed['source_text']}",
+                f"{t('menu.source_label')}: {parsed['source_text']}",
                 "",
-                "按「確認建立」會寫入第二大腦。",
-                "按「改送 Claude」會把原句直接送去 AI。",
-                "按「取消」也會改送 Claude，不會建立行程。",
-                "如果你只是想問 AI，不要建立行程，請按「改送 Claude」。",
+                t("brain_schedule.confirm_create_hint"),
+                t("brain_schedule.send_to_claude_hint_1"),
+                t("brain_schedule.send_to_claude_hint_2"),
+                t("brain_schedule.send_to_claude_hint_3"),
             ]
         ),
         buttons=[
-            Button("確認建立", "brain:schedule_confirm"),
-            Button("改送 Claude", "brain:schedule_send_agent"),
-            Button("取消", "brain:cancel"),
+            Button(i18n.tr("menu.confirm_create"), "brain:schedule_confirm"),
+            Button(i18n.tr("menu.send_to_claude"), "brain:schedule_send_agent"),
+            Button(i18n.tr("menu.cancel"), "brain:cancel"),
         ],
     )
 
 
 def _schedule_delete_confirm_response(match: dict[str, str], source_text: str) -> ButtonResponse:
+    t = i18n.tr
     recurrence_label = str(match.get("recurrence") or "").strip()
     recurrence = " ".join(
         part for part in [recurrence_label, match.get("time") or ""] if part
     ).strip()
-    when = recurrence or " ".join(part for part in [match.get("date") or "", match.get("time") or ""] if part).strip() or "未排時間"
-    warning_line = (
-        "這是一筆週期性行程。刪除後會停止未來所有重複提醒。"
-        if recurrence_label
-        else "這是一筆單次行程。刪除後只會移除這一筆。"
-    )
+    when = recurrence or " ".join(part for part in [match.get("date") or "", match.get("time") or ""] if part).strip() or t("menu.no_time_scheduled")
+    warning_line = t("brain_schedule.recurring_delete_notice") if recurrence_label else t("brain_schedule.single_delete_notice")
     return ButtonResponse(
         "\n".join(
             [
-                "看起來你是要刪除一筆行程，要怎麼處理？",
+                t("brain_schedule.confirm_delete_question"),
                 "",
-                f"標題: {match.get('title') or ''}",
-                f"時間: {when}",
+                f"{t('menu.schedule_label')}: {match.get('title') or ''}",
+                f"{t('menu.time_label')}: {when}",
                 f"path: {match.get('path') or ''}",
                 "",
-                f"原文: {source_text}",
+                f"{t('menu.source_label')}: {source_text}",
                 "",
                 warning_line,
-                "按「確認刪除」會把這筆行程移到 Archive。",
-                "按「改送 Claude」會把原句直接送去 AI。",
+                t("brain_schedule.confirm_delete_hint"),
+                t("brain_schedule.send_to_claude_hint_1"),
             ]
         ),
         buttons=[
-            Button("確認刪除", "brain:schedule_delete_confirm"),
-            Button("改送 Claude", "brain:schedule_send_agent"),
-            Button("取消", "brain:cancel"),
+            Button(i18n.tr("menu.confirm_delete"), "brain:schedule_delete_confirm"),
+            Button(i18n.tr("menu.send_to_claude"), "brain:schedule_send_agent"),
+            Button(i18n.tr("menu.cancel"), "brain:cancel"),
         ],
     )
 
 
 def _schedule_update_confirm_response(match: dict[str, str], updates: dict[str, str], source_text: str) -> ButtonResponse:
-    current_when = " ".join(part for part in [match.get("date") or "", match.get("time") or ""] if part).strip() or "未排時間"
+    t = i18n.tr
+    current_when = " ".join(part for part in [match.get("date") or "", match.get("time") or ""] if part).strip() or t("menu.no_time_scheduled")
     new_when = " ".join(part for part in [updates.get("date_text") or "", updates.get("time_text") or ""] if part).strip() or current_when
     recurrence_type = (updates.get("recurrence_type") or "").strip()
     recurrence_value = (updates.get("recurrence_value") or "").strip()
     recurrence_line = ""
     if recurrence_type == "daily":
-        recurrence_line = "新的週期: 每天"
+        recurrence_line = f"{t('menu.recurrence_weekly_label')}: {t('menu.recurrence_daily')}"
     elif recurrence_type == "weekly":
-        labels = ["每週一", "每週二", "每週三", "每週四", "每週五", "每週六", "每週日"]
+        days = t("menu.recurrence_weekly_days")
         try:
             weekday = int(recurrence_value)
         except ValueError:
             weekday = -1
-        recurrence_line = f"新的週期: {labels[weekday] if 0 <= weekday < len(labels) else '每週'}"
+        recurrence_line = f"{t('menu.recurrence_weekly_label')}: {days[weekday] if 0 <= weekday < len(days) else t('menu.recurrence_weekly_label')}"
     elif recurrence_type == "monthly":
-        recurrence_line = f"新的週期: 每月{recurrence_value}號" if recurrence_value else "新的週期: 每月"
+        recurrence_line = f"{t('menu.recurrence_monthly')}{recurrence_value}{t('menu.date_label')}" if recurrence_value else t("menu.recurrence_monthly")
     elif recurrence_type == "":
-        recurrence_line = "新的週期: 單次行程"
+        recurrence_line = t("menu.recurrence_once")
     lines = [
-        "看起來你是要修改一筆行程，要怎麼處理？",
+        t("brain_schedule.confirm_update_question"),
         "",
-        f"標題: {match.get('title') or ''}",
-        f"目前: {current_when}",
-        f"更新後: {new_when}",
+        f"{t('menu.schedule_label')}: {match.get('title') or ''}",
+        f"{t('menu.current_label')}: {current_when}",
+        f"{t('menu.updated_label')}: {new_when}",
     ]
     if recurrence_line:
         lines.append(recurrence_line)
@@ -479,18 +487,18 @@ def _schedule_update_confirm_response(match: dict[str, str], updates: dict[str, 
         [
             f"path: {match.get('path') or ''}",
             "",
-            f"原文: {source_text}",
+            f"{t('menu.source_label')}: {source_text}",
             "",
-            "按「確認修改」會直接更新這筆行程。",
-            "按「改送 Claude」會把原句直接送去 AI。",
+            t("brain_schedule.confirm_update_hint"),
+            t("brain_schedule.send_to_claude_hint_1"),
         ]
     )
     return ButtonResponse(
         "\n".join(lines),
         buttons=[
-            Button("確認修改", "brain:schedule_update_confirm"),
-            Button("改送 Claude", "brain:schedule_send_agent"),
-            Button("取消", "brain:cancel"),
+            Button(i18n.tr("menu.confirm_update"), "brain:schedule_update_confirm"),
+            Button(i18n.tr("menu.send_to_claude"), "brain:schedule_send_agent"),
+            Button(i18n.tr("menu.cancel"), "brain:cancel"),
         ],
     )
 
@@ -533,28 +541,29 @@ async def _send_schedule_confirm_source_to_agent(
     if not isinstance(flow, dict) or flow.get("kind") not in valid_kinds:
         flow = store.get_last_schedule_candidate(chat_id)
     if not isinstance(flow, dict) or flow.get("kind") not in valid_kinds:
-        return "目前沒有可改送 Claude 的行程原文。請直接重新輸入原句。"
+        return i18n.tr("schedule.no_resend_candidate")
     source_text = str(flow.get("source_text") or "").strip()
     store.clear_ui_flow(chat_id)
     store.clear_last_schedule_candidate(chat_id)
     if not source_text:
-        return "原始訊息遺失，無法送到 Claude。"
+        return i18n.tr("errors.source_text_lost")
     return await handle_agent(chat_id, ClassifiedRequest(AGENT_REQUEST, None, source_text), store, agents)
 
 
 def _document_import_error_message(source_name: str, exc: Exception) -> str:
+    t = i18n.tr
     message = str(exc).strip()
     lowered = message.lower()
     if isinstance(exc, FileConversionException) and "markitdown[pdf]" in lowered:
         return (
-            "文件已收到，但目前這個環境還沒有安裝 PDF 轉換依賴，所以無法匯入內容。\n"
+            f"{t('errors.file_no_local_path').split('.')[0]}，這個環境還沒有安裝 PDF 轉換依賴，無法匯入內容。\n"
             f"source_file: {source_name}\n"
             "needed: pip install markitdown[pdf]"
         )
     if isinstance(exc, MarkItDownException):
         details = message.splitlines()[0] if message else exc.__class__.__name__
         return (
-            "文件已收到，但目前無法轉換這個檔案內容。\n"
+            f"{t('errors.file_no_local_path').split('.')[0]}，無法轉換這個檔案內容。\n"
             f"source_file: {source_name}\n"
             f"error: {details}"
         )
@@ -659,7 +668,7 @@ def _set_display_mode_response(chat_id: int, store: ChatStateStore, mode: str) -
     return "\n".join(
         [
             format_display_mode_changed(normalized),
-            f"目前模式: {display_mode_label(normalized)}",
+            i18n.tr("menu.current_mode_label", mode=display_mode_label(normalized)),
         ]
     )
 
@@ -1295,7 +1304,7 @@ def _menu_text(chat_id: int, store: ChatStateStore) -> str:
             "- /project list",
             "- /project use <name|key>",
             "",
-            "其他自然語言訊息不會被選單吃掉，會直接送進 AI。",
+            i18n.tr("menu.note_mode_hint"),
         ]
     )
 
@@ -1305,7 +1314,7 @@ def _brain_text() -> str:
         [
             "brain menu",
             UI_BUILD_TAG,
-            "使用 TG 操作 secondbrain",
+            i18n.tr("menu.tg_secondbrain_hint"),
             "",
             "brain actions:",
             "- 寫入今日",
@@ -1332,23 +1341,23 @@ def _brain_menu_response(chat_id: int, store: ChatStateStore) -> ButtonResponse:
     return ButtonResponse(
         _brain_text(),
         buttons=[
-            Button("寫入今日", "brain:capture"),
-            Button("Inbox", "brain:inbox"),
-            Button("讀今日", "brain:read"),
-            Button("搜尋", "brain:search"),
-            Button("整理", "brain:organize"),
-            Button("批次整理", "brain:batch"),
-            Button("自動批次整理", "brain:batch_auto"),
-            Button("專案", "brain:project"),
-            Button("知識卡", "brain:knowledge"),
-            Button("資源", "brain:resource"),
-            Button("行程", "brain:schedule"),
-            Button("摘要", "brain:summary"),
-            Button("決策支援", "brain:decide"),
-            Button("提醒", "brain:remind"),
-            Button("每日摘要", "brain:daily"),
-            Button("週摘要", "brain:weekly"),
-            Button("取消", "brain:cancel"),
+            Button(i18n.tr("menu.brain_write_today"), "brain:capture"),
+            Button(i18n.tr("menu.brain_inbox"), "brain:inbox"),
+            Button(i18n.tr("menu.brain_read_today"), "brain:read"),
+            Button(i18n.tr("menu.brain_search"), "brain:search"),
+            Button(i18n.tr("menu.brain_organize"), "brain:organize"),
+            Button(i18n.tr("menu.brain_batch"), "brain:batch"),
+            Button(i18n.tr("menu.brain_batch_auto"), "brain:batch_auto"),
+            Button(i18n.tr("menu.brain_project"), "brain:project"),
+            Button(i18n.tr("menu.brain_knowledge"), "brain:knowledge"),
+            Button(i18n.tr("menu.brain_resource"), "brain:resource"),
+            Button(i18n.tr("menu.brain_schedule"), "brain:schedule"),
+            Button(i18n.tr("menu.brain_summary"), "brain:summary"),
+            Button(i18n.tr("menu.brain_decide"), "brain:decide"),
+            Button(i18n.tr("menu.brain_remind"), "brain:remind"),
+            Button(i18n.tr("menu.brain_daily"), "brain:daily"),
+            Button(i18n.tr("menu.brain_weekly"), "brain:weekly"),
+            Button(i18n.tr("menu.cancel"), "brain:cancel"),
         ],
     )
 
@@ -1369,36 +1378,36 @@ async def _handle_brain_action(
         if isinstance(flow, dict) and flow.get("kind") == FLOW_AWAIT_BRAIN_SCHEDULE_CONFIRM:
             return await _send_schedule_confirm_source_to_agent(chat_id, store, agents)
         store.clear_ui_flow(chat_id)
-        return "Brain menu canceled."
+        return i18n.tr("menu.brain_menu_canceled")
 
     if command == "brain:capture":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_CAPTURE})
-        return "請輸入要寫入今日 daily note 的內容。輸入 /menu 可離開流程。"
+        return i18n.tr("menu.capture_prompt")
 
     if command == "brain:inbox":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_INBOX})
-        return "請輸入要存進 Inbox 的內容。輸入 /menu 可離開流程。"
+        return i18n.tr("menu.inbox_prompt")
 
     if command == "brain:read":
         body = read_daily(settings).strip()
-        return body if body else "今日 daily note 目前是空的。"
+        return body if body else i18n.tr("menu.daily_note_empty")
 
     if command == "brain:search":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_SEARCH})
-        return "請輸入要搜尋 secondbrain 的關鍵字。輸入 /menu 可離開流程。"
+        return i18n.tr("menu.search_prompt")
 
     if command == "brain:organize":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_ORGANIZE_TEXT})
-        return "請先貼上你要整理的原始內容。輸入 /menu 可離開流程。"
+        return i18n.tr("menu.organize_source_placeholder")
 
     if command == "brain:batch":
         items = list_recent_notes(settings, "00 Inbox", limit=5) + list_recent_notes(settings, "01 Daily Notes", limit=5)
         items = items[:10]
         if not items:
-            return "目前沒有可批次整理的 Inbox / Daily 筆記。"
+            return i18n.tr("menu.no_batch_results")
         store.set_ui_flow(chat_id, {"kind": FLOW_BRAIN_BATCH_RESULTS, "results": items})
         return ButtonResponse(
-            "選一篇最近的 Inbox / Daily 筆記來整理：",
+            i18n.tr("menu.batch_note_list"),
             buttons=[Button(item, f"brain:batch_open:{idx}") for idx, item in enumerate(items)],
         )
 
@@ -1406,7 +1415,7 @@ async def _handle_brain_action(
         summary = auto_organize_recent_notes(settings, limit=10)
         processed = int(summary.get("processed") or 0)
         if processed == 0:
-            return "目前沒有可自動整理的 Inbox / Daily 筆記。"
+            return i18n.tr("menu.no_auto_batch_results")
         by_type = summary.get("by_type")
         items = summary.get("items")
         if not isinstance(by_type, dict):
@@ -1414,13 +1423,13 @@ async def _handle_brain_action(
         if not isinstance(items, list):
             items = []
         lines = [
-            "自動批次整理完成：",
+            i18n.tr("menu.auto_batch_done"),
             f"- processed: {processed}",
             f"- created: {int(summary.get('created') or 0)}",
             f"- skipped: {int(summary.get('skipped') or 0)}",
             f"- failed: {int(summary.get('failed') or 0)}",
             "",
-            "分類統計：",
+            i18n.tr("menu.batch_stats"),
             f"- project: {int(by_type.get('project') or 0)}",
             f"- knowledge: {int(by_type.get('knowledge') or 0)}",
             f"- resource: {int(by_type.get('resource') or 0)}",
@@ -1428,46 +1437,46 @@ async def _handle_brain_action(
         created_items = [item for item in items if isinstance(item, dict) and item.get("status") == "created"]
         if created_items:
             lines.append("")
-            lines.append("新建立筆記：")
+            lines.append(i18n.tr("brain_schedule.new_note_title"))
             for item in created_items[:10]:
                 lines.append(f"- {item.get('source_path')} -> {item.get('path')} ({item.get('target')})")
         failed_items = [item for item in items if isinstance(item, dict) and item.get("status") == "failed"]
         if failed_items:
             lines.append("")
-            lines.append("失敗項目：")
+            lines.append(i18n.tr("errors.fail_items"))
             for item in failed_items[:5]:
                 lines.append(f"- {item.get('source_path')}: {item.get('error') or 'unknown error'}")
         return "\n".join(lines)
 
     if command == "brain:project":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_PROJECT})
-        return "請輸入專案名稱，我會建立 project note。輸入 /menu 可離開流程。"
+        return i18n.tr("brain_schedule.enter_project_name")
 
     if command == "brain:knowledge":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_KNOWLEDGE})
-        return "請輸入知識卡標題，我會建立 knowledge note。輸入 /menu 可離開流程。"
+        return i18n.tr("brain_schedule.enter_knowledge_title")
 
     if command == "brain:resource":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_RESOURCE})
-        return "請輸入 resource 標題，我會建立 resource note。輸入 /menu 可離開流程。"
+        return i18n.tr("brain_schedule.enter_resource_title")
 
     if command == "brain:schedule":
         return ButtonResponse(
-            "行程選單",
+            i18n.tr("menu.schedule_menu"),
             buttons=[
-                Button("新增", "brain:schedule_new"),
-                Button("今日", "brain:schedule_today"),
-                Button("本週", "brain:schedule_week"),
-                Button("下週", "brain:schedule_next_week"),
-                Button("本月", "brain:schedule_month"),
-                Button("列表", "brain:schedule_list"),
-                Button("取消", "brain:cancel"),
+                Button(i18n.tr("menu.schedule_new"), "brain:schedule_new"),
+                Button(i18n.tr("menu.schedule_today"), "brain:schedule_today"),
+                Button(i18n.tr("menu.schedule_week"), "brain:schedule_week"),
+                Button(i18n.tr("menu.schedule_next_week"), "brain:schedule_next_week"),
+                Button(i18n.tr("menu.schedule_month"), "brain:schedule_month"),
+                Button(i18n.tr("menu.schedule_list"), "brain:schedule_list"),
+                Button(i18n.tr("menu.cancel"), "brain:cancel"),
             ],
         )
 
     if command == "brain:schedule_new":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_SCHEDULE_TITLE})
-        return "請輸入行程標題，或直接輸入自然語言，例如：今天下午6點半要吃藥。輸入 /menu 可離開流程。"
+        return i18n.tr("menu.schedule_prompt")
 
     if command == "brain:schedule_today":
         return _schedule_occurrences_response(chat_id, store, settings, period="day", limit=50)
@@ -1487,8 +1496,8 @@ async def _handle_brain_action(
     if command == "brain:schedule_archive_past":
         archived = archive_past_due_schedule_notes(settings, limit=200)
         if not archived:
-            return "目前沒有已過期且可封存的單次行程。"
-        lines = ["已封存過期行程：", ""]
+            return i18n.tr("menu.no_expired_schedules")
+        lines = [i18n.tr("menu.archived_schedules"), ""]
         for item in archived:
             when = " ".join(part for part in [item.get("date") or "", item.get("time") or ""] if part).strip()
             lines.append(f"- {when} | {item.get('title')}")
@@ -1499,7 +1508,7 @@ async def _handle_brain_action(
     if command == "brain:schedule_confirm":
         flow = store.get_ui_flow(chat_id)
         if not isinstance(flow, dict) or flow.get("kind") != FLOW_AWAIT_BRAIN_SCHEDULE_CONFIRM:
-            return "目前沒有待確認的行程。請重新開始。"
+            return i18n.tr("schedule.no_pending")
         title = str(flow.get("title") or "").strip()
         date_text = str(flow.get("date_text") or "").strip()
         time_text = str(flow.get("time_text") or "").strip()
@@ -1507,7 +1516,7 @@ async def _handle_brain_action(
         recurrence_value = str(flow.get("recurrence_value") or "").strip()
         if not title:
             store.clear_ui_flow(chat_id)
-            return "行程資料遺失，請重新開始。"
+            return i18n.tr("menu.schedule_data_lost")
         path = create_schedule_note(
             settings,
             title,
@@ -1519,7 +1528,7 @@ async def _handle_brain_action(
         body = read_note(settings, path).strip()
         store.clear_ui_flow(chat_id)
         store.clear_last_schedule_candidate(chat_id)
-        return f"已建立 Schedule 筆記：{path}\n\n{body}"
+        return i18n.tr("brain_schedule.created_schedule_note", path=path, body=body)
 
     if command == "brain:schedule_send_agent":
         return await _send_schedule_confirm_source_to_agent(chat_id, store, agents)
@@ -1527,26 +1536,26 @@ async def _handle_brain_action(
     if command == "brain:schedule_delete_confirm":
         flow = store.get_ui_flow(chat_id)
         if not isinstance(flow, dict) or flow.get("kind") != FLOW_AWAIT_BRAIN_SCHEDULE_DELETE_CONFIRM:
-            return "目前沒有待刪除確認的行程。請重新開始。"
+            return i18n.tr("schedule.no_pending_delete")
         path = str(flow.get("path") or "").strip()
         if not path:
             store.clear_ui_flow(chat_id)
             store.clear_last_schedule_candidate(chat_id)
-            return "行程路徑遺失，請重新開始。"
+            return i18n.tr("errors.generic")
         archived_path = archive_schedule_note(settings, path)
         store.clear_ui_flow(chat_id)
         store.clear_last_schedule_candidate(chat_id)
-        return f"已封存行程。\nfrom: {path}\nto: {archived_path}"
+        return i18n.tr("menu.schedule_archived", from_path=path, to_path=archived_path)
 
     if command == "brain:schedule_update_confirm":
         flow = store.get_ui_flow(chat_id)
         if not isinstance(flow, dict) or flow.get("kind") != FLOW_AWAIT_BRAIN_SCHEDULE_UPDATE_CONFIRM:
-            return "目前沒有待確認修改的行程。請重新開始。"
+            return i18n.tr("schedule.no_pending_update")
         path = str(flow.get("path") or "").strip()
         if not path:
             store.clear_ui_flow(chat_id)
             store.clear_last_schedule_candidate(chat_id)
-            return "行程路徑遺失，請重新開始。"
+            return i18n.tr("errors.generic")
         update_schedule_note(
             settings,
             path,
@@ -1558,20 +1567,20 @@ async def _handle_brain_action(
         body = read_note(settings, path).strip()
         store.clear_ui_flow(chat_id)
         store.clear_last_schedule_candidate(chat_id)
-        return f"已更新 Schedule 筆記：{path}\n\n{body}"
+        return i18n.tr("brain_schedule.updated_schedule_note", path=path, body=body)
 
     if command == "brain:summary":
         path = ensure_weekly_summary_note(settings)
         body = read_note(settings, path).strip()
-        return f"已準備每週摘要筆記：{path}\n\n{body}"
+        return i18n.tr("brain_schedule.created_weekly_summary_note", path=path, body=body)
 
     if command == "brain:decide":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_DECIDE})
-        return "請輸入你要整理的判斷問題。輸入 /menu 可離開流程。"
+        return i18n.tr("brain_schedule.enter_decision_question")
 
     if command == "brain:remind":
         reminders = collect_brain_reminders(settings, limit=5)
-        return "提醒：\n" + "\n".join(reminders)
+        return i18n.tr("menu.reminders_label") + "\n" + "\n".join(reminders)
 
     if command == "brain:daily":
         return build_daily_brief(settings)
@@ -1583,16 +1592,16 @@ async def _handle_brain_action(
         raw_index = command.rsplit(":", 1)[1].strip()
         flow = store.get_ui_flow(chat_id)
         if not isinstance(flow, dict) or flow.get("kind") != FLOW_BRAIN_SEARCH_RESULTS:
-            return "目前沒有可開啟的搜尋結果。請先搜尋。"
+            return i18n.tr("menu.no_search_results")
         results = flow.get("results")
         if not isinstance(results, list):
-            return "搜尋結果已失效。請重新搜尋。"
+            return i18n.tr("errors.search_results_expired")
         try:
             index = int(raw_index)
         except ValueError:
-            return "無效的搜尋結果索引。"
+            return i18n.tr("errors.invalid_search_index")
         if index < 0 or index >= len(results):
-            return "搜尋結果索引超出範圍。"
+            return i18n.tr("errors.search_index_out_of_range")
         path = str(results[index]).strip()
         body = read_note(settings, path).strip()
         return f"{path}\n\n{body}" if body else f"{path}\n\n這篇筆記目前是空的。"
@@ -1601,16 +1610,16 @@ async def _handle_brain_action(
         raw_index = command.rsplit(":", 1)[1].strip()
         flow = store.get_ui_flow(chat_id)
         if not isinstance(flow, dict) or flow.get("kind") != FLOW_BRAIN_BATCH_RESULTS:
-            return "目前沒有可用的批次整理結果。請先重新開啟批次整理。"
+            return i18n.tr("errors.batch_results_unavailable")
         results = flow.get("results")
         if not isinstance(results, list):
-            return "批次整理結果已失效。請重新開始。"
+            return i18n.tr("errors.batch_results_expired")
         try:
             index = int(raw_index)
         except ValueError:
-            return "無效的批次整理索引。"
+            return i18n.tr("errors.invalid_batch_index")
         if index < 0 or index >= len(results):
-            return "批次整理索引超出範圍。"
+            return i18n.tr("errors.batch_index_out_of_range")
         path = str(results[index]).strip()
         source_text = read_note(settings, path).strip()
         store.set_ui_flow(
@@ -1622,11 +1631,11 @@ async def _handle_brain_action(
             },
         )
         return ButtonResponse(
-            f"已載入：{path}\n要整理成哪一類？",
+            i18n.tr("menu.organize_loaded", path=path),
             buttons=[
-                Button("專案", "brain:organize_target:project"),
-                Button("知識卡", "brain:organize_target:knowledge"),
-                Button("Resource", "brain:organize_target:resource"),
+                Button(i18n.tr("organize.project_label"), "brain:organize_target:project"),
+                Button(i18n.tr("organize.knowledge_label"), "brain:organize_target:knowledge"),
+                Button(i18n.tr("menu.brain_resource"), "brain:organize_target:resource"),
             ],
         )
 
@@ -1634,12 +1643,12 @@ async def _handle_brain_action(
         target = command.rsplit(":", 1)[1].strip()
         flow = store.get_ui_flow(chat_id)
         if not isinstance(flow, dict) or flow.get("kind") != FLOW_AWAIT_BRAIN_ORGANIZE_TARGET:
-            return "目前沒有待整理內容。請先重新開始整理流程。"
+            return i18n.tr("errors.organize_no_pending")
         source_text = str(flow.get("source_text") or "").strip()
         if not source_text:
-            return "原始內容已遺失。請重新開始整理流程。"
+            return i18n.tr("errors.organize_source_lost")
         if target not in {"project", "knowledge", "resource"}:
-            return "無效的整理目標。"
+            return i18n.tr("errors.invalid_organize_target")
         store.set_ui_flow(
             chat_id,
             {
@@ -1649,11 +1658,11 @@ async def _handle_brain_action(
             },
         )
         labels = {
-            "project": "專案",
-            "knowledge": "知識卡",
-            "resource": "資源",
+            "project": i18n.tr("organize.project_label"),
+            "knowledge": i18n.tr("organize.knowledge_label"),
+            "resource": i18n.tr("organize.resource_label"),
         }
-        return f"請輸入整理後的{labels[target]}標題。輸入 /menu 可離開流程。"
+        return i18n.tr("organize.enter_title", label=labels[target])
 
     return f"Unknown brain action: {command}"
 
@@ -1693,7 +1702,7 @@ def _model_menu_response(chat_id: int, store: ChatStateStore, settings: Settings
         f"provider: {provider}",
         f"source: {catalog.source}",
         "",
-        "按按鈕直接切換。",
+        i18n.tr("menu.provider_switch_hint"),
         "",
     ]
     if catalog.note:
@@ -1702,7 +1711,7 @@ def _model_menu_response(chat_id: int, store: ChatStateStore, settings: Settings
     current_section = "provider"
     for index, option in enumerate(options, start=1):
         if option.section != current_section:
-            lines.append("--- custom models ---")
+            lines.append(i18n.tr("menu.custom_models_section"))
             current_section = option.section
         tags: list[str] = []
         if option.value == default_model:
@@ -1718,8 +1727,8 @@ def _model_menu_response(chat_id: int, store: ChatStateStore, settings: Settings
     lines.extend(
         [
             "",
-            "也可直接用 /model <name>",
-            "輸入 /menu 返回主選單。",
+            f"/model <name> {i18n.tr('menu.model_menu_hint').split('。')[0]}",
+            i18n.tr("menu.input_model_name"),
         ]
     )
     return ButtonResponse("\n".join(lines), buttons=buttons)
@@ -1744,7 +1753,7 @@ def _selectable_model_options(
     options.append(
         _SelectableModelOption(
             value="custom",
-            description="手動輸入任意模型名稱。",
+            description=i18n.tr("menu.custom_model_hint"),
             section="provider",
         )
     )
@@ -1837,11 +1846,7 @@ def _projects_menu_response(chat_id: int, settings: Settings, store: ChatStateSt
     lines.extend(
         [
             "",
-            "點 Use 切換專案，點 Register 註冊專案。",
-            "標示為 registered 的項目代表已納入 /project list 管理。",
-            "可直接輸入編號、project key 或 label，或用 /project <key-or-label>。",
-            "輸入 /menu 返回主選單。",
-            "其他自然語言會直接送進 AI。",
+            i18n.tr("menu.project_menu_hint"),
         ]
     )
     return ButtonResponse("\n".join(lines), buttons=buttons)
@@ -1873,13 +1878,13 @@ def _project_management_menu_response(chat_id: int, settings: Settings, store: C
         f"Current context: {_project_display(state['project_name'], state['project_path'])}",
         f"Registered projects: {len(items)}",
         "",
-        "推薦流程：",
+        i18n.tr("menu.recommended_flow"),
         "1) /project register [name] <path>",
         "2) /project use <name|key>",
         "3) /project info <name|key>",
         "4) /project roots add <path> / remove <path>",
         "",
-        "可用按鈕：List / Discover / Back",
+        i18n.tr("menu.available_buttons"),
     ]
     buttons: list[Button] = [
         Button("List", "menu:projects:list"),
@@ -2223,7 +2228,7 @@ async def _handle_menu_action(
         store.clear_ui_flow(chat_id)
         return (
             f"Provider updated.\nprovider: {next_state['provider']}\nmodel: {next_state['model']}\n\n"
-            "輸入 /menu 可回到主選單，或直接輸入自然語言交給 AI。"
+            + i18n.tr("menu.model_select_hint")
         )
 
     if command == "menu:model":
@@ -2237,9 +2242,7 @@ async def _handle_menu_action(
             store.clear_ui_flow(chat_id)
             return (
                 "Custom model selected.\n"
-                "請使用 /model <實際模型名稱> 來設定自訂模型。\n"
-                "例如: /model deepseek-chat, /model qwen-turbo, /model gpt-4o\n\n"
-                "輸入 /menu 可回到主選單。"
+                + i18n.tr("menu.invalid_custom_model")
             )
         provider = str(store.get_chat_state(chat_id)["provider"])
         _is_catalog_model, validation_error = validate_selected_model(settings, provider, model)
@@ -2249,7 +2252,7 @@ async def _handle_menu_action(
         store.clear_ui_flow(chat_id)
         return (
             f"Model updated.\nprovider: {next_state['provider']}\nmodel: {next_state['model']}\n\n"
-            "輸入 /menu 可回到主選單，或直接輸入自然語言交給 AI。"
+            + i18n.tr("menu.model_select_hint")
         )
 
     if command.startswith("menu:set_project:"):
@@ -2266,7 +2269,7 @@ async def _handle_menu_action(
         store.clear_ui_flow(chat_id)
         return (
             f"Project updated.\nproject: {_project_display(next_state['project_name'], next_state['project_path'])}\npath: {next_state['project_path']}\n\n"
-            "輸入 /menu 可回到主選單，或直接輸入自然語言交給 AI。"
+            + i18n.tr("menu.model_select_hint")
         )
 
     if command == "menu:projects":
@@ -2301,12 +2304,12 @@ async def _handle_menu_action(
         try:
             project = register_project(settings, workspace.label, str(workspace.path))
             return (
-                f"專案已註冊：{workspace.label}\n"
+                i18n.tr("menu.project_registered", label=workspace.label) + "\n"
                 f"key: {project.get('key')}\n"
                 f"path: {project.get('path')}"
             )
         except ValueError as exc:
-            return f"註冊失敗：{exc}"
+            return i18n.tr("errors.register_failed", exc=exc)
 
     return f"Unknown menu action: {command}"
 
@@ -2332,7 +2335,7 @@ async def _handle_flow_input(
         return None
 
     if kind == FLOW_AWAIT_MODEL:
-        return "請直接按 model 按鈕切換，或用 /model <name>。輸入 /menu 返回主選單。"
+        return i18n.tr("menu.use_model_button")
 
     if kind == FLOW_AWAIT_PROVIDER:
         selected_provider = _resolve_provider_selection(text)
@@ -2348,28 +2351,28 @@ async def _handle_flow_input(
             store.clear_ui_flow(chat_id)
             return (
                 f"Project updated.\nproject: {_project_display(next_state['project_name'], next_state['project_path'])}\npath: {next_state['project_path']}\n\n"
-                "輸入 /menu 可回到主選單，或直接輸入自然語言交給 AI。"
+                + i18n.tr("menu.model_select_hint")
             )
         return None
 
     if kind == FLOW_AWAIT_BRAIN_CAPTURE:
         path = append_to_daily(settings, text)
         store.clear_ui_flow(chat_id)
-        return f"已寫入今日筆記。\npath: {path}"
+        return i18n.tr("menu.file_imported", path=path)
 
     if kind == FLOW_AWAIT_BRAIN_INBOX:
         path = create_inbox_note(settings, text)
         store.clear_ui_flow(chat_id)
-        return f"已建立 Inbox 筆記。\npath: {path}"
+        return i18n.tr("menu.inbox_created", path=path)
 
     if kind == FLOW_AWAIT_BRAIN_SEARCH:
         matches = search_vault(settings, text, limit=10)
         if not matches:
             store.clear_ui_flow(chat_id)
-            return f"找不到與「{text}」相關的筆記。"
+            return i18n.tr("brain.no_results", text=text)
         store.set_ui_flow(chat_id, {"kind": FLOW_BRAIN_SEARCH_RESULTS, "results": matches[:10]})
         return ButtonResponse(
-            f"搜尋結果：{text}",
+            i18n.tr("brain.search_results_header", text=text),
             buttons=[Button(item, f"brain:open_note:{idx}") for idx, item in enumerate(matches[:10])],
         )
 
@@ -2382,11 +2385,11 @@ async def _handle_flow_input(
             },
         )
         return ButtonResponse(
-            "要把這段內容整理成哪一類？",
+            i18n.tr("organize.pick_type"),
             buttons=[
-                Button("專案", "brain:organize_target:project"),
-                Button("知識卡", "brain:organize_target:knowledge"),
-                Button("Resource", "brain:organize_target:resource"),
+                Button(i18n.tr("organize.project_label"), "brain:organize_target:project"),
+                Button(i18n.tr("organize.knowledge_label"), "brain:organize_target:knowledge"),
+                Button(i18n.tr("organize.resource_label"), "brain:organize_target:resource"),
             ],
         )
 
@@ -2394,19 +2397,19 @@ async def _handle_flow_input(
         path = create_project_note(settings, text)
         body = read_note(settings, path).strip()
         store.clear_ui_flow(chat_id)
-        return f"已建立 Project 筆記：{path}\n\n{body}"
+        return i18n.tr("brain_schedule.created_project_note", path=path, body=body)
 
     if kind == FLOW_AWAIT_BRAIN_KNOWLEDGE:
         path = create_knowledge_note(settings, text)
         body = read_note(settings, path).strip()
         store.clear_ui_flow(chat_id)
-        return f"已建立 Knowledge 筆記：{path}\n\n{body}"
+        return i18n.tr("brain_schedule.created_knowledge_note", path=path, body=body)
 
     if kind == FLOW_AWAIT_BRAIN_RESOURCE:
         path = create_resource_note(settings, text)
         body = read_note(settings, path).strip()
         store.clear_ui_flow(chat_id)
-        return f"已建立 Resource 筆記：{path}\n\n{body}"
+        return i18n.tr("brain_schedule.created_resource_note", path=path, body=body)
 
     if kind == FLOW_AWAIT_BRAIN_SCHEDULE_TITLE:
         parsed = parse_natural_language_schedule(text)
@@ -2420,14 +2423,14 @@ async def _handle_flow_input(
                 "title": text,
             },
         )
-        return f"行程標題已記下：{text}\n請輸入日期，例如 2026-04-11。若暫時不填可輸入 skip。"
+        return i18n.tr("schedule.title_remembered", title=text) + "\n" + i18n.tr("schedule.enter_date")
 
     if kind == FLOW_AWAIT_BRAIN_SCHEDULE_DATE:
         title = str(flow.get("title") or "").strip()
         if not title:
             store.clear_ui_flow(chat_id)
-            return "行程流程資料遺失，請重新開始。"
-        date_text = "" if text.lower() in {"skip", "略過", "none", "-"} else text
+            return i18n.tr("errors.generic")
+        date_text = "" if text.lower() in i18n.tr_tokens("menu.detect_skip_tokens") else text
         store.set_ui_flow(
             chat_id,
             {
@@ -2436,40 +2439,40 @@ async def _handle_flow_input(
                 "date_text": date_text,
             },
         )
-        return "請輸入時間，例如 14:30。若暫時不填可輸入 skip。"
+        return i18n.tr("schedule.enter_time")
 
     if kind == FLOW_AWAIT_BRAIN_SCHEDULE_TIME:
         title = str(flow.get("title") or "").strip()
         if not title:
             store.clear_ui_flow(chat_id)
-            return "行程流程資料遺失，請重新開始。"
+            return i18n.tr("errors.generic")
         date_text = str(flow.get("date_text") or "").strip()
-        time_text = "" if text.lower() in {"skip", "略過", "none", "-"} else text
+        time_text = "" if text.lower() in i18n.tr_tokens("menu.detect_skip_tokens") else text
         path = create_schedule_note(settings, title, date_text=date_text, time_text=time_text)
         body = read_note(settings, path).strip()
         store.clear_ui_flow(chat_id)
-        return f"已建立 Schedule 筆記：{path}\n\n{body}"
+        return i18n.tr("brain_schedule.created_schedule_note", path=path, body=body)
 
     if kind == FLOW_AWAIT_BRAIN_ORGANIZE_TITLE:
         flow = store.get_ui_flow(chat_id)
         if not isinstance(flow, dict):
-            return "整理流程已失效，請重新開始。"
+            return i18n.tr("errors.organize_flow_expired")
         source_text = str(flow.get("source_text") or "").strip()
         target = str(flow.get("target") or "").strip()
         if not source_text or target not in {"project", "knowledge", "resource"}:
-            return "整理流程資料不完整，請重新開始。"
+            return i18n.tr("errors.organize_flow_incomplete")
         if target == "project":
             path = create_project_note_from_text(settings, text, source_text)
-            label = "Project"
+            label = i18n.tr("organize.project_label")
         elif target == "knowledge":
             path = create_knowledge_note_from_text(settings, text, source_text)
-            label = "Knowledge"
+            label = i18n.tr("organize.knowledge_label")
         else:
             path = create_resource_note_from_text(settings, text, source_text)
-            label = "Resource"
+            label = i18n.tr("organize.resource_label")
         body = read_note(settings, path).strip()
         store.clear_ui_flow(chat_id)
-        return f"已整理成 {label} 筆記：{path}\n\n{body}"
+        return i18n.tr("brain_schedule.organized_note", label=label, path=path, body=body)
 
     if kind == FLOW_AWAIT_FILE_ACTION:
         local_path = str(flow.get("local_path") or "").strip()
@@ -2477,14 +2480,14 @@ async def _handle_flow_input(
         title = str(flow.get("title") or "").strip()
         if not local_path:
             store.clear_ui_flow(chat_id)
-            return "檔案流程資料遺失，請重新上傳。"
+            return i18n.tr("menu.file_processing_error")
         if not source_name:
             source_name = Path(local_path).name
         if not title:
             title = Path(source_name).stem if source_name else Path(local_path).stem
 
         lowered = text.lower()
-        should_import = any(token in lowered for token in ("匯入", "secondbrain", "second brain"))
+        should_import = any(token in lowered for token in i18n.tr_tokens("menu.detect_import_tokens"))
         if should_import:
             try:
                 note_path, extracted = import_markitdown_resource(settings, Path(local_path), title=title)
@@ -2497,7 +2500,7 @@ async def _handle_flow_input(
                 preview = preview[:500].rstrip() + "..."
             store.clear_ui_flow(chat_id)
             return (
-                "已匯入文件到 secondbrain。\n"
+                i18n.tr("document.imported_to_secondbrain") + "\n"
                 f"path: {note_path}\n"
                 f"source_file: {source_name}\n\n"
                 f"{preview or '(No extracted text)'}"
@@ -2509,26 +2512,23 @@ async def _handle_flow_input(
             except ValueError:
                 store.clear_ui_flow(chat_id)
                 return (
-                    "目前只支援把圖片轉成 PDF。\n"
+                    i18n.tr("document.image_to_pdf_only") + "\n"
                     f"source_file: {source_name}"
                 )
             except RuntimeError:
                 store.clear_ui_flow(chat_id)
-                return (
-                    "文件已收到，但目前環境缺少圖片轉 PDF 依賴。\n"
-                    "needed: pip install pillow"
-                )
+                return i18n.tr("document.pdf_missing_dependency")
             except Exception as exc:
                 store.clear_ui_flow(chat_id)
                 return (
-                    "轉存 PDF 失敗。\n"
+                    i18n.tr("errors.pdf_convert_failed") + "\n"
                     f"source_file: {source_name}\n"
                     f"error: {exc.__class__.__name__}: {exc}"
                 )
 
             store.clear_ui_flow(chat_id)
             return DocumentResponse(
-                text="已轉存 PDF。",
+                text=i18n.tr("document.pdf_converted"),
                 file_path=str(output_path),
                 caption=f"source_file: {source_name}",
             )
@@ -2568,18 +2568,20 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
     if "@" in command:
         command = command.split("@", 1)[0].strip()
 
+    # Load user's locale preference
+    i18n.set_locale(store.get_locale(ctx.chat_id))
+
     if ctx.document is not None and not command:
         from robot.security import sanitize_file_size, SecurityError
 
         local_path = str(ctx.document.local_path or "").strip()
         if not local_path:
-            return "文件已收到，但目前沒有可讀取的本機路徑。請重新上傳後再試。"
+            return i18n.tr("errors.file_no_local_path")
 
-        # Add file size check
         try:
             sanitize_file_size(Path(local_path), max_size_mb=50)
         except SecurityError as exc:
-            return f"文件大小驗證失敗: {exc}"
+            return i18n.tr("errors.file_size_failed", exc=exc)
 
         title = (ctx.caption or "").strip()
         source_name = str(ctx.document.file_name or Path(local_path).name)
@@ -2596,10 +2598,7 @@ async def handle_request(ctx: MessageContext, settings: Settings, store: ChatSta
                 "mime_type": str(ctx.document.mime_type or "").strip(),
             },
         )
-        return (
-            f"已收到檔案：{source_name}\n"
-            "要怎麼處理？例如：匯入 secondbrain、摘要、轉成 docx/pdf、OCR"
-        )
+        return i18n.tr("menu.file_received_prompt", name=source_name)
 
     if command == "menu":
         store.clear_ui_flow(ctx.chat_id)
@@ -2646,6 +2645,9 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
 
     state = store.get_chat_state(chat_id)
 
+    # Load user's locale preference
+    i18n.set_locale(store.get_locale(chat_id))
+
     # Support inline project key callbacks (data is just "proj-xxxxxxxxxxxx").
     if request.command and request.command.startswith("proj-"):
         workspace = _resolve_project_selection(settings, request.command)
@@ -2654,7 +2656,7 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
             store.clear_ui_flow(chat_id)
             return (
                 f"Project updated.\nproject: {_project_display(next_state['project_name'], next_state['project_path'])}\npath: {next_state['project_path']}\n\n"
-                "輸入 /menu 可回到主選單，或直接輸入自然語言交給 AI。"
+                + i18n.tr("menu.model_select_hint")
             )
 
     if request.command in {"start", "help"}:
@@ -3018,6 +3020,36 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
             return _set_display_mode_response(chat_id, store, DISPLAY_MODE_USER)
         return _set_display_mode_response(chat_id, store, DISPLAY_MODE_DEVELOPER)
 
+    if request.command in {"lang_zh", "lang_en", "lang_ja", "lang_ko", "lang_zhcn", "lang_zhhk"}:
+        locale_map = {"lang_zh": "zh", "lang_en": "en", "lang_ja": "ja", "lang_ko": "ko", "lang_zhcn": "zh-cn", "lang_zhhk": "zh-hk"}
+        locale = locale_map[request.command]
+        supported = {"zh": "繁體中文", "zh-cn": "簡體中文", "zh-hk": "繁體（香港）", "en": "English", "ja": "日本語", "ko": "한국어"}
+        store.set_locale(chat_id, locale)
+        i18n.set_locale(locale)
+        configure_templates_for_locale(locale)
+        return i18n.tr("menu.lang_switched", name=supported[locale])
+
+    if request.command == "lang":
+        payload = request.payload.strip()
+        supported = {"zh", "zh-cn", "zh-hk", "en", "ja", "ko"}
+        names = {"zh": "繁體中文", "zh-cn": "簡體中文", "zh-hk": "繁體（香港）", "en": "English", "ja": "日本語", "ko": "한국語"}
+        if not payload:
+            current = store.get_locale(chat_id)
+            lines = [i18n.tr("menu.lang_current", name=names.get(current, current))]
+            lines.append("")
+            lines.append(i18n.tr("menu.lang_available"))
+            for lc in sorted(supported):
+                marker = " ✅" if lc == current else ""
+                cmd = "lang_" + lc.replace("-", "")  # lang_zhcn, lang_zhhk
+                lines.append(f"  /{cmd} → {names[lc]}{marker}")
+            return "\n".join(lines)
+        if payload not in supported:
+            return i18n.tr("menu.lang_unsupported", payload=payload, list=", ".join(sorted(supported)))
+        store.set_locale(chat_id, payload)
+        i18n.set_locale(payload)
+        configure_templates_for_locale(payload)
+        return i18n.tr("menu.lang_switched", name=names[payload])
+
     if request.command == "model":
         payload = request.payload.strip()
         if not payload:
@@ -3129,14 +3161,14 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
 
     if request.command == "brainread":
         body = read_daily(settings).strip()
-        return body if body else "今日 daily note 目前是空的。"
+        return body if body else i18n.tr("menu.daily_note_empty")
 
     if request.command == "braininbox":
         payload = request.payload.strip()
         if not payload:
             return "Usage: /braininbox <text>"
         path = create_inbox_note(settings, payload)
-        return f"已建立 Inbox 筆記。\npath: {path}"
+        return i18n.tr("menu.inbox_created", path=path)
 
     if request.command == "brainweb":
         payload = request.payload.strip()
@@ -3145,22 +3177,21 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         try:
             path, title, excerpt, summary_points, tags = capture_web_to_daily(settings, payload, max_chars=2500)
         except ValueError as exc:
-            return f"網址格式錯誤：{exc}"
+            return i18n.tr("errors.url_format_error", exc=exc)
         except OSError as exc:
-            return f"抓取網頁失敗：{exc}"
+            return i18n.tr("errors.fetch_failed", exc=exc)
         summary_lines = "\n".join(f"- {item}" for item in summary_points[:3]) if summary_points else "- (none)"
         tags_line = ", ".join(tags) if tags else "(none)"
         preview = excerpt[:300].rstrip()
         if len(excerpt) > 300:
             preview += "..."
         return (
-            "已寫入今日筆記（網頁收錄）。\n"
-            f"path: {path}\n"
-            f"title: {title}\n"
-            f"tags: {tags_line}\n\n"
-            "摘要重點：\n"
-            f"{summary_lines}\n\n"
-            f"{preview}"
+            i18n.tr("menu.web_capture_done", path=path) + "\n"
+            + f"title: {title}\n"
+            + f"tags: {tags_line}\n\n"
+            + i18n.tr("menu.web_summary") + "\n"
+            + f"{summary_lines}\n\n"
+            + f"{preview}"
         )
 
     if request.command == "brainsearch":
@@ -3169,16 +3200,16 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
             return "Usage: /brainsearch <query>"
         matches = search_vault(settings, payload, limit=10)
         if not matches:
-            return f"找不到與「{payload}」相關的筆記。"
+            return i18n.tr("brain.no_results", text=payload)
         store.set_ui_flow(chat_id, {"kind": FLOW_BRAIN_SEARCH_RESULTS, "results": matches[:10]})
         return ButtonResponse(
-            f"搜尋結果：{payload}",
+            i18n.tr("brain.search_results_header", text=payload),
             buttons=[Button(item, f"brain:open_note:{idx}") for idx, item in enumerate(matches[:10])],
         )
 
     if request.command == "brainorganize":
         store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_ORGANIZE_TEXT})
-        return "請先貼上你要整理的原始內容。輸入 /menu 可離開流程。"
+        return i18n.tr("organize.enter_source_text")
 
     if request.command == "brainbatch":
         return await _handle_brain_action(chat_id, "brain:batch", settings, store, agents)
@@ -3195,7 +3226,7 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         summary = auto_organize_recent_notes(settings, limit=bounded_limit)
         processed = int(summary.get("processed") or 0)
         if processed == 0:
-            return "目前沒有可自動整理的 Inbox / Daily 筆記。"
+            return i18n.tr("menu.no_auto_batch")
         by_type = summary.get("by_type")
         items = summary.get("items")
         if not isinstance(by_type, dict):
@@ -3203,13 +3234,13 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         if not isinstance(items, list):
             items = []
         lines = [
-            f"自動批次整理完成 (limit={bounded_limit})：",
+            i18n.tr("menu.auto_batch_complete", limit=bounded_limit),
             f"- processed: {processed}",
             f"- created: {int(summary.get('created') or 0)}",
             f"- skipped: {int(summary.get('skipped') or 0)}",
             f"- failed: {int(summary.get('failed') or 0)}",
             "",
-            "分類統計：",
+            i18n.tr("menu.batch_stats"),
             f"- project: {int(by_type.get('project') or 0)}",
             f"- knowledge: {int(by_type.get('knowledge') or 0)}",
             f"- resource: {int(by_type.get('resource') or 0)}",
@@ -3217,13 +3248,13 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         created_items = [item for item in items if isinstance(item, dict) and item.get("status") == "created"]
         if created_items:
             lines.append("")
-            lines.append("新建立筆記：")
+            lines.append(i18n.tr("brain_schedule.new_note_title"))
             for item in created_items[:10]:
                 lines.append(f"- {item.get('source_path')} -> {item.get('path')} ({item.get('target')})")
         failed_items = [item for item in items if isinstance(item, dict) and item.get("status") == "failed"]
         if failed_items:
             lines.append("")
-            lines.append("失敗項目：")
+            lines.append(i18n.tr("errors.fail_items"))
             for item in failed_items[:5]:
                 lines.append(f"- {item.get('source_path')}: {item.get('error') or 'unknown error'}")
         return "\n".join(lines)
@@ -3233,27 +3264,27 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         if not payload:
             return "Usage: /brainproject <title>"
         path = create_project_note(settings, payload)
-        return f"已建立 Project 筆記。\npath: {path}"
+        return i18n.tr("menu.project_note_created", path=path)
 
     if request.command == "brainknowledge":
         payload = request.payload.strip()
         if not payload:
             return "Usage: /brainknowledge <title>"
         path = create_knowledge_note(settings, payload)
-        return f"已建立 Knowledge 筆記。\npath: {path}"
+        return i18n.tr("menu.knowledge_note_created", path=path)
 
     if request.command == "brainresource":
         payload = request.payload.strip()
         if not payload:
             return "Usage: /brainresource <title>"
         path = create_resource_note(settings, payload)
-        return f"已建立 Resource 筆記。\npath: {path}"
+        return i18n.tr("menu.resource_note_created", path=path)
 
     if request.command == "brainschedule":
         payload = request.payload.strip()
         if not payload:
             store.set_ui_flow(chat_id, {"kind": FLOW_AWAIT_BRAIN_SCHEDULE_TITLE})
-            return "請輸入行程標題，或直接輸入自然語言，例如：今天下午6點半要吃藥。輸入 /menu 可離開流程。"
+            return i18n.tr("menu.schedule_prompt")
         parsed = parse_natural_language_schedule(payload)
         if parsed is not None:
             _set_schedule_confirm_flow(chat_id, store, parsed)
@@ -3265,7 +3296,7 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
                 "title": payload,
             },
         )
-        return f"行程標題已記下：{payload}\n請輸入日期，例如 2026-04-11。若暫時不填可輸入 skip。"
+        return i18n.tr("menu.schedule_title_remembered", title=payload)
 
     if request.command == "braindecide":
         payload = request.payload.strip()
@@ -3277,11 +3308,11 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
 
     if request.command == "brainsummary":
         path = ensure_weekly_summary_note(settings)
-        return f"已準備每週摘要筆記。\npath: {path}"
+        return i18n.tr("menu.weekly_summary_done", path=path)
 
     if request.command == "brainremind":
         reminders = collect_brain_reminders(settings, limit=5)
-        return "提醒：\n" + "\n".join(reminders)
+        return i18n.tr("menu.reminders_label") + "\n" + "\n".join(reminders)
 
     if request.command == "braindaily":
         return build_daily_brief(settings)
@@ -3786,7 +3817,7 @@ async def handle_control(
 async def handle_agent(chat_id: int, request: ClassifiedRequest, store: ChatStateStore, agents: AgentCoordinator) -> str:
     prompt = request.payload.strip()
     if not prompt:
-        return "空白訊息，沒有可送給 AI 的內容。請輸入文字或使用 /help。"
+        return i18n.tr("errors.blank_message")
     status_key = heartbeat_status_key(request.request_id)
     _job_id, position, started = agents.enqueue(
         chat_id,

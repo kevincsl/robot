@@ -1,6 +1,9 @@
 """從 Claude Code 回覆中提取 Context 估算與模型資訊"""
 import re
 
+from robot import i18n
+
+
 def detect_brand(model: str) -> tuple[str, str, str]:
     """
     從 model name 偵測品牌、icon、顯示名稱。
@@ -10,34 +13,33 @@ def detect_brand(model: str) -> tuple[str, str, str]:
     """
     model_lower = model.lower()
 
-    # 偵測品牌
     if "claude" in model_lower:
         brand = "claude"
-        display_name = "Claude"
+        display_name = i18n.tr("footer.brand_claude")
         icon = "🧠"
     elif "gpt" in model_lower or "openai" in model_lower or "chatgpt" in model_lower:
         brand = "gpt"
-        display_name = "GPT"
+        display_name = i18n.tr("footer.brand_gpt")
         icon = "🧠"
     elif "gemini" in model_lower:
         brand = "gemini"
-        display_name = "Gemini"
+        display_name = i18n.tr("footer.brand_gemini")
         icon = "🧠"
     elif "grok" in model_lower:
         brand = "grok"
-        display_name = "Grok"
+        display_name = i18n.tr("footer.brand_grok")
         icon = "🧠"
     elif "deepseek" in model_lower:
         brand = "deepseek"
-        display_name = "DeepSeek"
+        display_name = i18n.tr("footer.brand_deepseek")
         icon = "🧠"
     elif "mistral" in model_lower:
         brand = "mistral"
-        display_name = "Mistral"
+        display_name = i18n.tr("footer.brand_mistral")
         icon = "🧠"
     else:
         brand = "unknown"
-        display_name = model
+        display_name = i18n.tr("footer.brand_unknown")
         icon = "🧠"
 
     return brand, icon, display_name

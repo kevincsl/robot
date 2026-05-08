@@ -49,7 +49,7 @@ class RunningInvocation:
 
     def set_phase(self, phase: str) -> None:
         with self._lock:
-            self.phase = _safe_text(phase).strip() or self.phase
+            self.phase = phase
 
     def get_phase(self) -> str:
         with self._lock:
@@ -69,6 +69,26 @@ class RunningInvocation:
             return True
         except OSError:
             return False
+
+
+# Locale → instruction string prepended to AI prompts
+_LOCALE_INSTRUCTIONS: dict[str, str] = {
+    "ja": "You are now set to Japanese. Please respond in Japanese. ",
+    "ko": "You are now set to Korean. Please respond in Korean. ",
+    "zh-cn": "You are now set to Simplified Chinese. Please respond in Simplified Chinese. ",
+    "zh-hk": "You are now set to Traditional Chinese (Hong Kong). Please respond in Traditional Chinese. ",
+    "zh-tw": "You are now set to Traditional Chinese (Taiwan). Please respond in Traditional Chinese. ",
+    "en": "You are now set to English. Please respond in English. ",
+}
+
+
+def _locale_prompt_prefix(locale: str) -> str:
+    """Return an instruction string to prepend to prompts for the given locale."""
+    if locale in _LOCALE_INSTRUCTIONS:
+        return _LOCALE_INSTRUCTIONS[locale]
+    if locale and locale.startswith("zh"):
+        return _LOCALE_INSTRUCTIONS["zh-cn"]
+    return ""
 
 
 def _clip(text: str, limit: int = 3900) -> str:
@@ -393,7 +413,9 @@ async def run_agent_request(
     workdir: Path,
     project_label: str,
     invocation: RunningInvocation | None = None,
+    locale: str = "",
 ) -> AgentRunResult:
+    prefixed_prompt = _locale_prompt_prefix(locale) + prompt
     normalized = normalize_provider(provider)
     _is_catalog_model, validation_error = validate_selected_model(settings, normalized, model)
     if validation_error:
@@ -410,7 +432,7 @@ async def run_agent_request(
         return await _run_codex(
             settings,
             model=model,
-            prompt=prompt,
+            prompt=prefixed_prompt,
             thread_id=thread_id,
             workdir=workdir,
             project_label=project_label,
@@ -420,7 +442,7 @@ async def run_agent_request(
         return await _run_claude(
             settings,
             model=model,
-            prompt=prompt,
+            prompt=prefixed_prompt,
             session_id=thread_id,
             workdir=workdir,
             project_label=project_label,
@@ -430,7 +452,7 @@ async def run_agent_request(
         settings,
         provider=normalized,
         model=model,
-        prompt=prompt,
+        prompt=prefixed_prompt,
         workdir=workdir,
         project_label=project_label,
         invocation=invocation,
@@ -472,14 +494,16 @@ async def run_auto_dev_request(
     enable_pr: bool = False,
     disable_post_run: bool = False,
     invocation: RunningInvocation | None = None,
+    locale: str = "",
 ) -> AgentRunResult:
+    prefixed_prompt = _locale_prompt_prefix(locale) + (prompt or "") if prompt else None
     if invocation is not None:
         invocation.set_phase("auto-dev: preparing command")
     command = list(settings.auto_dev_command)
     if resume_target:
         command.extend(["--resume", resume_target])
-    elif prompt:
-        command.extend(["--goal", prompt])
+    elif prefixed_prompt:
+        command.extend(["--goal", prefixed_prompt])
     if profile_name:
         command.extend(["--profile", profile_name])
     if config_path:
