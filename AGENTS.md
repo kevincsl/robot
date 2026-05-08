@@ -1,5 +1,17 @@
 # Agent Rules
 
+## Permission Modes
+
+The robot agent supports three permission modes that restrict which directories can be written to:
+
+| Mode | Writable | Blocked | Trigger |
+|------|----------|---------|---------|
+| **user** (default) | `~/projects` | `~/robot`, `~/teleapp` | `/mode user` |
+| **developer** | `~/projects`, `~/robot` | `~/teleapp` | `/mode developer` |
+| **superuser** | unrestricted | none | `/mode superuser` |
+
+The active permission mode is stored per chat session. When running auto-dev agents, the permission mode is checked against `~/.config/robot/permissions.json` (HMAC-signed, read-only) before execution begins — if the target directory is not allowed under the current mode, the run is rejected with a permission error.
+
 - Do not modify any files under `teleapp/` or `_vendor_teleapp/` unless the user explicitly approves in the current conversation.
 - If a change there is necessary, ask for confirmation first and wait for approval before editing.
 - When teleapp changes are approved, keep both copies in sync: `C:\Users\kevin\codex\robot\teleapp` and `C:\Users\kevin\teleapp\teleapp` (and corresponding `_vendor_teleapp` mirrors when applicable).

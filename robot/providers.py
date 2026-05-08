@@ -13,6 +13,7 @@ from typing import Any
 
 from robot.config import Settings, normalize_provider
 from robot.model_catalog import validate_selected_model
+from robot.security import check_write_allowed
 from robot.text import normalize_text
 
 
@@ -495,7 +496,22 @@ async def run_auto_dev_request(
     disable_post_run: bool = False,
     invocation: RunningInvocation | None = None,
     locale: str = "",
+    permission_mode: str = "user",
 ) -> AgentRunResult:
+    if not check_write_allowed(workdir, permission_mode):
+        return AgentRunResult(
+            provider="auto-dev",
+            model=profile_name or "-",
+            final_text=(
+                f"Permission denied: cannot write to {workdir} "
+                f"in permission mode '{permission_mode}'.\n"
+                "Switch to /mode developer or /mode superuser to enable this operation."
+            ),
+            thread_id=None,
+            return_code=1,
+            elapsed_seconds=0,
+            cancelled=False,
+        )
     prefixed_prompt = _locale_prompt_prefix(locale) + (prompt or "") if prompt else None
     if invocation is not None:
         invocation.set_phase("auto-dev: preparing command")

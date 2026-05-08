@@ -65,6 +65,7 @@ from robot.display_mode import (
     normalize_display_mode,
     resolve_display_mode_switch_text,
 )
+from robot.security import PERMISSION_MODES
 from robot.google_calendar import (
     delete_google_calendar_schedule_event,
     sync_schedule_jobs_with_google,
@@ -655,22 +656,35 @@ def _parse_display_mode_selection(text: str | None) -> str | None:
     if normalized is not None:
         return normalized
     raw = str(text or "").strip().lower()
-    if raw == "user":
+    if raw in {"user", "developer", "dev", "superuser"}:
+        if raw in {"developer", "dev"}:
+            return DISPLAY_MODE_DEVELOPER
+        if raw == "superuser":
+            return "superuser"
         return DISPLAY_MODE_USER
-    if raw in {"developer", "dev"}:
-        return DISPLAY_MODE_DEVELOPER
     return None
 
 
 def _set_display_mode_response(chat_id: int, store: ChatStateStore, mode: str) -> str:
-    next_state = store.set_display_mode(chat_id, mode)
+    if mode == "superuser":
+        store.set_permission_mode(chat_id, "superuser")
+        perm_mode = "superuser"
+        # display_mode stays unchanged; show a different confirmation
+        lines = [f"Permission mode switched to superuser (unrestricted).", i18n.tr("menu.current_mode_label", mode="superuser")]
+        return "\n".join(lines)
+    store.set_display_mode(chat_id, mode)
+    store.set_permission_mode(chat_id, mode)
+    next_state = store.get_chat_state(chat_id)
     normalized = normalize_display_mode(str(next_state.get("display_mode") or mode))
+    perm_mode = next_state.get("permission_mode") or mode
     return "\n".join(
         [
             format_display_mode_changed(normalized),
             i18n.tr("menu.current_mode_label", mode=display_mode_label(normalized)),
+            f"[permission mode: {perm_mode}]",
         ]
     )
+
 
 
 @dataclass(slots=True)
@@ -3016,9 +3030,10 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
         return _set_display_mode_response(chat_id, store, DISPLAY_MODE_DEVELOPER)
 
     if request.command in {"usermode", "devmode", "developermode"}:
-        if request.command == "usermode":
-            return _set_display_mode_response(chat_id, store, DISPLAY_MODE_USER)
-        return _set_display_mode_response(chat_id, store, DISPLAY_MODE_DEVELOPER)
+        perm = DISPLAY_MODE_USER if request.command == "usermode" else DISPLAY_MODE_DEVELOPER
+        store.set_display_mode(chat_id, perm)
+        store.set_permission_mode(chat_id, perm)
+        return _set_display_mode_response(chat_id, store, perm)
 
     if request.command in {"lang_zh", "lang_en", "lang_ja", "lang_ko", "lang_zhcn", "lang_zhhk"}:
         locale_map = {"lang_zh": "zh", "lang_en": "en", "lang_ja": "ja", "lang_ko": "ko", "lang_zhcn": "zh-cn", "lang_zhhk": "zh-hk"}

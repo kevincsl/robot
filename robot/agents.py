@@ -67,6 +67,7 @@ class AgentJob:
     disable_post_run: bool = False
     run_at: str | None = None
     locale: str = ""
+    permission_mode: str = "user"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -92,6 +93,7 @@ class AgentJob:
             "disable_post_run": self.disable_post_run,
             "run_at": self.run_at,
             "locale": self.locale,
+            "permission_mode": self.permission_mode,
         }
 
 
@@ -305,6 +307,7 @@ class AgentCoordinator:
         status_key: str | None = None,
     ) -> tuple[str, str, int, bool]:
         state = self._store.get_chat_state(chat_id)
+        perm_mode = str(state.get("permission_mode") or "user")
         project_display = format_project_with_branch(
             str(state["project_name"]),
             str(state["project_path"]),
@@ -331,6 +334,7 @@ class AgentCoordinator:
             enable_pr=enable_pr,
             disable_post_run=disable_post_run,
             locale=self._store.get_locale(chat_id),
+            permission_mode=perm_mode,
         )
         position = self._store.enqueue_agent_job(chat_id, job.to_dict())
         started = position == 1 and not self.is_running(chat_id)
@@ -353,6 +357,7 @@ class AgentCoordinator:
         status_key: str | None = None,
     ) -> tuple[str, str, int, bool]:
         state = self._store.get_chat_state(chat_id)
+        perm_mode = str(state.get("permission_mode") or "user")
         project_display = format_project_with_branch(
             str(state["project_name"]),
             str(state["project_path"]),
@@ -380,6 +385,7 @@ class AgentCoordinator:
             enable_pr=enable_pr,
             disable_post_run=disable_post_run,
             locale=self._store.get_locale(chat_id),
+            permission_mode=perm_mode,
         )
         position = self._store.enqueue_agent_job(chat_id, job.to_dict())
         started = position == 1 and not self.is_running(chat_id)
@@ -403,6 +409,7 @@ class AgentCoordinator:
         status_key: str | None = None,
     ) -> tuple[str, str, int]:
         state = self._store.get_chat_state(chat_id)
+        perm_mode = str(state.get("permission_mode") or "user")
         project_display = format_project_with_branch(
             str(state["project_name"]),
             str(state["project_path"]),
@@ -430,6 +437,7 @@ class AgentCoordinator:
             disable_post_run=disable_post_run,
             run_at=run_at,
             locale=self._store.get_locale(chat_id),
+            permission_mode=perm_mode,
         )
         count = self._store.add_agent_schedule(chat_id, job.to_dict())
         return job.job_id, run_id, count
@@ -754,6 +762,7 @@ class AgentCoordinator:
                         disable_post_run=disable_post_run,
                         invocation=invocation,
                         locale=str(job.get("locale") or ""),
+                        permission_mode=str(job.get("permission_mode") or "user"),
                     )
                 else:
                     result = await run_agent_request(
