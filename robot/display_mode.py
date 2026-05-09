@@ -11,6 +11,10 @@ if TYPE_CHECKING:
 DISPLAY_MODE_USER = "user"
 DISPLAY_MODE_DEVELOPER = "developer"
 
+CODE_DISPLAY_NORMAL = "normal"
+CODE_DISPLAY_SMART = "smart"
+CODE_DISPLAY_ALL = "all"
+
 # ── template injection ───────────────────────────────────────
 _templates: DisplayModeTemplates | None = None
 _template_locale: str | None = None
@@ -52,6 +56,20 @@ _DISPLAY_MODE_LOOKUP = {
     "開發者模式": DISPLAY_MODE_DEVELOPER,
 }
 
+_CODE_DISPLAY_MODE_LOOKUP = {
+    "normal": CODE_DISPLAY_NORMAL,
+    "off": CODE_DISPLAY_NORMAL,
+    "none": CODE_DISPLAY_NORMAL,
+    "smart": CODE_DISPLAY_SMART,
+    "auto": CODE_DISPLAY_SMART,
+    "all": CODE_DISPLAY_ALL,
+    "copy": CODE_DISPLAY_ALL,
+    "copycode": CODE_DISPLAY_ALL,
+    "copy_code": CODE_DISPLAY_ALL,
+    "code": CODE_DISPLAY_ALL,
+    "on": CODE_DISPLAY_ALL,
+}
+
 
 _MODEL_ORIGIN_FOOTER_RE = re.compile(r"^回覆來自\s*model\s*[:：]\s*", re.IGNORECASE)
 
@@ -63,6 +81,30 @@ def normalize_display_mode(value: str | None) -> str:
 def resolve_display_mode_switch_text(text: str | None) -> str | None:
     normalized = _normalize_mode_key(text)
     return _DISPLAY_MODE_LOOKUP.get(normalized)
+
+
+def normalize_code_display_mode(value: str | None) -> str:
+    normalized = _normalize_mode_key(value)
+    return _CODE_DISPLAY_MODE_LOOKUP.get(normalized, CODE_DISPLAY_SMART)
+
+
+def code_display_mode_label(mode: str | None) -> str:
+    normalized = normalize_code_display_mode(mode)
+    if normalized == CODE_DISPLAY_ALL:
+        return "copy_code"
+    if normalized == CODE_DISPLAY_NORMAL:
+        return "normal"
+    return "smart"
+
+
+def wrap_text_for_code_display(text: str, mode: str | None) -> str:
+    normalized = normalize_code_display_mode(mode)
+    clean = str(text or "")
+    if normalized != CODE_DISPLAY_ALL or not clean.strip():
+        return clean
+    if "```" in clean:
+        return clean
+    return f"```text\n{clean}\n```"
 
 
 def display_mode_label(mode: str) -> str:

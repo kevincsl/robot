@@ -54,14 +54,17 @@ from robot.brain import (
 from robot.config import PROVIDER_LABELS, Settings, VERSION, normalize_model
 from robot.diagnostics import build_doctor_report
 from robot.display_mode import (
+    CODE_DISPLAY_SMART,
     DISPLAY_MODE_DEVELOPER,
     DISPLAY_MODE_USER,
+    code_display_mode_label,
     configure_templates_for_locale,
     display_mode_label,
     format_display_mode_changed,
     format_display_mode_status,
     format_run_queued,
     format_run_started,
+    normalize_code_display_mode,
     normalize_display_mode,
     resolve_display_mode_switch_text,
 )
@@ -147,6 +150,10 @@ COMMAND_NAMES = {
     "display_mode",
     "display_mode_user",
     "display_mode_dev",
+    "display_normal",
+    "display_smart",
+    "display_copy_code",
+    "display",
     "lang",
     "lang_zh",
     "lang_zhcn",
@@ -686,6 +693,39 @@ def _set_display_mode_response(chat_id: int, store: ChatStateStore, mode: str) -
     )
 
 
+def _set_code_display_mode_response(chat_id: int, store: ChatStateStore, mode: str) -> str:
+    normalized = normalize_code_display_mode(mode)
+    store.set_code_display_mode(chat_id, normalized)
+    return "\n".join(
+        [
+            "COPY CODE 顯示模式已更新。",
+            f"mode: {code_display_mode_label(normalized)}",
+            "normal: 一般文字照舊",
+            "smart: 只有原本 code block 顯示 COPY CODE",
+            "copy_code: 一般輸出整段包成 COPY CODE",
+            "(相容舊參數: all)",
+        ]
+    )
+
+
+def _code_display_usage(store: ChatStateStore, chat_id: int) -> str:
+    current = code_display_mode_label(store.get_code_display_mode(chat_id))
+    return "\n".join(
+        [
+            "COPY CODE 顯示模式：",
+            f"current: {current}",
+            "用法:",
+            "- /display_normal",
+            "- /display_smart",
+            "- /display_copy_code",
+            "- /display <normal|smart|copy_code>",
+            "- /display normal",
+            "- /display smart",
+            "- /display copy_code",
+        ]
+    )
+
+
 
 @dataclass(slots=True)
 class AutoDevOptions:
@@ -1136,6 +1176,7 @@ def _status_text(chat_id: int, store: ChatStateStore, settings: Settings) -> str
             "robot status",
             f"version: {VERSION}",
             f"display_mode: {state.get('display_mode') or DISPLAY_MODE_DEVELOPER}",
+            f"code_display_mode: {state.get('code_display_mode') or CODE_DISPLAY_SMART}",
             f"provider: {state['provider']}",
             f"model: {state['model']}",
             f"runtime_model: {runtime_model}",
@@ -1186,6 +1227,8 @@ def _help_text() -> str:
             "/provider [claude|codex|gemini]",
             "/model [name]  /models",
             "/mode [user|developer]",
+            "/display [normal|smart|copy_code]",
+            "/display_normal  /display_smart  /display_copy_code",
             "/project register [name] <path>",
             "/project list",
             "/project use <name|key>",
@@ -1245,6 +1288,8 @@ def _quick_text() -> str:
             "- /provider [claude|codex|gemini]",
             "- /model [name] /models",
             "- /mode [user|developer]",
+            "- /display [normal|smart|copy_code]",
+            "- /display_normal /display_smart /display_copy_code",
             "- /project register [name] <path>",
             "- /project list",
             "- /project use <name|key>",
@@ -2692,6 +2737,7 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
             f"version: {VERSION}",
             f"commit: {_runtime_git_commit()}",
             f"display_mode: {state.get('display_mode') or DISPLAY_MODE_DEVELOPER}",
+            f"code_display_mode: {state.get('code_display_mode') or CODE_DISPLAY_SMART}",
             f"provider: {state['provider']}",
             f"model: {state['model']}",
             f"project: {_project_display(state['project_name'], state['project_path'])}",
@@ -3023,11 +3069,23 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
             return "Unknown mode selection.\nUse /display_mode_user or /display_mode_dev."
         return _set_display_mode_response(chat_id, store, requested_mode)
 
+    if request.command == "display":
+        payload = request.payload.strip()
+        if not payload:
+            return _code_display_usage(store, chat_id)
+        return _set_code_display_mode_response(chat_id, store, payload)
+
     if request.command == "display_mode_user":
         return _set_display_mode_response(chat_id, store, DISPLAY_MODE_USER)
 
     if request.command == "display_mode_dev":
         return _set_display_mode_response(chat_id, store, DISPLAY_MODE_DEVELOPER)
+
+    if request.command in {"display_normal", "display_smart", "display_copy_code"}:
+        mode = request.command.split("_", 1)[1]
+        if mode == "copy_code":
+            mode = "all"
+        return _set_code_display_mode_response(chat_id, store, mode)
 
     if request.command in {"usermode", "devmode", "developermode"}:
         perm = DISPLAY_MODE_USER if request.command == "usermode" else DISPLAY_MODE_DEVELOPER
@@ -3879,4 +3937,3 @@ async def handle_agent(chat_id: int, request: ClassifiedRequest, store: ChatStat
             typing="active",
         )
     return queued_text
-

@@ -251,6 +251,33 @@ class RoutingTests(unittest.TestCase):
         self.assertIn("已切換為開發者模式", body)
         self.assertEqual(self.store.get_display_mode(1), "developer")
 
+    def test_display_command_without_payload_returns_usage(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/display", command="display"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("COPY CODE 顯示模式", body)
+        self.assertIn("/display copy_code", body)
+
+    def test_display_command_accepts_legacy_all_mode_value(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/display all", command="display"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("COPY CODE 顯示模式已更新", body)
+        self.assertIn("mode: copy_code", body)
+        self.assertEqual(self.store.get_code_display_mode(1), "all")
+
+    def test_display_command_switches_to_copy_code_mode(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/display copy_code", command="display"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("COPY CODE 顯示模式已更新", body)
+        self.assertIn("mode: copy_code", body)
+        self.assertEqual(self.store.get_code_display_mode(1), "all")
+
+    def test_display_copy_code_command_switches_mode(self) -> None:
+        request = classify_request(MessageContext(chat_id=1, text="/display_copy_code", command="display_copy_code"))
+        body = self.loop.run_until_complete(handle_command(1, request, self.settings, self.store, self.agents))
+        self.assertIn("COPY CODE 顯示模式已更新", body)
+        self.assertIn("mode: copy_code", body)
+        self.assertEqual(self.store.get_code_display_mode(1), "all")
+
     def test_status_shows_risk_mode_when_dangerous_flags_enabled(self) -> None:
         object.__setattr__(self.settings, "codex_bypass_approvals_and_sandbox", True)
         request = classify_request(MessageContext(chat_id=1, text="/status", command="status"))
@@ -2674,6 +2701,3 @@ class RoutingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-

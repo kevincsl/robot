@@ -20,6 +20,7 @@ from robot.agents import AgentCoordinator
 from robot.config import load_settings
 from robot.routing import AGENT_REQUEST, classify_request, handle_request
 from robot.state import ChatStateStore
+from robot.display_mode import wrap_text_for_code_display
 from robot.text import configure_stdio_utf8, normalize_text
 
 
@@ -171,14 +172,37 @@ class _TypingController:
             await asyncio.sleep(_typing_min_interval_seconds())
 
 
+def _apply_code_display_mode(event: AppEvent, store: ChatStateStore | None) -> AppEvent:
+    if store is None or event.type not in {"output", "error"}:
+        return event
+    chat_id = event.chat_id
+    if not isinstance(chat_id, int):
+        return event
+    mode = store.get_code_display_mode(chat_id)
+    text = wrap_text_for_code_display(event.text, mode)
+    if text == event.text:
+        return event
+    return AppEvent(
+        type=event.type,
+        text=text,
+        chat_id=event.chat_id,
+        request_id=event.request_id,
+        process_pid=event.process_pid,
+        stream=event.stream,
+        raw=event.raw,
+    )
+
+
 class _StdoutEventQueue:
-    def __init__(self, typing_controller: _TypingController | None = None) -> None:
+    def __init__(self, typing_controller: _TypingController | None = None, store: ChatStateStore | None = None) -> None:
         self._lock = threading.Lock()
         self._typing_controller = typing_controller
+        self._store = store
 
     def put_nowait(self, event: AppEvent) -> None:
         if self._typing_controller is not None:
             self._typing_controller.observe(event)
+        event = _apply_code_display_mode(event, self._store)
         if _should_suppress_event(event):
             return
         payload = _sanitize_surrogates(asdict(event))
@@ -189,8 +213,8 @@ class _StdoutEventQueue:
 
 
 class _SupervisorProxy:
-    def __init__(self, typing_controller: _TypingController | None = None) -> None:
-        self._event_queue = _StdoutEventQueue(typing_controller)
+    def __init__(self, typing_controller: _TypingController | None = None, store: ChatStateStore | None = None) -> None:
+        self._event_queue = _StdoutEventQueue(typing_controller, store)
 
 
 def _emit(type_: str, text: str, *, chat_id: int | None, request_id: str | None) -> None:
@@ -204,9 +228,14 @@ def _should_suppress_event(event: AppEvent) -> bool:
     return str(getattr(event, "type", "") or "").strip().lower() == "noop"
 
 
-def _emit_event(event: AppEvent, typing_controller: _TypingController | None = None) -> None:
+def _emit_event(
+    event: AppEvent,
+    typing_controller: _TypingController | None = None,
+    store: ChatStateStore | None = None,
+) -> None:
     if typing_controller is not None:
         typing_controller.observe(event)
+    event = _apply_code_display_mode(event, store)
     if _should_suppress_event(event):
         return
     line = json.dumps(_sanitize_surrogates(asdict(event)), ensure_ascii=False)
@@ -230,7 +259,7 @@ async def _run() -> None:
     store = ChatStateStore(settings)
     agents = AgentCoordinator(settings, store)
     typing_controller = _TypingController(_TelegramTypingClient(os.getenv("TELEAPP_TOKEN", "")))
-    agents.attach_supervisor(_SupervisorProxy(typing_controller))
+    agents.attach_supervisor(_SupervisorProxy(typing_controller, store))
     agents.start()
 
     from robot.coordinator import RobotCoordinator
@@ -308,7 +337,7 @@ async def _run() -> None:
                     asyncio.create_task(typing_controller.maybe_send(chat_id))
                 body = await handle_request(ctx, settings, store, agents)
                 event = coerce_response(body, ctx)
-                _emit_event(event, typing_controller)
+                _emit_event(event, typing_controller, store)
             except Exception as exc:
                 typing_controller.stop(chat_id)
                 traceback.print_exc(file=sys.stderr)
