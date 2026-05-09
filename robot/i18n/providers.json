@@ -1,0 +1,32 @@
+{
+  "codex": {
+    "id": "codex",
+    "name": "Codex",
+    "name_zh": "Codex",
+    "name_zh-cn": "Codex",
+    "name_zh-hk": "Codex",
+    "name_ja": "Codex",
+    "name_ko": "Codex",
+    "description": "OpenAI Codex — coding-focused AI assistant."
+  },
+  "claude": {
+    "id": "claude",
+    "name": "Claude",
+    "name_zh": "Claude",
+    "name_zh-cn": "Claude",
+    "name_zh-hk": "Claude",
+    "name_ja": "Claude",
+    "name_ko": "Claude",
+    "description": "Anthropic Claude — balanced reasoning and generation."
+  },
+  "gemini": {
+    "id": "gemini",
+    "name": "Gemini",
+    "name_zh": "Gemini",
+    "name_zh-cn": "Gemini",
+    "name_zh-hk": "Gemini",
+    "name_ja": "Gemini",
+    "name_ko": "Gemini",
+    "description": "Google Gemini — fast and efficient."
+  }
+}

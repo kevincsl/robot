@@ -1,0 +1,58 @@
+{
+  "locale": "zh",
+  "_locale_comment": "可用 locale 值: en, zh",
+  "command_menu": {
+    "provider_subcommands": "Provider 可輸入：",
+    "model_subcommands": "Model 可輸入：",
+    "project_subcommands": "Project 可輸入：",
+    "brain_subcommands": "Brain 可輸入：",
+    "mail_subcommands": "Mail 可輸入：",
+    "display_subcommands": "Display 可輸入："
+  },
+  "status": {
+    "provider_updated": "Provider updated.\nprovider: {provider}\nmodel: {model}",
+    "model_updated": "Model updated.\nprovider: {provider}\nmodel: {model}",
+    "project_updated": "Project updated.\nproject: {project}\npath: {path}",
+    "display_mode_updated": "Display mode updated.\nmode: {mode}",
+    "unknown_provider": "Unknown provider: {provider}",
+    "unknown_model": "Unknown model: {model}",
+    "available_providers": "Available: {providers}",
+    "available_models": "Available: {models}",
+    "current_provider": "Current provider: {provider}",
+    "current_model": "Current model: {model}",
+    "current_project": "Current project: {project}",
+    "current_display_mode": "Current display mode: {mode}"
+  },
+  "brain": {
+    "no_results": "找不到與「{text}」相關的筆記。",
+    "added": "已新增筆記。",
+    "updated": "已更新筆記。",
+    "deleted": "已刪除筆記。",
+    "inbox_empty": "收件匣是空的。",
+    "summary_generating": "正在產生摘要..."
+  },
+  "schedule": {
+    "no_schedules": "目前沒有排程任務。",
+    "schedule_added": "已新增排程。",
+    "schedule_deleted": "已刪除排程。",
+    "schedules_cleared": "已清除排程。"
+  },
+  "queue": {
+    "empty": "佇列是空的。",
+    "cleared": "佇列已清除。"
+  },
+  "control": {
+    "reset_done": "已重置對話。",
+    "panic_done": "已緊急停止所有任務。",
+    "restart_done": "正在重啟..."
+  },
+  "menu": {
+    "main_title": "Robot 主選單",
+    "main_title_dev": "Robot 主選單（開發者）"
+  },
+  "errors": {
+    "generic": "發生錯誤，請稍後再試。",
+    "invalid_command": "無效的指令格式。",
+    "permission_denied": "權限不足。"
+  }
+}
