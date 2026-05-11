@@ -166,6 +166,7 @@ COMMAND_NAMES = {
     "provider_codex",
     "provider_claude",
     "provider_gemini",
+    "provider_opencode",
     # ── Model ─────────────────────────────────────────────────────
     "model",
     "models",
@@ -253,7 +254,7 @@ CONTROL_NAMES = {
 
 
 SECOND_LEVEL_COMMANDS = {
-    "provider": ("provider_codex", "provider_claude", "provider_gemini"),
+    "provider": ("provider_codex", "provider_claude", "provider_gemini", "provider_opencode"),
     "model": ("model_codex", "model_claude", "model_gemini"),
     "display_mode": ("display_mode_user", "display_mode_dev"),
     "brain": (
@@ -3012,7 +3013,7 @@ async def handle_command(chat_id: int, request: ClassifiedRequest, settings: Set
     if request.command == "dependencies_check":
         return build_doctor_report(settings)
 
-    if request.command in {"provider_codex", "provider_claude", "provider_gemini"}:
+    if request.command in {"provider_codex", "provider_claude", "provider_gemini", "provider_opencode"}:
         selected_provider = request.command.split("_", 1)[1]
         next_state = store.set_provider(chat_id, selected_provider)
         return f"Provider updated.\nprovider: {next_state['provider']}\nmodel: {next_state['model']}"

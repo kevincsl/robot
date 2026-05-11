@@ -338,7 +338,7 @@ def _terminate_process_tree(pid: int, timeout_seconds: float = 10.0) -> None:
         return
 
     try:
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
+        os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
         return
     except OSError:
@@ -349,7 +349,7 @@ def _terminate_process_tree(pid: int, timeout_seconds: float = 10.0) -> None:
     if _wait_for_exit(pid, timeout_seconds):
         return
     try:
-        os.killpg(os.getpgid(pid), signal.SIGKILL)
+        os.kill(pid, signal.SIGKILL)
     except OSError:
         try:
             os.kill(pid, signal.SIGKILL)
@@ -378,6 +378,9 @@ def _effective_state_name(state: dict[str, Any]) -> str:
         if _is_pid_running(child_pid):
             return "orphaned"
         return "stale"
+    # Supervisor is gone and was stopping/stopped — show as stopped, not stale
+    if current in {"stopping", "stopped"} and supervisor_pid and not _is_pid_running(supervisor_pid):
+        return "stopped"
     return current
 
 
@@ -497,9 +500,10 @@ def _background_supervisor_command(
     restart_policy: str,
     restart_delay: float,
     max_restarts: int,
+    stop_existing: bool = False,
 ) -> list[str]:
     python_path = _venv_python(root)
-    return [
+    cmd = [
         str(python_path),
         "-m",
         "robot.control",
@@ -514,6 +518,9 @@ def _background_supervisor_command(
         "--mode",
         "background",
     ]
+    if stop_existing:
+        cmd.append("--stop-existing")
+    return cmd
 
 
 def _spawn_background_supervisor(
@@ -523,6 +530,7 @@ def _spawn_background_supervisor(
     restart_policy: str,
     restart_delay: float,
     max_restarts: int,
+    stop_existing: bool = False,
 ) -> int:
     env = os.environ.copy()
     pythonpath = env.get("PYTHONPATH", "").strip()
@@ -551,6 +559,7 @@ def _spawn_background_supervisor(
             restart_policy=restart_policy,
             restart_delay=restart_delay,
             max_restarts=max_restarts,
+            stop_existing=stop_existing,
         ),
         **kwargs,
     )
@@ -608,7 +617,13 @@ def _stop_supervisor(root: Path, config_name: str, *, timeout_seconds: float = 1
         _terminate_process_tree(supervisor_pid, timeout_seconds=timeout_seconds)
 
     if child_pid and _is_pid_running(child_pid):
-        _terminate_process_tree(child_pid, timeout_seconds=timeout_seconds)
+        try:
+            os.kill(child_pid, signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
+        _wait_for_exit(child_pid, timeout_seconds)
+        if _is_pid_running(child_pid):
+            _terminate_process_tree(child_pid, timeout_seconds=timeout_seconds)
 
     updated = dict(state)
     updated["state"] = "stopped"
@@ -617,6 +632,20 @@ def _stop_supervisor(root: Path, config_name: str, *, timeout_seconds: float = 1
     updated["child_pid"] = 0
     _write_state(_state_file(root, config_name), updated)
     return True
+
+
+def _kill_existing_robot_processes(root: Path, config_name: str) -> None:
+    state = _read_state(_state_file(root, config_name))
+    if not state:
+        return
+    supervisor_pid = int(state.get("supervisor_pid") or 0)
+    child_pid = int(state.get("child_pid") or 0)
+    for pid in (supervisor_pid, child_pid):
+        if pid and _is_pid_running(pid):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
 
 
 def _confirm(question: str, default: bool = False) -> bool:
@@ -863,6 +892,7 @@ def create_parser() -> argparse.ArgumentParser:
     supervise_parser.add_argument("--restart-delay", type=float, default=3.0)
     supervise_parser.add_argument("--max-restarts", type=int, default=0)
     supervise_parser.add_argument("--mode", choices=("background", "foreground"), default="background")
+    supervise_parser.add_argument("--stop-existing", action="store_true")
 
     hidden_action = next(
         (action for action in subparsers._choices_actions if action.dest == "_supervise"),
@@ -918,8 +948,12 @@ def cmd_list(_parser: argparse.ArgumentParser, _args: argparse.Namespace, root: 
     statuses = {item.get("config_name"): item for item in _status_entries(root)}
     for config in configs:
         state = statuses.get(config.name) or _synthetic_state(root, config)
+        effective = _effective_state_name(state)
+        # If supervisor is gone and state was stopping, call it stopped
+        if effective == "stale" and state.get("state") == "stopping":
+            effective = "stopped"
         print(
-            f"{config.name}: {_effective_state_name(state)} | "
+            f"{config.name}: {effective} | "
             f"robot_id={config.robot_id} | env={config.env_file}"
         )
     return 0
@@ -1200,12 +1234,14 @@ def cmd_start(_parser: argparse.ArgumentParser, args: argparse.Namespace, root: 
                 print(f"{config.name}: already running, skipped.")
                 continue
             _stop_supervisor(root, config.name)
+            time.sleep(0.5)
         pid = _spawn_background_supervisor(
             root,
             config.name,
             restart_policy=args.restart,
             restart_delay=args.restart_delay,
             max_restarts=args.max_restarts,
+            stop_existing=True,
         )
         boot_state = _wait_for_supervisor_boot(
             root,
@@ -1479,6 +1515,8 @@ def cmd_doctor(_parser: argparse.ArgumentParser, args: argparse.Namespace, root:
 
 
 def cmd_supervise(_parser: argparse.ArgumentParser, args: argparse.Namespace, root: Path) -> int:
+    if getattr(args, "stop_existing", False):
+        _kill_existing_robot_processes(root, args.config)
     return _run_supervisor(
         root,
         args.config,

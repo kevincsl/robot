@@ -28,5 +28,15 @@
     "name_ja": "Gemini",
     "name_ko": "Gemini",
     "description": "Google Gemini — fast and efficient."
+  },
+  "opencode": {
+    "id": "opencode",
+    "name": "OpenCode",
+    "name_zh": "OpenCode",
+    "name_zh-cn": "OpenCode",
+    "name_zh-hk": "OpenCode",
+    "name_ja": "OpenCode",
+    "name_ko": "OpenCode",
+    "description": "OpenCode CLI — open-source AI coding assistant with multiple model backends."
   }
 }

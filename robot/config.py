@@ -22,11 +22,11 @@ VERSION = "1.0.0"
 DEFAULT_GOOGLE_CALENDAR_SCOPES = ("https://www.googleapis.com/auth/calendar.readonly",)
 
 PROVIDER_LABELS: dict[str, str] = {
-    p: i18n.provider_name(p) for p in ("codex", "claude", "gemini")
+    p: i18n.provider_name(p) for p in ("codex", "claude", "gemini", "opencode")
 }
 
 SUPPORTED_MODELS: dict[str, list[str]] = {
-    p: [m["id"] for m in i18n.model_list(p)] for p in ("codex", "claude", "gemini")
+    p: [m["id"] for m in i18n.model_list(p)] for p in ("codex", "claude", "gemini", "opencode")
 }
 
 MODEL_CHOICES: dict[str, list] = {
@@ -159,6 +159,7 @@ def load_settings(project_root: Path | None = None) -> Settings:
         "codex": _split_command(os.getenv("ROBOT_CODEX_CMD", "codex")),
         "claude": _split_command(os.getenv("ROBOT_CLAUDE_CMD", "claude")),
         "gemini": _split_command(os.getenv("ROBOT_GEMINI_CMD", "gemini")),
+        "opencode": _split_command(os.getenv("ROBOT_OPENCODE_CMD", "opencode")),
     }
     model_flags = {
         "codex": "-m",
