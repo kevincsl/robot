@@ -10,7 +10,13 @@ from unittest.mock import AsyncMock
 from teleapp.protocol import AppEvent
 from telegram.error import RetryAfter
 
-from robot.hosted_app import _TypingController, _should_send_typing, _should_stop_typing, _emit_event
+from robot.hosted_app import (
+    _TypingController,
+    _apply_code_display_mode,
+    _emit_event,
+    _should_send_typing,
+    _should_stop_typing,
+)
 
 
 class HostedAppTests(unittest.TestCase):
@@ -66,6 +72,32 @@ class HostedAppTests(unittest.TestCase):
             _emit_event(event, controller)
 
         controller.observe.assert_called_once_with(event)
+
+
+class HostedAppCodeDisplayTests(unittest.TestCase):
+    class _Store:
+        def __init__(self, mode: str) -> None:
+            self.mode = mode
+
+        def get_code_display_mode(self, chat_id: int) -> str:
+            return self.mode
+
+    def test_all_mode_wraps_output_as_text_code_block(self) -> None:
+        event = _apply_code_display_mode(AppEvent(type="output", text="hello", chat_id=1), self._Store("all"))
+        self.assertEqual(event.text, "```text\nhello\n```")
+
+    def test_smart_mode_leaves_plain_output_unchanged(self) -> None:
+        event = _apply_code_display_mode(AppEvent(type="output", text="hello", chat_id=1), self._Store("smart"))
+        self.assertEqual(event.text, "hello")
+
+    def test_all_mode_preserves_existing_fenced_code_block(self) -> None:
+        text = "```shell\ngit status\n```"
+        event = _apply_code_display_mode(AppEvent(type="output", text=text, chat_id=1), self._Store("all"))
+        self.assertEqual(event.text, text)
+
+    def test_all_mode_does_not_wrap_status_events(self) -> None:
+        event = _apply_code_display_mode(AppEvent(type="status", text="running", chat_id=1), self._Store("all"))
+        self.assertEqual(event.text, "running")
 
 
 class TypingControllerTests(unittest.TestCase):

@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 from markitdown import MarkItDown
 
 from robot.config import Settings
+from robot import i18n
 
 
 INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*]+')
@@ -1343,9 +1344,9 @@ def capture_web_to_daily(settings: Settings, url: str, *, max_chars: int = 2500)
         f"- url: {url.strip()}\n"
         f"- title: {safe_title}\n"
         f"- tags: {tags_line}\n\n"
-        "摘要重點\n"
+        f"{i18n.tr('brain.summary_title')}\n"
         f"{summary_block}\n\n"
-        "原始內容\n"
+        f"{i18n.tr('brain.raw_content_label')}\n"
         f"{text}"
     )
     path = append_to_daily(settings, body)
@@ -1664,12 +1665,12 @@ def build_daily_brief(settings: Settings) -> str:
     today_body = read_daily(settings).strip()
     reminders = collect_brain_reminders(settings, limit=3)
     lines = [
-        "每日摘要",
+        i18n.tr("brain.daily_summary_title"),
         "",
-        "今日筆記重點：",
-        today_body if today_body else "- 今日尚未有內容",
+        i18n.tr("brain.today_highlights") + "：",
+        today_body if today_body else i18n.tr("brain.today_empty"),
         "",
-        "提醒：",
+        i18n.tr("brain.reminders_label") + "：",
         *reminders,
     ]
     return "\n".join(lines)
@@ -1688,7 +1689,7 @@ def build_weekly_brief(settings: Settings, limit: int = 10) -> str:
             topic = match.group(1).strip()
             if topic:
                 topic_counter[topic] += 1
-    lines = ["每週摘要", "", "最近筆記："]
+    lines = [i18n.tr("brain.weekly_summary_title"), "", i18n.tr("brain.weekly_recent_notes")]
     if recent:
         lines.extend(f"- {item}" for item in recent[:limit])
     else:
@@ -1717,7 +1718,7 @@ def _build_decision_lines(question: str, matches: list[dict[str, object]], limit
         else:
             background_points.append(f"- {file_path}")
     if not background_points:
-        background_points.append("- 找不到高度相關筆記")
+        background_points.append(i18n.tr("brain.no_relevant_notes"))
 
     if related_paths:
         support = [

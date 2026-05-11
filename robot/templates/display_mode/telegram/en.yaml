@@ -1,0 +1,179 @@
+_version: "1.0"
+locale: en
+platform: telegram
+
+#─────────────────────────────────────────
+# 1. DISPLAY_MODE_LABELS
+#─────────────────────────────────────────
+mode_labels:
+  user: "User Mode"
+  developer: "Developer Mode"
+
+#─────────────────────────────────────────
+# 2. format_display_mode_changed
+#─────────────────────────────────────────
+mode_changed:
+  user: "Switched to user mode.I will show concise progress and final replies."
+  developer: "Switched to developer mode.I will show full execution details."
+
+#─────────────────────────────────────────
+# 3. format_display_mode_status
+#─────────────────────────────────────────
+mode_status:
+  current_label: "Current mode: {label}"
+  user_content: "Display: concise progress and final replies"
+  developer_content: "Display: full execution details"
+  usage: "Available: /mode user | /mode developer"
+
+#─────────────────────────────────────────
+# 4. _format_user_progress
+#─────────────────────────────────────────
+user_progress:
+  processing: "🤖 {tag} processing · {elapsed}"
+  received: "📨 {tag} received"
+
+#─────────────────────────────────────────
+# 5. _format_project_tag
+#─────────────────────────────────────────
+project_tag:
+  with_branch: "Project[{name}/{branch}]"
+  without_branch: "Project[{text}]"
+
+#─────────────────────────────────────────
+# 6. format_recovered_run
+#─────────────────────────────────────────
+recovered_run:
+  user: "Recovered previously interrupted work."
+  developer: "Recovered interrupted run after restart."
+
+#─────────────────────────────────────────
+# 7. format_run_stopped
+#─────────────────────────────────────────
+run_stopped:
+  user: "⛔ {tag} stopped · {elapsed}"
+  developer: "Agent run stopped during shutdown."
+
+#─────────────────────────────────────────
+# 8. format_output_text — completion messages
+#─────────────────────────────────────────
+output_text:
+  cancelled: "Cancelled"
+  success: "Completed"
+  failure: "Failed"
+
+#─────────────────────────────────────────
+# 9. _strip_user_mode_completion_wrapper
+#    （字串比對用，非格式化用途）
+#─────────────────────────────────────────
+wrapper_strip:
+  project_prefix: "Project["
+  completion_success: "Completed"
+  completion_failure: "Failed"
+  completion_cancelled: "Cancelled"
+  icons:
+    - "✅ "
+    - "❌ "
+    - "⛔ "
+
+#─────────────────────────────────────────
+# 10. _FOOTER_PREFIXES
+#─────────────────────────────────────────
+footer_prefixes:
+  - "project: "
+  - "provider: "
+  - "model: "
+  - "run_id: "
+  - "profile: "
+  - "reply from model: "
+  - "— "
+
+#─────────────────────────────────────────
+# 11. footer_origin（origin 行格式）
+#─────────────────────────────────────────
+footer_origin:
+  template: "🚀 {origin}"
+
+#─────────────────────────────────────────
+# 12. developer_templates（完整輸出格式）
+#─────────────────────────────────────────
+developer_templates:
+  run_started_auto: |
+    Auto-dev run started.
+    goal: {goal}
+    project: {project}
+    path: {path}
+    queue_waiting: {queue_waiting}
+    elapsed: {elapsed}
+    heartbeat: starting (first update within 1 second)
+
+  run_started_provider: |
+    Provider run started.
+    goal: {goal}
+    project: {project}
+    path: {path}
+    queue_waiting: {queue_waiting}
+    elapsed: {elapsed}
+    heartbeat: starting (first update within 1 second)
+
+  run_queued_auto: |
+    Auto-dev run queued.
+    goal: {goal}
+    project: {project}
+    path: {path}
+    queue_position: {position}
+    elapsed: {elapsed}
+    hint: use /queue to check waiting jobs
+
+  run_queued_provider: |
+    Provider run queued.
+    goal: {goal}
+    project: {project}
+    path: {path}
+    queue_position: {position}
+    elapsed: {elapsed}
+    hint: use /queue to check waiting jobs
+
+  queue_waiting: |
+    Queue waiting.
+    kind: {kind}
+    doing: {goal}
+    project: {project}
+    path: {path}
+    phase: queue: waiting for worker
+    queue_pending: {queue_pending}
+    elapsed: {elapsed}
+
+  worker_started: |
+    Agent run started.
+    kind: {kind}
+    goal: {goal}
+    project: {project}
+    path: {path}
+    provider: {provider}
+    model/profile: {model}
+    phase: {phase}
+    queue_pending: {queue_pending}
+    progress: {progress}
+    elapsed: {elapsed}
+    heartbeat: active
+
+  heartbeat: |
+    Heartbeat.
+    kind: {kind}
+    doing: {goal}
+    project: {project}
+    path: {path}
+    phase: {phase}
+    queue_pending: {queue_pending}
+    progress: {progress}
+    elapsed: {elapsed}
+
+  run_finished: |
+    Agent run finished.
+    kind: {kind}
+    goal: {goal}
+    project: {project}
+    path: {path}
+    queue_pending: {queue_pending}
+    status: {status}
+    elapsed: {elapsed}

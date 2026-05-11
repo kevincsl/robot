@@ -12,7 +12,9 @@ import threading
 from typing import Any
 
 from robot.config import Settings, normalize_provider
+from robot.i18n import model_list as i18n_model_list
 from robot.model_catalog import validate_selected_model
+from robot.security import check_write_allowed
 from robot.text import normalize_text
 
 
@@ -49,7 +51,7 @@ class RunningInvocation:
 
     def set_phase(self, phase: str) -> None:
         with self._lock:
-            self.phase = _safe_text(phase).strip() or self.phase
+            self.phase = phase
 
     def get_phase(self) -> str:
         with self._lock:
@@ -69,6 +71,25 @@ class RunningInvocation:
             return True
         except OSError:
             return False
+
+
+# Locale → instruction string prepended to AI prompts
+_LOCALE_INSTRUCTIONS: dict[str, str] = {
+    "ja": "You are now set to Japanese. Please respond in Japanese. ",
+    "ko": "You are now set to Korean. Please respond in Korean. ",
+    "zh-hk": "You are now set to Traditional Chinese (Hong Kong). Please respond in Traditional Chinese. ",
+    "zh-tw": "You are now set to Traditional Chinese (Taiwan). Please respond in Traditional Chinese. ",
+    "en": "You are now set to English. Please respond in English. ",
+}
+
+
+def _locale_prompt_prefix(locale: str) -> str:
+    """Return an instruction string to prepend to prompts for the given locale."""
+    if locale in _LOCALE_INSTRUCTIONS:
+        return _LOCALE_INSTRUCTIONS[locale]
+    if locale and locale.startswith("zh"):
+        return ""
+    return ""
 
 
 def _clip(text: str, limit: int = 3900) -> str:
@@ -227,6 +248,56 @@ def _parse_codex_stream(
     return next_thread_id, assistant_text, detail
 
 
+def _parse_opencode_stream(
+    *,
+    stdout: str,
+    stderr: str,
+    base_session_id: str | None,
+) -> tuple[str | None, str, str]:
+    next_session_id = base_session_id
+    assistant_snapshot = ""
+    assistant_delta_chunks: list[str] = []
+    latest_detail = ""
+    stdout_lines = [line.strip() for line in (stdout or "").splitlines() if line.strip()]
+    stderr_text = (stderr or "").strip()
+
+    for line in stdout_lines:
+        event = _parse_json_event_line(line)
+        if event is None:
+            latest_detail = line
+            continue
+
+        event_type = str(event.get("type") or "").strip()
+        if event_type == "text":
+            part = event.get("part", {})
+            if isinstance(part, dict):
+                delta = str(part.get("text") or "").strip()
+                if delta:
+                    assistant_delta_chunks.append(delta)
+            continue
+        if event_type in {"step_finish", "response.completed", "response.output_text.done"}:
+            part = event.get("part", {})
+            if isinstance(part, dict):
+                candidates = _extract_text_candidates(part)
+                if candidates:
+                    assistant_snapshot = max(candidates, key=len)
+            continue
+        if event_type == "step_start":
+            # extract session id from event
+            part = event.get("part", {})
+            if isinstance(part, dict):
+                sid = str(part.get("sessionID") or "").strip()
+                if sid:
+                    next_session_id = sid
+            continue
+        if event_type == "error":
+            latest_detail = str(event.get("message") or "").strip() or latest_detail
+
+    assistant_text = _collapse_repeated_text(_merge_assistant_text("".join(assistant_delta_chunks), assistant_snapshot))
+    detail = latest_detail or stderr_text
+    return next_session_id, assistant_text, detail
+
+
 def _is_stream_disconnect(detail: str) -> bool:
     text = (detail or "").strip().lower()
     if not text:
@@ -315,6 +386,13 @@ def _is_claude_session_not_found(detail: str) -> bool:
     return "no conversation found with session id" in text
 
 
+def _is_claude_token_overflow(detail: str) -> bool:
+    text = (detail or "").strip().lower()
+    if not text:
+        return False
+    return "model_max_prompt_tokens_exceeded" in text or "prompt token count" in text and "exceeds the limit" in text
+
+
 def _build_codex_command(
     *,
     settings: Settings,
@@ -386,7 +464,9 @@ async def run_agent_request(
     workdir: Path,
     project_label: str,
     invocation: RunningInvocation | None = None,
+    locale: str = "",
 ) -> AgentRunResult:
+    prefixed_prompt = _locale_prompt_prefix(locale) + prompt
     normalized = normalize_provider(provider)
     _is_catalog_model, validation_error = validate_selected_model(settings, normalized, model)
     if validation_error:
@@ -403,7 +483,7 @@ async def run_agent_request(
         return await _run_codex(
             settings,
             model=model,
-            prompt=prompt,
+            prompt=prefixed_prompt,
             thread_id=thread_id,
             workdir=workdir,
             project_label=project_label,
@@ -413,7 +493,17 @@ async def run_agent_request(
         return await _run_claude(
             settings,
             model=model,
-            prompt=prompt,
+            prompt=prefixed_prompt,
+            session_id=thread_id,
+            workdir=workdir,
+            project_label=project_label,
+            invocation=invocation,
+        )
+    if normalized == "opencode":
+        return await _run_opencode(
+            settings,
+            model=model,
+            prompt=prefixed_prompt,
             session_id=thread_id,
             workdir=workdir,
             project_label=project_label,
@@ -423,7 +513,7 @@ async def run_agent_request(
         settings,
         provider=normalized,
         model=model,
-        prompt=prompt,
+        prompt=prefixed_prompt,
         workdir=workdir,
         project_label=project_label,
         invocation=invocation,
@@ -465,14 +555,31 @@ async def run_auto_dev_request(
     enable_pr: bool = False,
     disable_post_run: bool = False,
     invocation: RunningInvocation | None = None,
+    locale: str = "",
+    permission_mode: str = "user",
 ) -> AgentRunResult:
+    if not check_write_allowed(workdir, permission_mode):
+        return AgentRunResult(
+            provider="auto-dev",
+            model=profile_name or "-",
+            final_text=(
+                f"Permission denied: cannot write to {workdir} "
+                f"in permission mode '{permission_mode}'.\n"
+                "Switch to /mode developer or /mode superuser to enable this operation."
+            ),
+            thread_id=None,
+            return_code=1,
+            elapsed_seconds=0,
+            cancelled=False,
+        )
+    prefixed_prompt = _locale_prompt_prefix(locale) + (prompt or "") if prompt else None
     if invocation is not None:
         invocation.set_phase("auto-dev: preparing command")
     command = list(settings.auto_dev_command)
     if resume_target:
         command.extend(["--resume", resume_target])
-    elif prompt:
-        command.extend(["--goal", prompt])
+    elif prefixed_prompt:
+        command.extend(["--goal", prefixed_prompt])
     if profile_name:
         command.extend(["--profile", profile_name])
     if config_path:
@@ -768,6 +875,31 @@ async def _run_claude(
         assistant_text = retry_assistant_text
         latest_detail = retry_detail
 
+    if (
+        completed.returncode != 0
+        and not cancelled
+        and session_id is not None
+        and _is_claude_token_overflow(latest_detail)
+    ):
+        if invocation is not None:
+            invocation.set_phase("claude: retrying with fresh session (token overflow)")
+        fresh_command = _build_claude_command(
+            settings=settings,
+            model=model,
+            session_id=None,
+            prompt=prompt,
+        )
+        retry_completed = await _run_process(fresh_command, prompt="", workdir=workdir, invocation=invocation)
+        retry_session_id, retry_assistant_text, retry_detail = _parse_claude_stream(
+            stdout=retry_completed.stdout or "",
+            stderr=retry_completed.stderr or "",
+            base_session_id=None,
+        )
+        completed = retry_completed
+        next_session_id = retry_session_id
+        assistant_text = retry_assistant_text
+        latest_detail = retry_detail
+
     body = assistant_text or latest_detail or "Claude finished without an assistant reply."
     if cancelled:
         body = f"Claude run stopped.\n\n{body}".strip()
@@ -777,6 +909,81 @@ async def _run_claude(
     footer = f"project: {project_label}\nprovider: claude\nmodel: {model}"
     return AgentRunResult(
         provider="claude",
+        model=model,
+        final_text=_clip(f"{body}\n\n{footer}"),
+        thread_id=next_session_id,
+        return_code=completed.returncode,
+        elapsed_seconds=int(time.monotonic() - started),
+        cancelled=cancelled,
+    )
+
+
+def _opencode_cli_model(model: str) -> str:
+    """Resolve the model ID to pass to opencode --model CLI flag.
+
+    Catalog models use prefixed IDs like 'minimax-coding-plan/MiniMax-M2.7' but the
+    opencode CLI requires the exact model string from its own model list
+    (e.g. 'minimax-coding-plan/MiniMax-M2.7'). Custom models are passed through as-is.
+    """
+    if "/" not in model:
+        return model
+    for entry in i18n_model_list("opencode"):
+        if isinstance(entry, dict) and entry.get("id") == model:
+            cli = entry.get("opencode_model")
+            if cli:
+                return cli
+    # Fallback: case-insensitive match to handle casing mismatches
+    model_lower = model.lower()
+    for entry in i18n_model_list("opencode"):
+        if isinstance(entry, dict) and entry.get("id", "").lower() == model_lower:
+            cli = entry.get("opencode_model")
+            if cli:
+                return cli
+    return model
+
+
+async def _run_opencode(
+    settings: Settings,
+    *,
+    model: str,
+    prompt: str,
+    session_id: str | None,
+    workdir: Path,
+    project_label: str,
+    invocation: RunningInvocation | None,
+) -> AgentRunResult:
+    if invocation is not None:
+        invocation.set_phase("opencode: preparing command")
+
+    cli_model = _opencode_cli_model(model)
+    command = list(settings.provider_commands["opencode"])
+    command.extend(["run", "--format", "json"])
+    if session_id:
+        command.extend(["--continue", "--session", session_id])
+    command.extend(["--model", cli_model])
+    command.append(prompt)
+
+    started = time.monotonic()
+
+    if invocation is not None:
+        invocation.set_phase("opencode: executing")
+    completed = await _run_process(command, prompt=prompt, workdir=workdir, invocation=invocation)
+    cancelled = bool(invocation and invocation.cancelled)
+    next_session_id, assistant_text, latest_detail = _parse_opencode_stream(
+        stdout=completed.stdout or "",
+        stderr=completed.stderr or "",
+        base_session_id=session_id,
+    )
+
+    body = assistant_text or latest_detail or "OpenCode finished without an assistant reply."
+    if cancelled:
+        body = f"OpenCode run stopped.\n\n{body}".strip()
+    if completed.returncode != 0:
+        body = f"OpenCode failed (code {completed.returncode}).\n\n{body}".strip()
+
+    footer = f"project: {project_label}\nprovider: opencode\nmodel: {model}"
+    return AgentRunResult(
+        provider="opencode",
         model=model,
         final_text=_clip(f"{body}\n\n{footer}"),
         thread_id=next_session_id,

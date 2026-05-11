@@ -1,0 +1,142 @@
+_version: "1.0"
+locale: zh-cn
+platform: telegram
+
+mode_labels:
+  user: "用户模式"
+  developer: "开发者模式"
+
+mode_changed:
+  user: "已切换为用户模式。显示简洁进度与最终回复。"
+  developer: "已切换为开发者模式。显示完整执行细节。"
+
+mode_status:
+  current_label: "当前模式：{label}"
+  user_content: "显示内容：简洁进度与最终回复"
+  developer_content: "显示内容：完整执行细节"
+  usage: "可用：/mode user | /mode developer"
+
+user_progress:
+  processing: "🤖 {tag} 处理中 · {elapsed}"
+  received: "📨 {tag} 已接收"
+
+project_tag:
+  with_branch: "项目[{name}/{branch}]"
+  without_branch: "项目[{text}]"
+
+recovered_run:
+  user: "已恢复先前中断的工作。"
+  developer: "重启后已恢复中断的运行。"
+
+run_stopped:
+  user: "⛔ {tag} 处理中止 · {elapsed}"
+  developer: "关闭期间代理运行已停止。"
+
+output_text:
+  cancelled: "处理中止"
+  success: "处理完成"
+  failure: "处理失败"
+
+wrapper_strip:
+  project_prefix: "项目["
+  completion_success: "处理完成"
+  completion_failure: "处理失败"
+  completion_cancelled: "处理中止"
+  icons:
+    - "✅ "
+    - "❌ "
+    - "⛔ "
+
+footer_prefixes:
+  - "project: "
+  - "provider: "
+  - "model: "
+  - "run_id: "
+  - "profile: "
+  - "回复来自 model: "
+  - "— "
+
+footer_origin:
+  template: "🚀 {origin}"
+
+developer_templates:
+  run_started_auto: |
+    Auto-dev run started.
+    goal: {goal}
+    project: {project}
+    path: {path}
+    queue_waiting: {queue_waiting}
+    elapsed: {elapsed}
+    heartbeat: starting (first update within 1 second)
+
+  run_started_provider: |
+    Provider run started.
+    goal: {goal}
+    project: {project}
+    path: {path}
+    queue_waiting: {queue_waiting}
+    elapsed: {elapsed}
+    heartbeat: starting (first update within 1 second)
+
+  run_queued_auto: |
+    Auto-dev run queued.
+    goal: {goal}
+    project: {project}
+    path: {path}
+    queue_position: {position}
+    elapsed: {elapsed}
+    hint: use /queue to check waiting jobs
+
+  run_queued_provider: |
+    Provider run queued.
+    goal: {goal}
+    project: {project}
+    path: {path}
+    queue_position: {position}
+    elapsed: {elapsed}
+    hint: use /queue to check waiting jobs
+
+  queue_waiting: |
+    Queue waiting.
+    kind: {kind}
+    doing: {goal}
+    project: {project}
+    path: {path}
+    phase: queue: waiting for worker
+    queue_pending: {queue_pending}
+    elapsed: {elapsed}
+
+  worker_started: |
+    Agent run started.
+    kind: {kind}
+    goal: {goal}
+    project: {project}
+    path: {path}
+    provider: {provider}
+    model/profile: {model}
+    phase: {phase}
+    queue_pending: {queue_pending}
+    progress: {progress}
+    elapsed: {elapsed}
+    heartbeat: active
+
+  heartbeat: |
+    Heartbeat.
+    kind: {kind}
+    doing: {goal}
+    project: {project}
+    path: {path}
+    phase: {phase}
+    queue_pending: {queue_pending}
+    progress: {progress}
+    elapsed: {elapsed}
+
+  run_finished: |
+    Agent run finished.
+    kind: {kind}
+    goal: {goal}
+    project: {project}
+    path: {path}
+    queue_pending: {queue_pending}
+    status: {status}
+    elapsed: {elapsed}

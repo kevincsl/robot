@@ -11,6 +11,12 @@ from robot.security import (
     sanitize_file_size,
     sanitize_error_message,
     SecurityError,
+    check_write_allowed,
+    get_mode_rules,
+    PERMISSION_MODES,
+    PROJECTS_ROOT,
+    ROBOT_ROOT,
+    TELEAPP,
 )
 
 
@@ -274,6 +280,53 @@ class TestIntegration:
         with pytest.raises(SecurityError):
             target = tmp_path / "allowed" / dangerous_path
             validate_path_traversal(target, allowed_roots, must_exist=False)
+
+
+class TestPermissionMode:
+    """Test check_write_allowed and get_mode_rules."""
+
+    def test_superuser_allows_everything(self, tmp_path):
+        """superuser mode should allow any path."""
+        assert check_write_allowed(tmp_path, "superuser") is True
+        assert check_write_allowed(Path("/etc/passwd"), "superuser") is True
+
+    def test_user_mode_allows_projects(self):
+        """user mode should allow ~/projects."""
+        assert check_write_allowed(PROJECTS_ROOT, "user") is True
+
+    def test_user_mode_blocks_robot(self):
+        """user mode should block ~/robot."""
+        assert check_write_allowed(ROBOT_ROOT, "user") is False
+
+    def test_user_mode_blocks_teleapp(self):
+        """user mode should block ~/teleapp."""
+        assert check_write_allowed(TELEAPP, "user") is False
+
+    def test_user_mode_blocks_subpath_of_robot(self, tmp_path):
+        """user mode should block any sub-path of ~/robot."""
+        subpath = ROBOT_ROOT / "some_subdir"
+        assert check_write_allowed(subpath, "user") is False
+
+    def test_developer_mode_allows_robot(self):
+        """developer mode should allow ~/robot."""
+        assert check_write_allowed(ROBOT_ROOT, "developer") is True
+
+    def test_developer_mode_blocks_teleapp(self):
+        """developer mode should block ~/teleapp."""
+        assert check_write_allowed(TELEAPP, "developer") is False
+
+    def test_permission_modes_constant(self):
+        """PERMISSION_MODES should contain all three modes."""
+        assert set(PERMISSION_MODES) == {"user", "developer", "superuser"}
+
+    def test_get_mode_rules_returns_dict(self):
+        """get_mode_rules should return a dict with whitelist and blacklist."""
+        for mode in PERMISSION_MODES:
+            rules = get_mode_rules(mode)
+            assert "whitelist" in rules
+            assert "blacklist" in rules
+            assert isinstance(rules["whitelist"], list)
+            assert isinstance(rules["blacklist"], list)
 
 
 if __name__ == "__main__":

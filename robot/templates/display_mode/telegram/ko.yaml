@@ -1,0 +1,142 @@
+_version: "1.0"
+locale: ko
+platform: telegram
+
+mode_labels:
+  user: "사용자 모드"
+  developer: "개발자 모드"
+
+mode_changed:
+  user: "사용자 모드로 전환했습니다. 간결한 진행 상황과 최종 답장을 표시합니다."
+  developer: "개발자 모드로 전환했습니다. 완전한 실행 세부 정보를 표시합니다."
+
+mode_status:
+  current_label: "현재 모드: {label}"
+  user_content: "표시 내용: 간결한 진행 상황과 최종 답장"
+  developer_content: "표시 내용: 완전한 실행 세부 정보"
+  usage: "사용 가능: /mode user | /mode developer"
+
+user_progress:
+  processing: "🤖 {tag} 처리 중 · {elapsed}"
+  received: "📨 {tag} 수신됨"
+
+project_tag:
+  with_branch: "프로젝트[{name}/{branch}]"
+  without_branch: "프로젝트[{text}]"
+
+recovered_run:
+  user: "이전에 중단된 작업을 복구했습니다."
+  developer: "재시동 후 중단된 실행을 복구했습니다."
+
+run_stopped:
+  user: "⛔ {tag} 처리 중단 · {elapsed}"
+  developer: "종료 중 에이전트 실행이 중지되었습니다."
+
+output_text:
+  cancelled: "처리 중단"
+  success: "처리 완료"
+  failure: "처리 실패"
+
+wrapper_strip:
+  project_prefix: "프로젝트["
+  completion_success: "처리 완료"
+  completion_failure: "처리 실패"
+  completion_cancelled: "처리 중단"
+  icons:
+    - "✅ "
+    - "❌ "
+    - "⛔ "
+
+footer_prefixes:
+  - "project: "
+  - "provider: "
+  - "model: "
+  - "run_id: "
+  - "profile: "
+  - "model 응답: "
+  - "— "
+
+footer_origin:
+  template: "🚀 {origin}"
+
+developer_templates:
+  run_started_auto: |
+    Auto-dev run started.
+    goal: {goal}
+    project: {project}
+    path: {path}
+    queue_waiting: {queue_waiting}
+    elapsed: {elapsed}
+    heartbeat: starting (first update within 1 second)
+
+  run_started_provider: |
+    Provider run started.
+    goal: {goal}
+    project: {project}
+    path: {path}
+    queue_waiting: {queue_waiting}
+    elapsed: {elapsed}
+    heartbeat: starting (first update within 1 second)
+
+  run_queued_auto: |
+    Auto-dev run queued.
+    goal: {goal}
+    project: {project}
+    path: {path}
+    queue_position: {position}
+    elapsed: {elapsed}
+    hint: use /queue to check waiting jobs
+
+  run_queued_provider: |
+    Provider run queued.
+    goal: {goal}
+    project: {project}
+    path: {path}
+    queue_position: {position}
+    elapsed: {elapsed}
+    hint: use /queue to check waiting jobs
+
+  queue_waiting: |
+    Queue waiting.
+    kind: {kind}
+    doing: {goal}
+    project: {project}
+    path: {path}
+    phase: queue: waiting for worker
+    queue_pending: {queue_pending}
+    elapsed: {elapsed}
+
+  worker_started: |
+    Agent run started.
+    kind: {kind}
+    goal: {goal}
+    project: {project}
+    path: {path}
+    provider: {provider}
+    model/profile: {model}
+    phase: {phase}
+    queue_pending: {queue_pending}
+    progress: {progress}
+    elapsed: {elapsed}
+    heartbeat: active
+
+  heartbeat: |
+    Heartbeat.
+    kind: {kind}
+    doing: {goal}
+    project: {project}
+    path: {path}
+    phase: {phase}
+    queue_pending: {queue_pending}
+    progress: {progress}
+    elapsed: {elapsed}
+
+  run_finished: |
+    Agent run finished.
+    kind: {kind}
+    goal: {goal}
+    project: {project}
+    path: {path}
+    queue_pending: {queue_pending}
+    status: {status}
+    elapsed: {elapsed}

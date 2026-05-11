@@ -1,14 +1,46 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
+
+from robot.footer_parser import clean_footer, format_footer, format_footer_from_text
+
+if TYPE_CHECKING:
+    from robot.template_loader import DisplayModeTemplates
 
 DISPLAY_MODE_USER = "user"
 DISPLAY_MODE_DEVELOPER = "developer"
 
-DISPLAY_MODE_LABELS = {
-    DISPLAY_MODE_USER: "使用者模式",
-    DISPLAY_MODE_DEVELOPER: "開發者模式",
-}
+CODE_DISPLAY_NORMAL = "normal"
+CODE_DISPLAY_SMART = "smart"
+CODE_DISPLAY_ALL = "all"
+
+# ── template injection ───────────────────────────────────────
+_templates: DisplayModeTemplates | None = None
+_template_locale: str | None = None
+
+
+def configure_templates(templates: DisplayModeTemplates) -> None:
+    global _templates, _template_locale
+    _templates = templates
+    _template_locale = templates.locale
+
+
+def _t() -> DisplayModeTemplates:
+    global _templates
+    if _templates is None:
+        from robot.template_loader import get_templates
+        _templates = get_templates()
+    return _templates
+
+
+def configure_templates_for_locale(locale: str, platform: str = "telegram") -> None:
+    """Reload templates for the given locale (call after i18n.set_locale)."""
+    global _templates, _template_locale
+    from robot.template_loader import clear_templates_cache, get_templates
+    clear_templates_cache()
+    _templates = get_templates(locale=locale, platform=platform)
+    _template_locale = locale
 
 _DISPLAY_MODE_LOOKUP = {
     "user": DISPLAY_MODE_USER,
@@ -24,19 +56,22 @@ _DISPLAY_MODE_LOOKUP = {
     "開發者模式": DISPLAY_MODE_DEVELOPER,
 }
 
-_FOOTER_PREFIXES = (
-    "project: ",
-    "provider: ",
-    "model: ",
-    "run_id: ",
-    "profile: ",
-    "回覆來自 model: ",
-    "— ",
-)
-_FOOTER_PREFIXES_NORMALIZED = tuple(prefix.lower() for prefix in _FOOTER_PREFIXES)
-_MODEL_ORIGIN_FOOTER_RE = re.compile(r"^回覆來自\s*model\s*[:：]\s*", re.IGNORECASE)
-_MODEL_DASH_FOOTER_RE = re.compile(r"^—\s*\S", re.UNICODE)
+_CODE_DISPLAY_MODE_LOOKUP = {
+    "normal": CODE_DISPLAY_NORMAL,
+    "off": CODE_DISPLAY_NORMAL,
+    "none": CODE_DISPLAY_NORMAL,
+    "smart": CODE_DISPLAY_SMART,
+    "auto": CODE_DISPLAY_SMART,
+    "all": CODE_DISPLAY_ALL,
+    "copy": CODE_DISPLAY_ALL,
+    "copycode": CODE_DISPLAY_ALL,
+    "copy_code": CODE_DISPLAY_ALL,
+    "code": CODE_DISPLAY_ALL,
+    "on": CODE_DISPLAY_ALL,
+}
 
+
+_MODEL_ORIGIN_FOOTER_RE = re.compile(r"^回覆來自\s*model\s*[:：]\s*", re.IGNORECASE)
 
 def normalize_display_mode(value: str | None) -> str:
     normalized = _normalize_mode_key(value)
@@ -48,26 +83,49 @@ def resolve_display_mode_switch_text(text: str | None) -> str | None:
     return _DISPLAY_MODE_LOOKUP.get(normalized)
 
 
+def normalize_code_display_mode(value: str | None) -> str:
+    normalized = _normalize_mode_key(value)
+    return _CODE_DISPLAY_MODE_LOOKUP.get(normalized, CODE_DISPLAY_SMART)
+
+
+def code_display_mode_label(mode: str | None) -> str:
+    normalized = normalize_code_display_mode(mode)
+    if normalized == CODE_DISPLAY_ALL:
+        return "copy_code"
+    if normalized == CODE_DISPLAY_NORMAL:
+        return "normal"
+    return "smart"
+
+
+def wrap_text_for_code_display(text: str, mode: str | None) -> str:
+    normalized = normalize_code_display_mode(mode)
+    clean = str(text or "")
+    if normalized != CODE_DISPLAY_ALL or not clean.strip():
+        return clean
+    if "```" in clean:
+        return clean
+    return f"```text\n{clean}\n```"
+
+
 def display_mode_label(mode: str) -> str:
     normalized = normalize_display_mode(mode)
-    return DISPLAY_MODE_LABELS.get(normalized, DISPLAY_MODE_LABELS[DISPLAY_MODE_DEVELOPER])
+    return _t().mode_label(normalized)
 
 
 def format_display_mode_changed(mode: str) -> str:
     normalized = normalize_display_mode(mode)
-    if normalized == DISPLAY_MODE_USER:
-        return "已切換為使用者模式。後續會顯示簡潔進度與最終回覆。"
-    return "已切換為開發者模式。後續會顯示完整執行細節。"
+    return _t().mode_changed(normalized)
 
 
 def format_display_mode_status(mode: str) -> str:
     normalized = normalize_display_mode(mode)
-    lines = [f"目前模式: {display_mode_label(normalized)}"]
+    tmpl = _t()
+    lines = [tmpl.mode_status_current(tmpl.mode_label(normalized))]
     if normalized == DISPLAY_MODE_USER:
-        lines.append("顯示內容: 簡潔進度與最終回覆")
+        lines.append(tmpl.mode_status_content("user"))
     else:
-        lines.append("顯示內容: 完整執行細節")
-    lines.append("可用: /mode user | /mode developer")
+        lines.append(tmpl.mode_status_content("developer"))
+    lines.append(tmpl.mode_status_usage())
     return "\n".join(lines)
 
 
@@ -84,18 +142,13 @@ def format_run_started(
     normalized = normalize_display_mode(mode)
     if normalized == DISPLAY_MODE_USER:
         return _format_user_progress(project=project, elapsed=elapsed)
-
-    title = "Auto-dev run started." if kind == "auto_dev" else "Provider run started."
-    return "\n".join(
-        [
-            title,
-            f"goal: {goal}",
-            f"project: {project}",
-            f"path: {path}",
-            f"queue_waiting: {queue_waiting}",
-            f"elapsed: {elapsed}",
-            "heartbeat: starting (first update within 1 second)",
-        ]
+    return _t().developer_run_started(
+        kind,
+        goal=goal,
+        project=project,
+        path=path,
+        queue_waiting=str(queue_waiting),
+        elapsed=elapsed,
     )
 
 
@@ -112,19 +165,13 @@ def format_run_queued(
     normalized = normalize_display_mode(mode)
     if normalized == DISPLAY_MODE_USER:
         return _format_user_progress(project=project, elapsed=elapsed)
-
-    title = "Auto-dev run queued." if kind == "auto_dev" else "Provider run queued."
-    hint = "hint: use /queue to check waiting jobs"
-    return "\n".join(
-        [
-            title,
-            f"goal: {goal}",
-            f"project: {project}",
-            f"path: {path}",
-            f"queue_position: {position}",
-            f"elapsed: {elapsed}",
-            hint,
-        ]
+    return _t().developer_run_queued(
+        kind,
+        goal=goal,
+        project=project,
+        path=path,
+        position=str(position),
+        elapsed=elapsed,
     )
 
 
@@ -141,18 +188,13 @@ def format_queue_waiting(
     normalized = normalize_display_mode(mode)
     if normalized == DISPLAY_MODE_USER:
         return _format_user_progress(project=project, elapsed=elapsed)
-
-    return "\n".join(
-        [
-            "Queue waiting.",
-            f"kind: {kind}",
-            f"doing: {goal}",
-            f"project: {project}",
-            f"path: {path}",
-            "phase: queue: waiting for worker",
-            f"queue_pending: {queue_pending}",
-            f"elapsed: {elapsed}",
-        ]
+    return _t().developer_queue_waiting(
+        kind=kind,
+        goal=goal,
+        project=project,
+        path=path,
+        queue_pending=str(queue_pending),
+        elapsed=elapsed,
     )
 
 
@@ -173,22 +215,17 @@ def format_worker_started(
     normalized = normalize_display_mode(mode)
     if normalized == DISPLAY_MODE_USER:
         return _format_user_progress(project=project, elapsed=elapsed)
-
-    return "\n".join(
-        [
-            "Agent run started.",
-            f"kind: {kind}",
-            f"goal: {goal}",
-            f"project: {project}",
-            f"path: {path}",
-            f"provider: {provider}",
-            f"model/profile: {model}",
-            f"phase: {phase}",
-            f"queue_pending: {queue_pending}",
-            f"progress: {progress}",
-            f"elapsed: {elapsed}",
-            "heartbeat: active",
-        ]
+    return _t().developer_worker_started(
+        kind=kind,
+        goal=goal,
+        project=project,
+        path=path,
+        provider=provider,
+        model=model,
+        phase=phase,
+        queue_pending=str(queue_pending),
+        progress=progress,
+        elapsed=elapsed,
     )
 
 
@@ -207,19 +244,15 @@ def format_heartbeat(
     normalized = normalize_display_mode(mode)
     if normalized == DISPLAY_MODE_USER:
         return _format_user_progress(project=project, elapsed=elapsed)
-
-    return "\n".join(
-        [
-            "Heartbeat.",
-            f"kind: {kind}",
-            f"doing: {goal}",
-            f"project: {project}",
-            f"path: {path}",
-            f"phase: {phase}",
-            f"queue_pending: {queue_pending}",
-            f"progress: {progress}",
-            f"elapsed: {elapsed}",
-        ]
+    return _t().developer_heartbeat(
+        kind=kind,
+        goal=goal,
+        project=project,
+        path=path,
+        phase=phase,
+        queue_pending=str(queue_pending),
+        progress=progress,
+        elapsed=elapsed,
     )
 
 
@@ -237,18 +270,14 @@ def format_run_finished(
     normalized = normalize_display_mode(mode)
     if normalized == DISPLAY_MODE_USER:
         return _format_user_progress(project=project, elapsed=elapsed)
-
-    return "\n".join(
-        [
-            "Agent run finished.",
-            f"kind: {kind}",
-            f"goal: {goal}",
-            f"project: {project}",
-            f"path: {path}",
-            f"queue_pending: {queue_pending}",
-            f"status: {status}",
-            f"elapsed: {elapsed}",
-        ]
+    return _t().developer_run_finished(
+        kind=kind,
+        goal=goal,
+        project=project,
+        path=path,
+        queue_pending=str(queue_pending),
+        status=status,
+        elapsed=elapsed,
     )
 
 
@@ -261,17 +290,17 @@ def format_recovered_run(
     path: str,
 ) -> str:
     normalized = normalize_display_mode(mode)
+    tmpl = _t()
     if normalized == DISPLAY_MODE_USER:
         return "\n".join(
             [
-                "已恢復先前中斷的工作。",
+                tmpl.recovered_run("user"),
                 _format_project_tag(project),
             ]
         )
-
     return "\n".join(
         [
-            "Recovered interrupted run after restart.",
+            tmpl.recovered_run("developer"),
             f"kind: {kind}",
             f"doing: {goal}",
             f"project: {project}",
@@ -290,12 +319,12 @@ def format_run_stopped(
     elapsed: str,
 ) -> str:
     normalized = normalize_display_mode(mode)
+    tmpl = _t()
     if normalized == DISPLAY_MODE_USER:
-        return f"⛔ {_format_project_tag(project)} 處理中止 · {_elapsed_to_user_value(elapsed)}"
-
+        return tmpl.run_stopped("user", tag=_format_project_tag(project), elapsed=_elapsed_to_user_value(elapsed))
     return "\n".join(
         [
-            "Agent run stopped during shutdown.",
+            tmpl.run_stopped_developer(),
             f"kind: {kind}",
             f"goal: {goal}",
             f"project: {project}",
@@ -320,26 +349,27 @@ def format_output_text(
     if normalized == DISPLAY_MODE_DEVELOPER:
         return text
 
+    tmpl = _t()
     body = strip_output_footer(_strip_user_mode_completion_wrapper(text))
     if kind != "provider":
         return body
 
     if cancelled:
         icon = "⛔"
-        title = "處理中止"
+        title = tmpl.output_cancelled()
     elif success:
         icon = "✅"
-        title = "處理完成"
+        title = tmpl.output_success()
     else:
         icon = "❌"
-        title = "處理失敗"
+        title = tmpl.output_failure()
 
     elapsed_display = f" · {_elapsed_to_user_value(elapsed)}" if elapsed is not None else ""
     lines = [f"{icon} {_format_project_tag(project or '-')} {title}{elapsed_display}"]
     if body:
         lines.extend(["", body])
     origin = (model or "").strip() or "-"
-    lines.extend(["", f"— {origin}"])
+    lines.extend(["", tmpl.footer_origin(origin)])
     return "\n".join(lines).strip()
 
 
@@ -366,20 +396,25 @@ def strip_output_footer(text: str) -> str:
 
 
 def _strip_user_mode_completion_wrapper(text: str) -> str:
+    tmpl = _t()
     lines = text.strip().splitlines()
     if not lines:
         return text.strip()
 
     first = lines[0].strip()
-    _COMPLETION_ICONS = ("✅ ", "❌ ", "⛔ ")
-    has_icon_prefix = any(first.startswith(icon + "專案[") for icon in _COMPLETION_ICONS)
-    has_legacy_prefix = first.startswith("專案[")
+    icons = tmpl.wrapper_icons()
+    has_icon_prefix = any(first.startswith(icon + tmpl.wrapper_project_prefix()) for icon in icons)
+    has_legacy_prefix = first.startswith(tmpl.wrapper_project_prefix())
     if not (has_icon_prefix or has_legacy_prefix):
         return text.strip()
+
+    success = tmpl.wrapper_completion_success()
+    failure = tmpl.wrapper_completion_failure()
+    cancelled = tmpl.wrapper_completion_cancelled()
     if not (
-        first.endswith("處理完成") or "處理完成 ·" in first
-        or first.endswith("處理失敗") or "處理失敗 ·" in first
-        or first.endswith("處理中止") or "處理中止 ·" in first
+        first.endswith(success) or f"{success} ·" in first
+        or first.endswith(failure) or f"{failure} ·" in first
+        or first.endswith(cancelled) or f"{cancelled} ·" in first
     ):
         return text.strip()
 
@@ -405,7 +440,7 @@ def _is_footer_line(line: str) -> bool:
     normalized = line.strip().lower()
     if not normalized:
         return False
-    if normalized.startswith(_FOOTER_PREFIXES_NORMALIZED):
+    if normalized.startswith(_t().footer_prefixes_normalized()):
         return True
     return bool(_MODEL_ORIGIN_FOOTER_RE.match(line.strip()))
 
@@ -413,9 +448,19 @@ def _is_footer_line(line: str) -> bool:
 def _format_user_progress(*, project: str, elapsed: str) -> str:
     seconds = _elapsed_to_seconds(elapsed)
     tag = _format_project_tag(project)
+    tmpl = _t()
     if seconds > 0:
-        return f"🤖 {tag} 處理中 · {_elapsed_to_user_value(elapsed)}"
-    return f"📨 {tag} 已接收"
+        return tmpl.user_progress_processing(tag=tag, elapsed=_elapsed_to_user_value(elapsed))
+    return tmpl.user_progress_received(tag=tag)
+
+
+def _format_project_tag(project: str) -> str:
+    text = str(project or "").strip() or "-"
+    match = re.match(r"^(?P<name>.+?) \[(?P<branch>.+)\]$", text)
+    tmpl = _t()
+    if match:
+        return tmpl.project_tag_with_branch(name=match.group("name"), branch=match.group("branch"))
+    return tmpl.project_tag_without_branch(text=text)
 
 
 def _elapsed_history_lines(elapsed: str) -> list[str]:
@@ -446,14 +491,6 @@ def _elapsed_to_seconds(elapsed: str) -> int:
         if len(values) == 3:
             return max(0, (values[0] * 3600) + (values[1] * 60) + values[2])
     return 0
-
-
-def _format_project_tag(project: str) -> str:
-    text = str(project or "").strip() or "-"
-    match = re.match(r"^(?P<name>.+?) \[(?P<branch>.+)\]$", text)
-    if match:
-        return f"專案[{match.group('name')}/{match.group('branch')}]"
-    return f"專案[{text}]"
 
 
 def _normalize_mode_key(value: str | None) -> str:

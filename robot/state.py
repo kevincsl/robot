@@ -6,12 +6,19 @@ import threading
 from typing import Any
 
 from robot.config import Settings, normalize_model, normalize_provider
-from robot.display_mode import DISPLAY_MODE_DEVELOPER, normalize_display_mode
+from robot.display_mode import CODE_DISPLAY_SMART, DISPLAY_MODE_DEVELOPER, normalize_code_display_mode, normalize_display_mode
+from robot.security import PERMISSION_MODES
 from robot.projects import get_default_workspace
 from robot.text import normalize_text
 
 CONTACT_KEY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _normalize_permission_mode(mode: str | None) -> str:
+    if mode in PERMISSION_MODES:
+        return mode
+    return "user"
 
 
 class ChatStateStore:
@@ -134,6 +141,8 @@ class ChatStateStore:
         models[provider] = normalize_model(provider, models.get(provider) or self._settings.default_model)
         bucket["provider"] = provider
         bucket["display_mode"] = normalize_display_mode(bucket.get("display_mode") or DISPLAY_MODE_DEVELOPER)
+        bucket["code_display_mode"] = normalize_code_display_mode(bucket.get("code_display_mode") or CODE_DISPLAY_SMART)
+        bucket.setdefault("permission_mode", "user")
         bucket.setdefault("project_key", default_workspace.key)
         bucket.setdefault("project_name", default_workspace.label)
         bucket.setdefault("project_path", str(default_workspace.path))
@@ -177,6 +186,8 @@ class ChatStateStore:
                 "project_name": bucket.get("project_name") or None,
                 "project_path": bucket.get("project_path") or None,
                 "display_mode": normalize_display_mode(bucket.get("display_mode")),
+                "code_display_mode": normalize_code_display_mode(bucket.get("code_display_mode")),
+                "permission_mode": _normalize_permission_mode(bucket.get("permission_mode")),
                 "agent_current_run": bucket.get("agent_current_run"),
                 "agent_last_run": bucket.get("agent_last_run"),
                 "last_provider_timing": bucket.get("last_provider_timing") if isinstance(bucket.get("last_provider_timing"), dict) else {},
@@ -211,6 +222,42 @@ class ChatStateStore:
         with self._lock:
             bucket = self._bucket(chat_id)
             bucket["display_mode"] = normalize_display_mode(mode)
+            self._save()
+            return self.get_chat_state(chat_id)
+
+    def get_code_display_mode(self, chat_id: int) -> str:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            return normalize_code_display_mode(bucket.get("code_display_mode"))
+
+    def set_code_display_mode(self, chat_id: int, mode: str) -> dict[str, Any]:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            bucket["code_display_mode"] = normalize_code_display_mode(mode)
+            self._save()
+            return self.get_chat_state(chat_id)
+
+    def get_permission_mode(self, chat_id: int) -> str:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            return _normalize_permission_mode(bucket.get("permission_mode"))
+
+    def set_permission_mode(self, chat_id: int, mode: str) -> dict[str, Any]:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            bucket["permission_mode"] = _normalize_permission_mode(mode)
+            self._save()
+            return self.get_chat_state(chat_id)
+
+    def get_locale(self, chat_id: int) -> str:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            return str(bucket.get("locale") or "zh")
+
+    def set_locale(self, chat_id: int, locale: str) -> dict[str, Any]:
+        with self._lock:
+            bucket = self._bucket(chat_id)
+            bucket["locale"] = locale
             self._save()
             return self.get_chat_state(chat_id)
 

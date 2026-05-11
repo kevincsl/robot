@@ -423,7 +423,7 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
         status_texts = [text for event_chat_id, event_type, text in self.events if event_chat_id == chat_id and event_type == "status"]
         output_texts = [text for event_chat_id, event_type, text in self.events if event_chat_id == chat_id and event_type == "output"]
         self.assertTrue(any("📨 專案[robot/main] 已接收" in text for text in status_texts))
-        self.assertIn("✅ 專案[robot/main] 處理完成 · 7s\n\nHi\n\n— gpt-5.4", output_texts)
+        self.assertIn("✅ 專案[robot/main] 處理完成 · 7s\n\nHi\n\n🚀 gpt-5.4", output_texts)
         self.assertFalse(any("provider: codex" in text for text in output_texts))
 
     async def test_worker_user_mode_deduplicates_existing_model_footer(self) -> None:
@@ -464,7 +464,7 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
         output_texts = [text for event_chat_id, event_type, text in self.events if event_chat_id == chat_id and event_type == "output"]
         self.assertEqual(
             output_texts[-1],
-            "✅ 專案[robot/main] 處理完成 · 2s\n\nHi\n\n— gpt-5.4",
+            "✅ 專案[robot/main] 處理完成 · 2s\n\nHi\n\n🚀 gpt-5.4",
         )
 
     async def test_worker_user_mode_unwraps_existing_completion_wrapper(self) -> None:
@@ -510,7 +510,7 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
         output_texts = [text for event_chat_id, event_type, text in self.events if event_chat_id == chat_id and event_type == "output"]
         self.assertEqual(
             output_texts[-1],
-            "✅ 專案[robot/main] 處理完成 · 23s\n\nhello.\n\n— gpt-5.4",
+            "✅ 專案[robot/main] 處理完成 · 23s\n\nhello.\n\n🚀 gpt-5.4",
         )
 
     async def test_worker_user_mode_unwraps_wrapper_and_strips_duplicate_model_footer(self) -> None:
@@ -557,7 +557,7 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
         output_texts = [text for event_chat_id, event_type, text in self.events if event_chat_id == chat_id and event_type == "output"]
         self.assertEqual(
             output_texts[-1],
-            "✅ 專案[robot/main] 處理完成 · 23s\n\nhello.\n\n— gpt-5.4",
+            "✅ 專案[robot/main] 處理完成 · 23s\n\nhello.\n\n🚀 gpt-5.4",
         )
 
     async def test_worker_user_mode_strips_duplicate_model_footer_without_wrapper(self) -> None:
@@ -602,7 +602,7 @@ class AgentAutomationTests(unittest.IsolatedAsyncioTestCase):
         output_texts = [text for event_chat_id, event_type, text in self.events if event_chat_id == chat_id and event_type == "output"]
         self.assertEqual(
             output_texts[-1],
-            "✅ 專案[robot/main] 處理完成 · 29s\n\nhello.\n\n— gpt-5.4",
+            "✅ 專案[robot/main] 處理完成 · 29s\n\nhello.\n\n🚀 gpt-5.4",
         )
 
     async def test_enqueue_deduplicates_same_request_id(self) -> None:

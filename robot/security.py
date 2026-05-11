@@ -1,8 +1,160 @@
 """Security utilities for robot project."""
 from __future__ import annotations
 
+import hmac
+import hashlib
+import json
+import logging
+import os
 import re
 from pathlib import Path
+from typing import Literal
+
+# ---------------------------------------------------------------------------
+# Permission mode constants
+# ---------------------------------------------------------------------------
+PROJECTS_ROOT = Path("~/projects").expanduser()
+ROBOT_ROOT    = Path("~/robot").expanduser()
+TELEAPP       = Path("~/teleapp").expanduser()
+
+PERMISSION_MODES = ("user", "developer", "superuser")
+PERMISSION_CONFIG_PATH = Path(
+    os.getenv("ROBOT_PERMISSIONS_PATH", str(Path.home() / ".config" / "robot" / "permissions.json"))
+)
+
+# ---------------------------------------------------------------------------
+# Permission config (lazy-loaded, module-level singleton)
+# ---------------------------------------------------------------------------
+_permission_config: dict | None = None
+
+
+def _load_permission_config() -> dict:
+    """Load and validate permissions.json with HMAC verification."""
+    global _permission_config
+    if _permission_config is not None:
+        return _permission_config
+
+    path = PERMISSION_CONFIG_PATH
+    if not path.exists():
+        logging.warning("Permission config not found at %s — using defaults", path)
+        _permission_config = _default_permission_config()
+        return _permission_config
+
+    try:
+        raw = path.read_text()
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        logging.error("Failed to read permission config at %s: %s", path, exc)
+        _permission_config = _default_permission_config()
+        return _permission_config
+
+    key = os.getenv("ROBOT_PERMISSION_KEY", "")
+    if key:
+        try:
+            stored_sig = data.get("signature", "")
+            payload = json.dumps(data["rules"], sort_keys=True, ensure_ascii=False)
+            expected = hmac.new(key.encode(), payload.encode(), hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(stored_sig, expected):
+                logging.error("HMAC signature mismatch for %s — rejecting config", path)
+                _permission_config = _default_permission_config()
+                return _permission_config
+        except (KeyError, TypeError) as exc:
+            logging.error("Permission config missing rules or signature: %s", exc)
+            _permission_config = _default_permission_config()
+            return _permission_config
+    else:
+        logging.warning("ROBOT_PERMISSION_KEY not set — HMAC verification skipped")
+
+    _permission_config = data
+    return _permission_config
+
+
+def _default_permission_config() -> dict:
+    return {
+        "version": "1.0",
+        "rules": {
+            "user": {
+                "whitelist": [str(PROJECTS_ROOT)],
+                "blacklist": [str(ROBOT_ROOT), str(TELEAPP)],
+            },
+            "developer": {
+                "whitelist": [str(PROJECTS_ROOT), str(ROBOT_ROOT)],
+                "blacklist": [str(TELEAPP)],
+            },
+            "superuser": {
+                "whitelist": ["*"],
+                "blacklist": [],
+            },
+        },
+        "signature": "",
+    }
+
+
+def _expand_config_paths(paths: list[str]) -> list[Path]:
+    """Replace ${HOME} in paths and return list of expanded Path objects.
+
+    The sentinel "*" is preserved as-is (not resolved) to mean 'allow all'.
+    """
+    result: list[Path] = []
+    home = str(Path.home())
+    for p in paths:
+        if p == "*":
+            result.append(Path("*"))
+        else:
+            p = p.replace("${HOME}", home)
+            result.append(Path(p).expanduser().resolve())
+    return result
+
+
+def get_mode_rules(mode: Literal["user", "developer", "superuser"]) -> dict:
+    """Return whitelist/blacklist for the given mode, with ${HOME} expanded."""
+    config = _load_permission_config()
+    rules = config.get("rules", {}).get(mode, {})
+    whitelist = _expand_config_paths(rules.get("whitelist", []))
+    blacklist = _expand_config_paths(rules.get("blacklist", []))
+    return {"whitelist": whitelist, "blacklist": blacklist}
+
+
+def check_write_allowed(abs_path: Path, mode: Literal["user", "developer", "superuser"] = "user") -> bool:
+    """
+    Check if a path is writable under the given permission mode.
+
+    Args:
+        abs_path: Absolute path to check
+        mode: Permission mode — 'user', 'developer', or 'superuser'
+
+    Returns:
+        True if write is allowed, False otherwise
+    """
+    if mode == "superuser":
+        return True
+
+    rules = get_mode_rules(mode)
+    blacklist = rules["blacklist"]
+    whitelist = rules["whitelist"]
+
+    resolved = abs_path.resolve()
+
+    # Blacklist blocks first
+    for blocked in blacklist:
+        try:
+            resolved.relative_to(blocked)
+            return False
+        except ValueError:
+            continue
+
+    # Whitelist check
+    for allowed in whitelist:
+        # "*" means allow everything not on blacklist
+        if str(allowed) == "*":
+            return True
+        try:
+            resolved.relative_to(allowed)
+            return True
+        except ValueError:
+            continue
+
+    return False
 
 
 class SecurityError(Exception):

@@ -1,0 +1,14 @@
+{
+  "user": [
+    {"text": "狀態", "data": "menu:status"},
+    {"text": "Projects", "data": "menu:projects"},
+    {"text": "取消", "data": "menu:cancel"}
+  ],
+  "developer": [
+    {"text": "狀態", "data": "menu:status"},
+    {"text": "Provider", "data": "menu:provider"},
+    {"text": "Model", "data": "menu:model"},
+    {"text": "Projects", "data": "menu:projects"},
+    {"text": "取消", "data": "menu:cancel"}
+  ]
+}
